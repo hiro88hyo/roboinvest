@@ -1,0 +1,12 @@
+[tool.uv.workspace]
+members = [
+    "contracts/python",
+    "services/feeder",
+    "services/feature-engine",
+    "services/strategy-rule",
+    "services/strategy-ai",
+    "services/aggregator",
+    "services/gateway",
+    "services/oms-live",
+    "services/oms-paper",
+]
