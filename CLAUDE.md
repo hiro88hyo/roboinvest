@@ -16,46 +16,52 @@
 ## アーキテクチャ概要
 
 ```
-kabu.com API (WebSocket)
-    │
-    ▼
-┌──────────┐   raw-market-data   ┌──────────────────┐
-│  Feeder  │ ──────────────────▶ │ Feature Engine    │
-└──────────┘                     │ (Polars指標計算)   │
-                                 └──────┬───────────┘
-                                        │ processed-features
-                              ┌─────────┴──────────┐
-                              ▼                    ▼
-                     ┌────────────────┐  ┌─────────────────┐
-                     │ Strategy A     │  │ Strategy B      │
-                     │ (ルールベース)  │  │ (AI/vLLM推論)   │
-                     └───────┬────────┘  └────────┬────────┘
-                             │ strategy-signals-a │ strategy-signals-b
-                             └────────┬───────────┘
-                                      ▼
-                             ┌────────────────┐
-                             │  Aggregator    │
-                             │  (合議制統合)   │
-                             └───────┬────────┘
-                                     │ trade-signals
-                                     ▼
-                             ┌────────────────┐
-                             │   Gateway      │
-                             │ (リスク検証)    │──▶ Supabase (状態読取)
-                             └──┬──────────┬──┘
-                    live-orders │          │ paper-orders
-                                ▼          ▼
-                          ┌─────────┐ ┌──────────┐◀─ raw-market-data
-                          │OMS Live │ │OMS Paper │   (OrderBookSnapshot)
-                          └────┬────┘ └─────┬────┘
-                               │            │
-                               ▼            ▼
-                            Supabase (約定記録)
-                               │
-                               ▼
-                         ┌───────────┐
-                         │ Dashboard │ (Realtime購読)
-                         └───────────┘
+J-Quants API
+     │
+     ▼
+┌──────────────────┐
+│ Universe Scanner │──▶ Supabase (watchlist)
+│  (日次 8:00 JST) │          │
+└──────────────────┘          │ watchlist 読取
+kabu.com API (WebSocket)      │
+    │                         ▼
+    ▼               ┌──────────┐   raw-market-data   ┌──────────────────┐
+                    │  Feeder  │──────────────────▶  │ Feature Engine    │
+                    └──────────┘                     │ (Polars指標計算)   │
+                                                     └──────┬───────────┘
+                                                            │ processed-features
+                                                  ┌─────────┴──────────┐
+                                                  ▼                    ▼
+                                         ┌────────────────┐  ┌─────────────────┐
+                                         │ Strategy A     │  │ Strategy B      │
+                                         │ (ルールベース)  │  │ (AI/vLLM推論)   │
+                                         └───────┬────────┘  └────────┬────────┘
+                                                 │ strategy-signals-a │ strategy-signals-b
+                                                 └────────┬───────────┘
+                                                          ▼
+                                                 ┌────────────────┐
+                                                 │  Aggregator    │
+                                                 │  (合議制統合)   │
+                                                 └───────┬────────┘
+                                                         │ trade-signals
+                                                         ▼
+                                                 ┌────────────────┐
+                                                 │   Gateway      │
+                                                 │ (リスク検証)    │──▶ Supabase (状態読取)
+                                                 └──┬──────────┬──┘
+                                        live-orders │          │ paper-orders
+                                                    ▼          ▼
+                                              ┌─────────┐ ┌──────────┐◀─ raw-market-data
+                                              │OMS Live │ │OMS Paper │   (OrderBookSnapshot)
+                                              └────┬────┘ └─────┬────┘
+                                                   │            │
+                                                   ▼            ▼
+                                                Supabase (約定記録)
+                                                   │
+                                                   ▼
+                                             ┌───────────┐
+                                             │ Dashboard │ (Realtime購読)
+                                             └───────────┘
 ```
 
 ## リポジトリ構成
@@ -83,9 +89,13 @@ trade-ai-agent/
 │       ├── 003_strategy_logs.sql
 │       ├── 004_aggregator_logs.sql
 │       ├── 005_trades_live.sql
-│       └── 006_trades_paper.sql
+│       ├── 006_trades_paper.sql
+│       ├── 007_watchlist.sql
+│       ├── 008_master_stocks.sql
+│       └── 009_daily_ohlcv.sql
 │
 ├── services/
+│   ├── universe-scanner/        # 0. Universe Scanner (日次バッチ)
 │   ├── feeder/                  # 1. Market Data Provider
 │   ├── feature-engine/          # 2. Feature Engineering
 │   ├── strategy-rule/           # 3. Strategy Engine A (ルールベース)
@@ -97,7 +107,7 @@ trade-ai-agent/
 │
 ├── dashboard/                   # 8. Next.js ダッシュボード
 ├── infra/                       # Pub/Sub, Supabase
-├── scripts/                     # deploy, gen-types, replay, health-check
+├── scripts/                     # deploy, gen-types, replay, health-check, warm-to-cold
 └── docs/                        # architecture, runbook, dev-setup
 ```
 
@@ -105,8 +115,16 @@ trade-ai-agent/
 
 ## コンポーネント詳細
 
+### 0. Universe Scanner (`services/universe-scanner/`) — 日次バッチ
+- 毎営業日 8:00 JST に起動し、当日の監視銘柄リストを生成
+- **第1段階（静的フィルタ）**: J-Quants API から全上場銘柄を取得し、流動性・価格帯・市場区分で 100〜300 銘柄に絞り込み
+- **第2段階（動的スコアリング）**: ボラティリティ・テクニカル条件・出来高急増・セクターモメンタムでスコアリングし 20〜50 銘柄に絞り込み
+- 結果を Supabase `watchlist` テーブルに書き込み
+- 参照データ（銘柄マスタ・日次 OHLCV・財務データ）は J-Quants API から取得し Supabase `master_stocks` / `daily_ohlcv` に保存
+
 ### 1. Feeder (`services/feeder/`)
-- kabu.com API (WebSocket) から Tick/板情報を取得
+- 起動時および `watchlist` 更新時に Supabase から監視銘柄リストを読み取り
+- kabu.com API (WebSocket) で watchlist 銘柄のみを購読
 - Tick データを `TickData`、板情報を `OrderBookSnapshot` に変換し Pub/Sub `raw-market-data` にパブリッシュ
 - 接続断時は指数バックオフで自動再接続
 
@@ -114,9 +132,14 @@ trade-ai-agent/
 - `raw-market-data` をサブスクライブ（`TickData` および `OrderBookSnapshot` を処理）
 - Polars で テクニカル指標（移動平均, RSI, VWAP, ボリンジャーバンド等）を計算
 - 板情報スナップショットを `ProcessedFeatures` に統合し `processed-features` にパブリッシュ
-- 生データを Parquet 形式で永続保存
+- 生データを Parquet 形式で永続保存（3段階ストレージ階層）
+  - **Hot**: リアルタイム〜当日はメモリ / Pub/Sub で処理
+  - **Warm**: 直近 1〜3 ヶ月は間引き済み Parquet（`STORAGE_TICK_RESOLUTION` で集約レベル制御）
+  - **Cold**: それ以降は OHLCV 1分足/5分足 Parquet にアーカイブ
+- `STORAGE_TICK_RESOLUTION=raw|1s|1m|5m` 環境変数で Tick 保存粒度を制御
 - `TickData` 受信のたびに Supabase `positions.current_price` と `unrealized_pnl` を更新
 - 9:00 JST（市場開始）に `system_status.daily_pnl = 0` をリセット（`is_trading_allowed` は手動操作を尊重し変更しない）
+- バックテストモード時は Supabase `daily_ohlcv` を入力データとして使用
 
 ### 3. Strategy Engine A - ルールベース (`services/strategy-rule/`)
 - `processed-features` を受信
@@ -150,13 +173,13 @@ trade-ai-agent/
 - `live-orders` を受信
 - kabu.com API へ実発注（成行/指値）
 - 約定後に Supabase `trades_live` に記録、`positions`（trade_type=live）を更新、`system_status.daily_pnl` を加算
-- 14:50 デイクローズアウト実行（全 live ポジションを成行で強制決済し、`positions` の live 行を削除）
+- `system_status.trading_style = day` の場合のみ 14:50 デイクローズアウト実行（全 live ポジションを成行で強制決済し、`positions` の live 行を削除）
 
 ### 7b. OMS Paper (`services/oms-paper/`)
 - `paper-orders` および `raw-market-data`（`OrderBookSnapshot`）をサブスクライブ
 - 受信した板情報を元に擬似約定ロジックで仮想的に約定
 - 約定後に Supabase `trades_paper` に記録、`positions`（trade_type=paper）を更新
-- 14:50 デイクローズアウト実行（全 paper ポジションを仮想的に強制決済し、`positions` の paper 行を削除）
+- `system_status.trading_style = day` の場合のみ 14:50 デイクローズアウト実行（全 paper ポジションを仮想的に強制決済し、`positions` の paper 行を削除）
 
 ### 8. Dashboard (`dashboard/`)
 - Next.js (App Router) + Tailwind CSS
@@ -185,9 +208,14 @@ trade-ai-agent/
 システムの稼働状態を管理するシングルトンテーブル（`id=1` の固定行）。
 - `id` (int PK, default 1)
 - `is_trading_allowed` (bool): キルスイッチ。false で全注文停止
-- `daily_pnl` (numeric): 当日の実取引（live）累計損益。キルスイッチ判定に使用
-- `daily_loss_limit` (numeric): 日次最大許容損失額
 - `trade_mode` (text): `live` | `paper`。起動時に環境変数 `TRADE_MODE` で初期化し、以降は Dashboard から変更可
+- `trading_style` (text): `day` | `swing`。デイクローズアウトの発動条件に使用
+- `daily_pnl` (numeric): 当日の実取引（live）累計損益。キルスイッチ判定に使用
+- `weekly_pnl` (numeric): 当週の実取引（live）累計損益
+- `monthly_pnl` (numeric): 当月の実取引（live）累計損益
+- `daily_loss_limit` (numeric): 日次最大許容損失額
+- `weekly_loss_limit` (numeric): 週次最大許容損失額
+- `monthly_loss_limit` (numeric): 月次最大許容損失額
 - `updated_at` (timestamptz)
 
 ### `positions`
@@ -199,6 +227,11 @@ trade-ai-agent/
 - `entry_price` (numeric): 平均取得単価
 - `current_price` (numeric): 最新価格
 - `unrealized_pnl` (numeric): 評価損益
+- `holding_type` (text): `day` | `swing`
+- `target_price` (numeric): 利確目標価格
+- `stop_loss_price` (numeric): 現在のストップロス価格（トレーリング更新あり）
+- `max_hold_days` (int): 最大保有日数（スイング用）
+- `trailing_stop_pct` (numeric): トレーリングストップ率（スイング用）
 - `opened_at` (timestamptz)
 
 ### `trades_live`
@@ -234,25 +267,60 @@ Strategy A/B の出力ログ。Dashboard での分析・振り返り用。
 - `reasoning` (text): AI の推論根拠（Strategy B のみ）
 - `created_at` (timestamptz)
 
+### `watchlist`
+Universe Scanner が生成した当日の監視銘柄リスト。
+- `symbol` (text): 銘柄コード　┐ 複合 PK
+- `valid_date` (date): 有効日　　┘
+- `symbol_name` (text): 銘柄名
+- `score` (numeric): スコアリング結果
+- `selected_reasons` (jsonb): 選定理由（流動性・ボラティリティ等）
+- `created_at` (timestamptz)
+
+### `master_stocks`
+銘柄マスタ。J-Quants API から日次更新。
+- `symbol` (text PK): 銘柄コード
+- `symbol_name` (text): 銘柄名
+- `market_segment` (text): 市場区分（プライム/スタンダード等）
+- `sector` (text): 業種
+- `is_active` (bool): 上場中フラグ
+- `updated_at` (timestamptz)
+
+### `daily_ohlcv`
+日次 OHLCV データ。J-Quants API から取得。バックテスト・Universe Scanner の入力に使用。
+- `symbol` (text): 銘柄コード　┐ 複合 PK
+- `date` (date): 日付　　　　　┘
+- `open`, `high`, `low`, `close` (numeric)
+- `volume` (bigint)
+- `turnover` (numeric): 売買代金
+
 ## リスク管理・ビジネスルール
 
 これらのルールは **Gateway が強制執行** する。他コンポーネントでは判断しない。
 
 ### キルスイッチ
 - `system_status.daily_pnl`（live 取引のみ集計、損失は負の値）が `-daily_loss_limit` 以下になったら `is_trading_allowed = false`
+- 同様に `weekly_pnl <= -weekly_loss_limit` または `monthly_pnl <= -monthly_loss_limit` でも発動
+- `weekly_pnl` / `monthly_pnl` は OMS Live が約定のたびに加算。週初/月初に Feature Engine がリセット
 - Dashboard から手動で ON/OFF 可能
 - Gateway は毎回 Supabase を確認し、false なら全注文を即座に拒否
-- `trade_mode=paper` 中は `daily_pnl` が更新されないため、キルスイッチは自動発動しない（paper は資金リスクがないため意図的）
+- `trade_mode=paper` 中は各 pnl が更新されないため、キルスイッチは自動発動しない（paper は資金リスクがないため意図的）
 
 ### 2%ルール（1トレードリスク制限）
 - 1トレードの最大許容損失 = 総資金 × 2%
 - Gateway の `lot_calculator.py` が `UnifiedTradeSignal.stop_loss_price` とエントリー価格から最大ロット数を算出
 - `stop_loss_price` が未設定（`None`）の場合はデフォルトのスプレッド幅で代替計算
+- スイングトレード時はオーバーナイトリスク（ギャップダウン）を考慮し、通常より保守的なポジションサイジングを適用
 - シグナルのロット数がこれを超える場合は強制的に切り詰め
 
 ### デイ・クローズアウト
-- 14:50 (JST) に OMS が全建玉を成行で強制決済
-- 翌日への持ち越し禁止（現物デイトレード前提）
+- `system_status.trading_style = day` の場合のみ 14:50 (JST) に OMS が全建玉を成行で強制決済
+- `trading_style = swing` の場合はクローズアウトを行わず、ポジションを翌日へ持ち越す
+
+### スイングトレード管理
+- `positions.stop_loss_price` を下回ったら OMS が成行で損切り
+- `positions.target_price` に達したら OMS が成行で利確
+- `positions.trailing_stop_pct` が設定されている場合、OMS が高値更新のたびにストップロスを切り上げ
+- `positions.max_hold_days` を超過したポジションは OMS が翌営業日始値で強制決済
 
 ### Dry Run モード
 - 環境変数 `TRADE_MODE=paper` で起動すると `system_status.trade_mode` を `paper` で初期化
@@ -349,6 +417,9 @@ uv run python scripts/health-check.py
 
 # Dashboard 開発サーバー起動（volta が Node バージョンを自動切替）
 cd dashboard && npm run dev
+
+# Warm → Cold ストレージ移行（日次バッチ）
+uv run python scripts/warm-to-cold-migration.py --date 2025-01-15
 ```
 
 ## Claude Code での作業ガイド
