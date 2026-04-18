@@ -1,0 +1,1 @@
+../../../contracts/sql/007_watchlist.sql

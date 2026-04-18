@@ -1,0 +1,1 @@
+../../../contracts/sql/006_trades_paper.sql

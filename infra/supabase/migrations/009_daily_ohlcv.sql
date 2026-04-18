@@ -1,0 +1,1 @@
+../../../contracts/sql/009_daily_ohlcv.sql
