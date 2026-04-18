@@ -3,7 +3,7 @@
 lint-all:
 	uv run ruff format --check .
 	uv run ruff check .
-	uv run mypy --strict contracts/python services
+	uv run mypy
 
 test-all:
-	uv run pytest services --cov --cov-report=term-missing
+	uv run pytest --cov --cov-report=term-missing
