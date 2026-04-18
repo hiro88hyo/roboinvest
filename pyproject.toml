@@ -6,6 +6,7 @@ requires-python = ">=3.12"
 # ワークスペースメンバーは root の dependencies 経由で解決する。
 dependencies = [
     "trade-contracts",
+    "universe-scanner",
 ]
 
 [tool.uv]
@@ -14,11 +15,13 @@ package = false
 
 [tool.uv.sources]
 trade-contracts = { workspace = true }
+universe-scanner = { workspace = true }
 
 [tool.uv.workspace]
 # 未実装のサービスはディレクトリが生まれたタイミングで追記する。
 members = [
     "contracts/python",
+    "services/universe-scanner",
 ]
 
 [dependency-groups]
@@ -58,9 +61,18 @@ pretty = true
 show_error_codes = true
 namespace_packages = true
 explicit_package_bases = true
-mypy_path = "contracts/python"
-files = ["contracts/python/trade_contracts", "contracts/python/tests"]
+mypy_path = "contracts/python:services/universe-scanner/src"
+files = [
+    "contracts/python/trade_contracts",
+    "contracts/python/tests",
+    "services/universe-scanner/src",
+    "services/universe-scanner/tests",
+]
 plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = "jpholiday"
+ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = "tests.*"
@@ -71,12 +83,18 @@ disallow_untyped_defs = false
 minversion = "8.0"
 asyncio_mode = "auto"
 addopts = "-ra --strict-markers"
-testpaths = ["contracts/python/tests"]
+testpaths = [
+    "contracts/python/tests",
+    "services/universe-scanner/tests",
+]
 
 # --- coverage --------------------------------------------------------
 [tool.coverage.run]
 branch = true
-source = ["contracts/python/trade_contracts"]
+source = [
+    "contracts/python/trade_contracts",
+    "services/universe-scanner/src/universe_scanner",
+]
 
 [tool.coverage.report]
 show_missing = true
