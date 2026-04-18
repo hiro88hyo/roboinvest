@@ -115,8 +115,8 @@ psql postgresql://postgres:postgres@127.0.0.1:54322/postgres \
 実装を進める上でまだ手が回っていない箇所。次フェーズで順次解決する。
 
 - [ ] `scripts/gen-supabase-types.sh` 未作成。`contracts/typescript/src/generated/database.types.ts` を再生成する手段がない
-- [ ] `ruff` / `mypy` / `pytest` が root 依存に未登録。`make lint-all` / `make test-all` は現状失敗する
 - [ ] `services/` 配下のサービスが 1 本も未実装。`docker-compose.dev.yml` はインフラのみで、アプリケーションサービスのエントリが空
+- [ ] サービス追加時は root の `pyproject.toml` の `[tool.uv.workspace] members` と `[tool.mypy] files` を更新する運用
 - [ ] `.env.example` の `SUPABASE_*` キーはプレースホルダ。`supabase start` 実行後に各開発者が手動で埋める運用
 - [ ] Supabase CLI 無しで動かす代替フロー（生 Postgres + psql でマイグレーション適用）は未整備。インストール不要の軽量ルートが欲しければ別途 compose 定義を追加する
 - [ ] Pub/Sub エミュレータは永続化していない。再起動でトピックは再作成されるがメッセージは消える（開発用途なので許容）
