@@ -1,0 +1,41 @@
+# Supabase CLI local config
+# Run `supabase start --workdir infra/supabase` (or `cd infra && supabase start`)
+# to boot Postgres + Studio + Auth + Realtime locally.
+
+project_id = "trade-ai-agent"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 15
+
+[db.pooler]
+enabled = false
+
+[studio]
+enabled = true
+port = 54323
+
+[inbucket]
+enabled = true
+port = 54324
+
+[storage]
+enabled = true
+
+[auth]
+enabled = true
+site_url = "http://localhost:3000"
+
+[realtime]
+enabled = true
+
+[analytics]
+enabled = false

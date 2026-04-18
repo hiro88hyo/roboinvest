@@ -1,0 +1,1 @@
+../../../contracts/sql/003_strategy_logs.sql

@@ -1,0 +1,1 @@
+../../../contracts/sql/004_aggregator_logs.sql

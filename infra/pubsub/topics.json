@@ -1,0 +1,11 @@
+{
+  "topics": [
+    "raw-market-data",
+    "processed-features",
+    "strategy-signals-a",
+    "strategy-signals-b",
+    "trade-signals",
+    "live-orders",
+    "paper-orders"
+  ]
+}

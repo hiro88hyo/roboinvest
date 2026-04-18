@@ -1,0 +1,1 @@
+../../../contracts/sql/008_master_stocks.sql

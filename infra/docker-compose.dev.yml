@@ -1,0 +1,44 @@
+# ローカル開発スタック: Pub/Sub エミュレータ + トピック初期化
+#
+# 使い方:
+#   1. Supabase は別コマンドで起動: `cd infra && supabase start`
+#   2. Pub/Sub とアプリサービス: `docker compose -f infra/docker-compose.dev.yml up`
+#
+# サービスは `services/` 配下の実装が進むにつれてここに追加する。
+
+name: trade-ai-dev
+
+services:
+  pubsub:
+    # :slim には JRE が含まれず Pub/Sub エミュレータが起動できないため :emulators を使用
+    image: gcr.io/google.com/cloudsdktool/cloud-sdk:emulators
+    container_name: trade-ai-pubsub
+    command:
+      - gcloud
+      - beta
+      - emulators
+      - pubsub
+      - start
+      - --host-port=0.0.0.0:8085
+      - --project=trade-ai-dev
+    ports:
+      - "8085:8085"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8085/ || exit 1"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  pubsub-init:
+    image: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    container_name: trade-ai-pubsub-init
+    depends_on:
+      pubsub:
+        condition: service_healthy
+    environment:
+      PUBSUB_EMULATOR_HOST: pubsub:8085
+      PUBSUB_PROJECT_ID: trade-ai-dev
+    volumes:
+      - ./pubsub:/pubsub:ro
+    entrypoint: ["/bin/sh", "/pubsub/init-topics.sh"]
+    restart: "no"
