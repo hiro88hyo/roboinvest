@@ -1,0 +1,18 @@
+[project]
+name = "feature-engine"
+version = "0.1.0"
+description = "Feature Engine: compute technical indicators from market data and publish ProcessedFeatures"
+requires-python = ">=3.12"
+dependencies = [
+    "trade-contracts",
+    "polars>=1.0",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.4",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/feature_engine"]
