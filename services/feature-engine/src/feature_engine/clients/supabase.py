@@ -3,11 +3,13 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import date
+from decimal import Decimal
 from typing import Any, Self
 
 import httpx
 import polars as pl
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from trade_contracts.enums import TradeType
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +29,16 @@ _OHLCV_SCHEMA: dict[str, pl.DataType] = {
 
 class SupabaseError(RuntimeError):
     """Supabase (PostgREST) とのやり取りで発生するエラー。"""
+
+
+@dataclass(frozen=True, slots=True)
+class PositionSnapshot:
+    """`positions` テーブルの読み取り結果 (時価更新に必要な最小セット)。"""
+
+    symbol: str
+    trade_type: TradeType
+    quantity: int
+    entry_price: Decimal
 
 
 @dataclass(slots=True)
@@ -69,6 +81,25 @@ class SupabaseReader:
         }
         rows = await self._select_all("/rest/v1/watchlist", params=params)
         return [str(r["symbol"]) for r in rows]
+
+    async def fetch_positions(self, symbol: str) -> list[PositionSnapshot]:
+        """`symbol` に紐づく live / paper のポジションを返す。"""
+        params = {
+            "select": "symbol,trade_type,quantity,entry_price",
+            "symbol": f"eq.{symbol}",
+        }
+        rows = await self._select_all("/rest/v1/positions", params=params)
+        out: list[PositionSnapshot] = []
+        for r in rows:
+            out.append(
+                PositionSnapshot(
+                    symbol=str(r["symbol"]),
+                    trade_type=TradeType(str(r["trade_type"])),
+                    quantity=int(r["quantity"]),
+                    entry_price=Decimal(str(r["entry_price"])),
+                )
+            )
+        return out
 
     async def fetch_daily_ohlcv(
         self,
@@ -161,3 +192,100 @@ def _parse_total(content_range: str | None) -> int | None:
         return int(tail)
     except ValueError:
         return None
+
+
+@dataclass(slots=True)
+class SupabaseWriter:
+    """Supabase PostgREST 経由の書き込み専用クライアント。
+
+    Feature Engine では `positions` の時価更新と `system_status` の pnl リセットに使う。
+    """
+
+    url: str
+    secret_key: str
+    timeout_seconds: float = 30.0
+    transport: httpx.AsyncBaseTransport | None = None
+    _client: httpx.AsyncClient | None = None
+
+    async def __aenter__(self) -> Self:
+        self._client = httpx.AsyncClient(
+            base_url=self.url.rstrip("/"),
+            timeout=self.timeout_seconds,
+            headers={
+                "apikey": self.secret_key,
+                "Authorization": f"Bearer {self.secret_key}",
+                "Content-Type": "application/json",
+            },
+            transport=self.transport,
+        )
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
+
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((httpx.HTTPError, SupabaseError)),
+    )
+    async def upsert(
+        self,
+        table: str,
+        rows: list[dict[str, Any]],
+        *,
+        on_conflict: str,
+    ) -> None:
+        """`rows` を `table` に upsert する。`on_conflict` は PK/UNIQUE カラムを CSV で指定。"""
+        if not rows:
+            logger.info("supabase upsert skipped: table=%s rows=0", table)
+            return
+        assert self._client is not None
+        resp = await self._client.post(
+            f"/rest/v1/{table}",
+            params={"on_conflict": on_conflict},
+            headers={"Prefer": "resolution=merge-duplicates,return=minimal"},
+            json=rows,
+        )
+        if resp.status_code >= 500:
+            raise SupabaseError(
+                f"transient error: table={table} status={resp.status_code} body={resp.text[:200]}"
+            )
+        if resp.status_code >= 300:
+            raise SupabaseError(
+                f"upsert failed: table={table} status={resp.status_code} body={resp.text[:200]}"
+            )
+        logger.info("supabase upsert: table=%s rows=%d", table, len(rows))
+
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((httpx.HTTPError, SupabaseError)),
+    )
+    async def patch(
+        self,
+        table: str,
+        *,
+        filters: dict[str, str],
+        values: dict[str, Any],
+    ) -> None:
+        """`filters` で特定した行に `values` をマージ更新する。"""
+        assert self._client is not None
+        resp = await self._client.patch(
+            f"/rest/v1/{table}",
+            params=filters,
+            headers={"Prefer": "return=minimal"},
+            json=values,
+        )
+        if resp.status_code >= 500:
+            raise SupabaseError(
+                f"transient error: table={table} status={resp.status_code} body={resp.text[:200]}"
+            )
+        if resp.status_code >= 300:
+            raise SupabaseError(
+                f"patch failed: table={table} status={resp.status_code} body={resp.text[:200]}"
+            )
+        logger.info("supabase patch: table=%s filters=%s", table, filters)

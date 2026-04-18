@@ -140,6 +140,7 @@ version = "0.1.0"
 source = { editable = "services/feature-engine" }
 dependencies = [
     { name = "httpx" },
+    { name = "jpholiday" },
     { name = "polars" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
@@ -150,6 +151,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
+    { name = "jpholiday", specifier = ">=0.1.9" },
     { name = "polars", specifier = ">=1.0" },
     { name = "pydantic", specifier = ">=2.7" },
     { name = "pydantic-settings", specifier = ">=2.4" },
