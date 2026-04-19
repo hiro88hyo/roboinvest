@@ -93,6 +93,9 @@ testpaths = [
     "services/universe-scanner/tests",
     "services/feature-engine/tests",
 ]
+markers = [
+    "integration: end-to-end tests that require a running Pub/Sub emulator / Supabase (skipped by default if unreachable)",
+]
 
 # --- coverage --------------------------------------------------------
 [tool.coverage.run]
