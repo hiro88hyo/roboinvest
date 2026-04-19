@@ -13,6 +13,7 @@ from trade_contracts.market import OrderBookSnapshot, TickData
 from feature_engine.clients.pubsub import PubSubPublisher, PubSubSubscriber, PulledMessage
 from feature_engine.clients.supabase import SupabaseReader, SupabaseWriter
 from feature_engine.config import FeatureEngineSettings
+from feature_engine.storage.warm import WarmWriter
 from feature_engine.streaming.feature_state import StreamingFeatureState
 from feature_engine.streaming.position_updater import update_positions_for_tick
 from feature_engine.streaming.session import TickDecision, TickSession
@@ -45,6 +46,8 @@ class StreamRunner:
     - tick は `TickSession` で順序保証/ベキ等を通した後に `StreamingFeatureState` へ投入し、
       `ProcessedFeatures` を publish。併せて `update_positions_for_tick` で Supabase の
       `positions.current_price` / `unrealized_pnl` を更新
+    - `warm_writer` が渡されていれば ACCEPT した tick を Warm レイヤに best-effort 永続化
+      (失敗はログのみで pipeline は続行)
     - order_book は `feature_state.record_order_book` のみ (次の tick に紐付けられる)
     - 処理済みメッセージは ack。パース不能はポイズン扱いで ack、処理中の一過性エラーは
       ack せずに Pub/Sub の再配信に任せる
@@ -57,6 +60,7 @@ class StreamRunner:
     feature_state: StreamingFeatureState
     tick_session: TickSession
     settings: FeatureEngineSettings
+    warm_writer: WarmWriter | None = None
     idle_backoff_seconds: float = 1.0
     sleep: Sleep = field(default=asyncio.sleep)
 
@@ -139,6 +143,16 @@ class StreamRunner:
         decision = self.tick_session.observe(tick)
         if decision != TickDecision.ACCEPT:
             return "tick_dropped"
+
+        if self.warm_writer is not None:
+            try:
+                self.warm_writer.record_tick(tick)
+            except Exception:
+                logger.exception(
+                    "warm persist failed: symbol=%s timestamp=%s",
+                    tick.symbol,
+                    tick.timestamp,
+                )
 
         features = self.feature_state.record_tick(tick)
         await self.publisher.publish(

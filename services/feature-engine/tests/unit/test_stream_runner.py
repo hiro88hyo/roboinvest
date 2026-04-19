@@ -11,6 +11,7 @@ import httpx
 from feature_engine.clients.pubsub import PubSubPublisher, PubSubSubscriber
 from feature_engine.clients.supabase import SupabaseReader, SupabaseWriter
 from feature_engine.config import FeatureEngineSettings
+from feature_engine.storage.warm import WarmWriter
 from feature_engine.streaming.feature_state import StreamingFeatureState
 from feature_engine.streaming.runner import StreamRunner
 from feature_engine.streaming.session import TickSession
@@ -139,6 +140,7 @@ async def _with_runner(
     supabase_router: _SupabaseRouter,
     settings: FeatureEngineSettings | None = None,
     sleep: Callable[[float], Awaitable[None]] | None = None,
+    warm_writer: WarmWriter | None = None,
     run_body: Callable[[StreamRunner], Coroutine[None, None, Any]],
 ) -> Any:
     settings = settings or _settings()
@@ -178,6 +180,7 @@ async def _with_runner(
             feature_state=StreamingFeatureState.from_settings(settings),
             tick_session=TickSession(),
             settings=settings,
+            warm_writer=warm_writer,
             sleep=sleep or _noop_sleep,
         )
         return await run_body(runner)
@@ -393,3 +396,79 @@ def test_tick_timestamp_is_preserved_as_utc() -> None:
     assert tick.timestamp == datetime(2026, 4, 20, 9, 0, tzinfo=tick.timestamp.tzinfo)
     # JST → UTC に変換しても同一瞬間 (aware datetime)
     assert tick.timestamp.astimezone(UTC) == datetime(2026, 4, 20, 0, 0, tzinfo=UTC)
+
+
+async def test_accepted_tick_is_persisted_to_warm(tmp_path: Any) -> None:
+    import polars as pl
+
+    pubsub = _PubSubRouter(pull_batches=[_make_pull_response([("a1", _tick_payload())])])
+    supabase = _SupabaseRouter(positions=[])  # no position upsert traffic
+    warm = WarmWriter(base_dir=tmp_path, resolution="raw", flush_threshold=1)
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(
+        pubsub_router=pubsub, supabase_router=supabase, warm_writer=warm, run_body=_body
+    )
+    assert stats.ticks_processed == 1
+    # threshold=1 → 自動 flush で Parquet が書き出されている
+    files = list(tmp_path.rglob("*.parquet"))
+    assert len(files) == 1
+    df = pl.read_parquet(files[0])
+    assert df.height == 1
+    assert df.get_column("price").to_list() == [2500.0]
+
+
+async def test_dropped_tick_is_not_persisted_to_warm(tmp_path: Any) -> None:
+    import polars as pl
+
+    # 同じ (symbol, timestamp) を 2 件 → 2 件目は session で drop
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _make_pull_response([("a1", _tick_payload()), ("a2", _tick_payload(price="2501"))])
+        ]
+    )
+    supabase = _SupabaseRouter(positions=[])
+    warm = WarmWriter(base_dir=tmp_path, resolution="raw", flush_threshold=10)
+
+    async def _body(runner: StreamRunner) -> Any:
+        stats = await runner.run_once()
+        # まだ flush されていないので手動で flush
+        warm.flush()
+        return stats
+
+    stats = await _with_runner(
+        pubsub_router=pubsub, supabase_router=supabase, warm_writer=warm, run_body=_body
+    )
+    assert stats.ticks_processed == 1
+    assert stats.ticks_dropped == 1
+    files = list(tmp_path.rglob("*.parquet"))
+    assert len(files) == 1
+    df = pl.read_parquet(files[0])
+    # 重複は Warm にも 1 件だけ
+    assert df.height == 1
+    assert df.get_column("price").to_list() == [2500.0]
+
+
+async def test_warm_persist_failure_does_not_block_pipeline(tmp_path: Any) -> None:
+    pubsub = _PubSubRouter(pull_batches=[_make_pull_response([("a1", _tick_payload())])])
+    supabase = _SupabaseRouter(positions=[])
+
+    class _FailingWarm(WarmWriter):
+        def record_tick(self, tick: TickData) -> list[Any]:
+            raise RuntimeError("disk full")
+
+    warm = _FailingWarm(base_dir=tmp_path, resolution="raw")
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(
+        pubsub_router=pubsub, supabase_router=supabase, warm_writer=warm, run_body=_body
+    )
+    # warm 側で失敗してもパイプラインは継続し ack される
+    assert stats.ticks_processed == 1
+    assert stats.process_errors == 0
+    assert stats.acked == 1
+    assert len(pubsub.published) == 1
