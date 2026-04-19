@@ -7,6 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
     "trade-contracts",
     "universe-scanner",
+    "feature-engine",
 ]
 
 [tool.uv]
@@ -16,12 +17,14 @@ package = false
 [tool.uv.sources]
 trade-contracts = { workspace = true }
 universe-scanner = { workspace = true }
+feature-engine = { workspace = true }
 
 [tool.uv.workspace]
 # 未実装のサービスはディレクトリが生まれたタイミングで追記する。
 members = [
     "contracts/python",
     "services/universe-scanner",
+    "services/feature-engine",
 ]
 
 [dependency-groups]
@@ -61,12 +64,14 @@ pretty = true
 show_error_codes = true
 namespace_packages = true
 explicit_package_bases = true
-mypy_path = "contracts/python:services/universe-scanner/src"
+mypy_path = "contracts/python:services/universe-scanner/src:services/feature-engine/src"
 files = [
     "contracts/python/trade_contracts",
     "contracts/python/tests",
     "services/universe-scanner/src",
     "services/universe-scanner/tests",
+    "services/feature-engine/src",
+    "services/feature-engine/tests",
 ]
 plugins = ["pydantic.mypy"]
 
@@ -82,10 +87,14 @@ disallow_untyped_defs = false
 [tool.pytest.ini_options]
 minversion = "8.0"
 asyncio_mode = "auto"
-addopts = "-ra --strict-markers"
+addopts = "-ra --strict-markers --import-mode=importlib"
 testpaths = [
     "contracts/python/tests",
     "services/universe-scanner/tests",
+    "services/feature-engine/tests",
+]
+markers = [
+    "integration: end-to-end tests that require a running Pub/Sub emulator / Supabase (skipped by default if unreachable)",
 ]
 
 # --- coverage --------------------------------------------------------
@@ -94,6 +103,7 @@ branch = true
 source = [
     "contracts/python/trade_contracts",
     "services/universe-scanner/src/universe_scanner",
+    "services/feature-engine/src/feature_engine",
 ]
 
 [tool.coverage.report]
