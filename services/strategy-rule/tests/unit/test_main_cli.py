@@ -6,7 +6,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
-from strategy_rule.__main__ import _build_parser, _run_backtest_cmd
+from strategy_rule.__main__ import _build_parser, _run_backtest_cmd, _run_stream_cmd
 from trade_contracts.features import ProcessedFeatures
 from trade_contracts.signal import StrategySignal
 
@@ -87,3 +87,43 @@ def test_run_backtest_returns_2_when_no_strategies_enabled(
     rc = _run_backtest_cmd(input_path=in_path, output_path=out_path)
     assert rc == 2
     assert not out_path.exists()
+
+
+def test_parser_parses_stream_iterations() -> None:
+    parser = _build_parser()
+    args = parser.parse_args(["stream", "--iterations", "3"])
+    assert args.command == "stream"
+    assert args.iterations == 3
+
+
+async def test_run_stream_cmd_returns_2_when_supabase_unconfigured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("STRATEGIES_ENABLED", "rsi_threshold")
+    monkeypatch.setenv("SUPABASE_URL", "")
+    monkeypatch.setenv("SUPABASE_SECRET_KEY", "")
+    monkeypatch.setenv("PUBSUB_PROJECT_ID", "trade-ai-dev")
+    rc = await _run_stream_cmd(iterations=1)
+    assert rc == 2
+
+
+async def test_run_stream_cmd_returns_2_when_pubsub_unconfigured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("STRATEGIES_ENABLED", "rsi_threshold")
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_SECRET_KEY", "k")
+    monkeypatch.setenv("PUBSUB_PROJECT_ID", "")
+    rc = await _run_stream_cmd(iterations=1)
+    assert rc == 2
+
+
+async def test_run_stream_cmd_returns_2_when_no_strategies_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("STRATEGIES_ENABLED", "")
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_SECRET_KEY", "k")
+    monkeypatch.setenv("PUBSUB_PROJECT_ID", "trade-ai-dev")
+    rc = await _run_stream_cmd(iterations=1)
+    assert rc == 2
