@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 DEFAULT_STRATEGIES = ("sma_crossover", "rsi_threshold", "bollinger_breakout")
 
@@ -29,7 +29,9 @@ class StrategyRuleSettings(BaseSettings):
     pubsub_pull_max_messages: int = 100
     pubsub_ack_deadline_seconds: int = 30
 
-    strategies_enabled: list[str] = Field(default_factory=lambda: list(DEFAULT_STRATEGIES))
+    strategies_enabled: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: list(DEFAULT_STRATEGIES),
+    )
 
     sma_min_gap_ratio: Decimal = Decimal("0.0")
     sma_full_confidence_gap_ratio: Decimal = Decimal("0.02")
