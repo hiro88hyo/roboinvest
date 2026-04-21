@@ -41,10 +41,22 @@ def test_main_no_args_errors() -> None:
         main([])
 
 
-def test_main_stream_not_implemented(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["stream"]) == 2
-    err = capsys.readouterr().err
-    assert "not implemented" in err
+def test_main_stream_missing_supabase_env_returns_2(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PUBSUB_PROJECT_ID", "test-project")
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
+    monkeypatch.delenv("SUPABASE_SECRET_KEY", raising=False)
+    assert main(["stream", "--iterations", "0"]) == 2
+
+
+def test_main_stream_missing_pubsub_project_returns_2(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SUPABASE_URL", "http://localhost:54321")
+    monkeypatch.setenv("SUPABASE_SECRET_KEY", "dummy")
+    monkeypatch.delenv("PUBSUB_PROJECT_ID", raising=False)
+    assert main(["stream", "--iterations", "0"]) == 2
 
 
 def test_main_unknown_subcommand_rejected() -> None:

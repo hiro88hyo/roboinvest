@@ -92,11 +92,20 @@ class StreamRunner:
         return results
 
     async def run_once(self) -> BatchStats:
-        pulled_a, parse_a, poison_acked_a = await self._pull_into_buffer(
-            self.subscriber_a, self.settings.pubsub_subscription_signals_a, origin="a"
-        )
-        pulled_b, parse_b, poison_acked_b = await self._pull_into_buffer(
-            self.subscriber_b, self.settings.pubsub_subscription_signals_b, origin="b"
+        (
+            (pulled_a, parse_a, poison_acked_a),
+            (pulled_b, parse_b, poison_acked_b),
+        ) = await asyncio.gather(
+            self._pull_into_buffer(
+                self.subscriber_a,
+                self.settings.pubsub_subscription_signals_a,
+                origin="a",
+            ),
+            self._pull_into_buffer(
+                self.subscriber_b,
+                self.settings.pubsub_subscription_signals_b,
+                origin="b",
+            ),
         )
 
         ready = self._buffer.drain_ready(self.monotonic())
@@ -138,6 +147,7 @@ class StreamRunner:
         messages = await subscriber.pull(
             subscription,
             max_messages=self.settings.pubsub_pull_max_messages,
+            return_immediately=True,
         )
         parse_errors = 0
         poison_ack_ids: list[str] = []

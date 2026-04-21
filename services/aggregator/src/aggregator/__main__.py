@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
 import sys
 from pathlib import Path
 
 from .backtest import iter_signals, run_backtest, write_jsonl
+from .clients.pubsub import PubSubPublisher, PubSubSubscriber
+from .clients.supabase import SupabaseWriter
 from .config import AggregatorSettings
 from .consensus import ConsensusConfig
+from .streaming.runner import StreamRunner
 
 logger = logging.getLogger(__name__)
 
@@ -54,9 +58,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="ペアリング bucket ミリ秒。省略時は PAIRING_BUCKET_MS 環境変数。",
     )
 
-    subparsers.add_parser(
+    st = subparsers.add_parser(
         "stream",
-        help="(Phase 3) strategy-signals-a/b を購読して trade-signals に publish する常駐ループ",
+        help="strategy-signals-a/b を購読して trade-signals に publish する常駐ループ",
+    )
+    st.add_argument(
+        "--iterations",
+        dest="iterations",
+        type=int,
+        default=None,
+        help="(dev) N バッチだけ処理して終了する。未指定で無限ループ。",
     )
     return p
 
@@ -115,6 +126,52 @@ def _run_backtest_cmd(
     return 0
 
 
+async def _run_stream_cmd(*, iterations: int | None) -> int:
+    settings = AggregatorSettings()
+    logging.basicConfig(
+        level=settings.log_level,
+        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
+    )
+
+    if not settings.supabase_url or not settings.supabase_secret_key:
+        logger.error("SUPABASE_URL / SUPABASE_SECRET_KEY が未設定です")
+        return 2
+    if not settings.pubsub_project_id:
+        logger.error("PUBSUB_PROJECT_ID が未設定です")
+        return 2
+
+    async with (
+        PubSubSubscriber(
+            project_id=settings.pubsub_project_id,
+            emulator_host=settings.pubsub_emulator_host,
+        ) as sub_a,
+        PubSubSubscriber(
+            project_id=settings.pubsub_project_id,
+            emulator_host=settings.pubsub_emulator_host,
+        ) as sub_b,
+        PubSubPublisher(
+            project_id=settings.pubsub_project_id,
+            emulator_host=settings.pubsub_emulator_host,
+        ) as publisher,
+        SupabaseWriter(
+            url=settings.supabase_url,
+            secret_key=settings.supabase_secret_key,
+        ) as writer,
+    ):
+        runner = StreamRunner(
+            subscriber_a=sub_a,
+            subscriber_b=sub_b,
+            publisher=publisher,
+            writer=writer,
+            settings=settings,
+            consensus_config=_consensus_config_from(settings),
+        )
+        await runner.run(iterations=iterations)
+
+    logger.info("stream done: iterations=%s", iterations)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "backtest":
@@ -125,11 +182,7 @@ def main(argv: list[str] | None = None) -> int:
             bucket_ms=args.bucket_ms,
         )
     if args.command == "stream":
-        print(
-            "aggregator 'stream' is not implemented yet (Phase 3).",
-            file=sys.stderr,
-        )
-        return 2
+        return asyncio.run(_run_stream_cmd(iterations=args.iterations))
     raise SystemExit(f"unknown command: {args.command}")
 
 
