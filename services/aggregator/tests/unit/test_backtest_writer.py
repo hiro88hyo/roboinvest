@@ -3,10 +3,9 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+from aggregator.backtest.writer import write_jsonl
 from trade_contracts.enums import Action, SignalSource, TradingStyle
 from trade_contracts.signal import UnifiedTradeSignal
-
-from aggregator.backtest.writer import write_jsonl
 
 
 def _unified(symbol: str = "7203") -> UnifiedTradeSignal:

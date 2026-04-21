@@ -5,10 +5,9 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
+from aggregator.__main__ import main
 from trade_contracts.enums import Action, SignalSource
 from trade_contracts.signal import StrategySignal, UnifiedTradeSignal
-
-from aggregator.__main__ import main
 
 
 def _write_jsonl(path: Path, signals: list[StrategySignal]) -> None:

@@ -4,10 +4,9 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
-from trade_contracts.enums import Action, SignalSource, TradingStyle
-
 from aggregator.backtest.runner import run_backtest
 from aggregator.consensus import ConsensusConfig
+from trade_contracts.enums import Action, SignalSource, TradingStyle
 
 
 def _cfg(**overrides: object) -> ConsensusConfig:

@@ -5,10 +5,10 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
+from aggregator.backtest.reader import iter_signals
+from pydantic import ValidationError
 from trade_contracts.enums import Action, SignalSource
 from trade_contracts.signal import StrategySignal
-
-from aggregator.backtest.reader import iter_signals
 
 
 def test_iter_signals_skips_blank_lines(tmp_path: Path) -> None:
@@ -36,5 +36,5 @@ def test_iter_signals_empty_file(tmp_path: Path) -> None:
 def test_iter_signals_malformed_raises(tmp_path: Path) -> None:
     path = tmp_path / "signals.jsonl"
     path.write_text("{ not json\n")
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         list(iter_signals(path))

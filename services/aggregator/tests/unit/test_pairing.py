@@ -3,9 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
-from trade_contracts.enums import Action, SignalSource
-
 from aggregator.pairing import bucket_key, group_by_bucket
+from trade_contracts.enums import Action, SignalSource
 
 
 def test_bucket_key_rounds_down(signal_factory) -> None:  # type: ignore[no-untyped-def]
