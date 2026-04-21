@@ -8,6 +8,7 @@ dependencies = [
     "trade-contracts",
     "universe-scanner",
     "feature-engine",
+    "strategy-rule",
 ]
 
 [tool.uv]
@@ -18,6 +19,7 @@ package = false
 trade-contracts = { workspace = true }
 universe-scanner = { workspace = true }
 feature-engine = { workspace = true }
+strategy-rule = { workspace = true }
 
 [tool.uv.workspace]
 # 未実装のサービスはディレクトリが生まれたタイミングで追記する。
@@ -25,6 +27,7 @@ members = [
     "contracts/python",
     "services/universe-scanner",
     "services/feature-engine",
+    "services/strategy-rule",
 ]
 
 [dependency-groups]
@@ -64,7 +67,7 @@ pretty = true
 show_error_codes = true
 namespace_packages = true
 explicit_package_bases = true
-mypy_path = "contracts/python:services/universe-scanner/src:services/feature-engine/src"
+mypy_path = "contracts/python:services/universe-scanner/src:services/feature-engine/src:services/strategy-rule/src"
 files = [
     "contracts/python/trade_contracts",
     "contracts/python/tests",
@@ -72,6 +75,8 @@ files = [
     "services/universe-scanner/tests",
     "services/feature-engine/src",
     "services/feature-engine/tests",
+    "services/strategy-rule/src",
+    "services/strategy-rule/tests",
 ]
 plugins = ["pydantic.mypy"]
 
@@ -92,6 +97,7 @@ testpaths = [
     "contracts/python/tests",
     "services/universe-scanner/tests",
     "services/feature-engine/tests",
+    "services/strategy-rule/tests",
 ]
 markers = [
     "integration: end-to-end tests that require a running Pub/Sub emulator / Supabase (skipped by default if unreachable)",
@@ -104,6 +110,7 @@ source = [
     "contracts/python/trade_contracts",
     "services/universe-scanner/src/universe_scanner",
     "services/feature-engine/src/feature_engine",
+    "services/strategy-rule/src/strategy_rule",
 ]
 
 [tool.coverage.report]

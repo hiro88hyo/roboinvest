@@ -5,6 +5,7 @@ requires-python = ">=3.12"
 [manifest]
 members = [
     "feature-engine",
+    "strategy-rule",
     "trade-ai-agent",
     "trade-contracts",
     "universe-scanner",
@@ -581,6 +582,27 @@ wheels = [
 ]
 
 [[package]]
+name = "strategy-rule"
+version = "0.1.0"
+source = { editable = "services/strategy-rule" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "tenacity" },
+    { name = "trade-contracts" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pydantic", specifier = ">=2.7" },
+    { name = "pydantic-settings", specifier = ">=2.4" },
+    { name = "tenacity", specifier = ">=9.0" },
+    { name = "trade-contracts", editable = "contracts/python" },
+]
+
+[[package]]
 name = "tenacity"
 version = "9.1.4"
 source = { registry = "https://pypi.org/simple" }
@@ -595,6 +617,7 @@ version = "0.0.0"
 source = { virtual = "." }
 dependencies = [
     { name = "feature-engine" },
+    { name = "strategy-rule" },
     { name = "trade-contracts" },
     { name = "universe-scanner" },
 ]
@@ -611,6 +634,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "feature-engine", editable = "services/feature-engine" },
+    { name = "strategy-rule", editable = "services/strategy-rule" },
     { name = "trade-contracts", editable = "contracts/python" },
     { name = "universe-scanner", editable = "services/universe-scanner" },
 ]
