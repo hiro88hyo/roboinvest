@@ -10,6 +10,7 @@ dependencies = [
     "feature-engine",
     "strategy-rule",
     "aggregator",
+    "gateway",
 ]
 
 [tool.uv]
@@ -22,6 +23,7 @@ universe-scanner = { workspace = true }
 feature-engine = { workspace = true }
 strategy-rule = { workspace = true }
 aggregator = { workspace = true }
+gateway = { workspace = true }
 
 [tool.uv.workspace]
 # 未実装のサービスはディレクトリが生まれたタイミングで追記する。
@@ -31,6 +33,7 @@ members = [
     "services/feature-engine",
     "services/strategy-rule",
     "services/aggregator",
+    "services/gateway",
 ]
 
 [dependency-groups]
@@ -70,7 +73,7 @@ pretty = true
 show_error_codes = true
 namespace_packages = true
 explicit_package_bases = true
-mypy_path = "contracts/python:services/universe-scanner/src:services/feature-engine/src:services/strategy-rule/src:services/aggregator/src"
+mypy_path = "contracts/python:services/universe-scanner/src:services/feature-engine/src:services/strategy-rule/src:services/aggregator/src:services/gateway/src"
 files = [
     "contracts/python/trade_contracts",
     "contracts/python/tests",
@@ -82,6 +85,8 @@ files = [
     "services/strategy-rule/tests",
     "services/aggregator/src",
     "services/aggregator/tests",
+    "services/gateway/src",
+    "services/gateway/tests",
 ]
 plugins = ["pydantic.mypy"]
 
@@ -104,6 +109,7 @@ testpaths = [
     "services/feature-engine/tests",
     "services/strategy-rule/tests",
     "services/aggregator/tests",
+    "services/gateway/tests",
 ]
 markers = [
     "integration: end-to-end tests that require a running Pub/Sub emulator / Supabase (skipped by default if unreachable)",
@@ -118,6 +124,7 @@ source = [
     "services/feature-engine/src/feature_engine",
     "services/strategy-rule/src/strategy_rule",
     "services/aggregator/src/aggregator",
+    "services/gateway/src/gateway",
 ]
 
 [tool.coverage.report]
