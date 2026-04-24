@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable, Iterator
 from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import uuid4
@@ -129,3 +129,36 @@ def supabase_secret_key() -> str:
     if not key:
         pytest.skip("SUPABASE_SECRET_KEY not set")
     return key
+
+
+@pytest.fixture
+def run_id() -> str:
+    """テストごとに一意な suffix。Pub/Sub subscription の衝突回避用。"""
+    return uuid4().hex[:8]
+
+
+@pytest.fixture
+async def pubsub_admin(pubsub_emulator_host: str) -> AsyncIterator[httpx.AsyncClient]:
+    """Pub/Sub エミュレータの管理 REST を叩く httpx クライアント (subscription 管理用)。"""
+    async with httpx.AsyncClient(
+        base_url=f"http://{pubsub_emulator_host}",
+        timeout=10.0,
+        headers={"Content-Type": "application/json"},
+    ) as client:
+        yield client
+
+
+@pytest.fixture
+def test_symbol(run_id: str) -> str:
+    """既存データと衝突しない一時テスト銘柄。"""
+    return f"IT{run_id[:6].upper()}"
+
+
+@pytest.fixture
+def unique_resources(run_id: str) -> Iterator[dict[str, str]]:
+    """テストで使う一意な subscription 名を払い出す。"""
+    yield {
+        "trade_signals_sub": f"it-gw-trade-signals-{run_id}",
+        "live_orders_sub": f"it-gw-live-orders-{run_id}",
+        "paper_orders_sub": f"it-gw-paper-orders-{run_id}",
+    }

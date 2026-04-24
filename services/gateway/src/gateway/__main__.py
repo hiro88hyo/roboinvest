@@ -1,11 +1,9 @@
-"""Gateway CLI entry point.
-
-Phase 2 wires the ``backtest`` subcommand; ``stream`` arrives in Phase 3.
-"""
+"""Gateway CLI entry point."""
 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import logging
 import sys
@@ -15,7 +13,11 @@ from pathlib import Path
 from trade_contracts.risk import KillSwitchState
 
 from .backtest import iter_unified_signals, run_backtest, write_jsonl
+from .clients.pubsub import PubSubPublisher, PubSubSubscriber
+from .clients.supabase import SupabaseClient
 from .config import GatewaySettings, RiskConfig
+from .router import TopicRouting
+from .streaming.runner import StreamRunner
 
 logger = logging.getLogger(__name__)
 
@@ -81,9 +83,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="資金額。省略時は CAPITAL 環境変数の値を使用。",
     )
 
-    subparsers.add_parser(
+    st = subparsers.add_parser(
         "stream",
-        help="(Phase 3) trade-signals を購読し live-orders / paper-orders に publish する",
+        help="trade-signals を購読し live-orders / paper-orders に publish する常駐ループ",
+    )
+    st.add_argument(
+        "--iterations",
+        dest="iterations",
+        type=int,
+        default=None,
+        help="(dev) N バッチだけ処理して終了する。未指定で無限ループ。",
     )
     return p
 
@@ -163,6 +172,54 @@ def _run_backtest_cmd(
     return 0
 
 
+async def _run_stream_cmd(*, iterations: int | None) -> int:
+    settings = GatewaySettings()
+    logging.basicConfig(
+        level=settings.log_level,
+        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
+    )
+
+    if not settings.supabase_url or not settings.supabase_secret_key:
+        logger.error("SUPABASE_URL / SUPABASE_SECRET_KEY が未設定です")
+        return 2
+    if not settings.pubsub_project_id:
+        logger.error("PUBSUB_PROJECT_ID が未設定です")
+        return 2
+
+    risk_config = RiskConfig.from_settings(settings)
+    routing = TopicRouting(
+        live_topic=settings.pubsub_topic_live_orders,
+        paper_topic=settings.pubsub_topic_paper_orders,
+    )
+
+    async with (
+        PubSubSubscriber(
+            project_id=settings.pubsub_project_id,
+            emulator_host=settings.pubsub_emulator_host,
+        ) as subscriber,
+        PubSubPublisher(
+            project_id=settings.pubsub_project_id,
+            emulator_host=settings.pubsub_emulator_host,
+        ) as publisher,
+        SupabaseClient(
+            url=settings.supabase_url,
+            secret_key=settings.supabase_secret_key,
+        ) as supabase,
+    ):
+        runner = StreamRunner(
+            subscriber=subscriber,
+            publisher=publisher,
+            supabase=supabase,
+            settings=settings,
+            risk_config=risk_config,
+            routing=routing,
+        )
+        await runner.run(iterations=iterations)
+
+    logger.info("stream done: iterations=%s", iterations)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "backtest":
@@ -176,8 +233,7 @@ def main(argv: list[str] | None = None) -> int:
             capital=args.capital,
         )
     if args.command == "stream":
-        print("gateway stream is not implemented yet (Phase 3).", file=sys.stderr)
-        return 2
+        return asyncio.run(_run_stream_cmd(iterations=args.iterations))
     raise SystemExit(f"unknown command: {args.command}")
 
 

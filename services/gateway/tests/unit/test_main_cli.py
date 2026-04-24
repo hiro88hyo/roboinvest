@@ -69,10 +69,6 @@ def test_main_unknown_subcommand_rejected() -> None:
         main(["bogus"])
 
 
-def test_main_stream_not_implemented_returns_2() -> None:
-    assert main(["stream"]) == 2
-
-
 def test_backtest_missing_input_returns_2(tmp_path: Path) -> None:
     state_path = tmp_path / "state.json"
     _write_state(state_path)
@@ -313,3 +309,21 @@ def test_backtest_positions_file_must_be_object(
                 str(positions_path),
             ]
         )
+
+
+def test_stream_requires_supabase_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
+    monkeypatch.delenv("SUPABASE_SECRET_KEY", raising=False)
+    monkeypatch.setenv("PUBSUB_PROJECT_ID", "trade-ai-dev")
+
+    rc = main(["stream", "--iterations", "0"])
+    assert rc == 2
+
+
+def test_stream_requires_pubsub_project(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_SECRET_KEY", "k")
+    monkeypatch.delenv("PUBSUB_PROJECT_ID", raising=False)
+
+    rc = main(["stream", "--iterations", "0"])
+    assert rc == 2
