@@ -127,6 +127,49 @@ async def test_read_long_quantity_raises_on_invalid_payload() -> None:
             await client.read_long_quantity(symbol="7203", trade_mode=TradeMode.LIVE)
 
 
+async def test_read_latest_price_returns_decimal() -> None:
+    captured: list[httpx.Request] = []
+
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json=[{"current_price": "2531.5"}])
+
+    async with _build_client(_handler) as client:
+        price = await client.read_latest_price(symbol="7203")
+
+    assert price is not None
+    assert str(price) == "2531.5"
+    assert captured[0].url.path == "/rest/v1/positions"
+    assert captured[0].url.params.get("symbol") == "eq.7203"
+    assert captured[0].url.params.get("order") == "opened_at.desc"
+    assert captured[0].url.params.get("limit") == "1"
+
+
+async def test_read_latest_price_returns_none_when_no_position() -> None:
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[])
+
+    async with _build_client(_handler) as client:
+        assert await client.read_latest_price(symbol="7203") is None
+
+
+async def test_read_latest_price_returns_none_when_null_price() -> None:
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[{"current_price": None}])
+
+    async with _build_client(_handler) as client:
+        assert await client.read_latest_price(symbol="7203") is None
+
+
+async def test_read_latest_price_raises_on_invalid_value() -> None:
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[{"current_price": "not-a-number"}])
+
+    async with _build_client(_handler) as client:
+        with pytest.raises(SupabaseError, match="invalid current_price"):
+            await client.read_latest_price(symbol="7203")
+
+
 async def test_disable_trading_patches_row() -> None:
     captured: list[httpx.Request] = []
 

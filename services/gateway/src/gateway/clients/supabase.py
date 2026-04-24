@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 from typing import Any, Self
 
 import httpx
@@ -129,6 +130,50 @@ class SupabaseClient:
             return int(row["quantity"])
         except (KeyError, TypeError, ValueError) as exc:
             raise SupabaseError(f"invalid position quantity: {row}") from exc
+
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((httpx.HTTPError, SupabaseError)),
+    )
+    async def read_latest_price(self, *, symbol: str) -> Decimal | None:
+        """Return the latest known price for ``symbol`` from ``positions.current_price``.
+
+        Feature Engine updates ``positions.current_price`` on every tick for symbols
+        that have an open position (live or paper). Gateway uses this as the entry
+        price for BUY lot calculation. Returns ``None`` if no position row exists
+        for the symbol under any trade_type — streaming runner will reject such
+        BUY signals with ``missing_entry_price`` (fail-closed).
+        """
+        assert self._client is not None
+        resp = await self._client.get(
+            "/rest/v1/positions",
+            params={
+                "select": "current_price",
+                "symbol": f"eq.{symbol}",
+                "order": "opened_at.desc",
+                "limit": "1",
+            },
+        )
+        if resp.status_code >= 500:
+            raise SupabaseError(
+                f"transient error: table=positions status={resp.status_code} body={resp.text[:200]}"
+            )
+        if resp.status_code >= 300:
+            raise SupabaseError(
+                f"read failed: table=positions status={resp.status_code} body={resp.text[:200]}"
+            )
+        rows = resp.json()
+        if not isinstance(rows, list) or not rows:
+            return None
+        raw = rows[0].get("current_price")
+        if raw is None:
+            return None
+        try:
+            return Decimal(str(raw))
+        except (InvalidOperation, ValueError) as exc:
+            raise SupabaseError(f"invalid current_price: {raw!r}") from exc
 
     @retry(
         reraise=True,
