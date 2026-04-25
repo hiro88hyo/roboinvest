@@ -11,6 +11,7 @@ dependencies = [
     "strategy-rule",
     "aggregator",
     "gateway",
+    "oms-paper",
 ]
 
 [tool.uv]
@@ -24,6 +25,7 @@ feature-engine = { workspace = true }
 strategy-rule = { workspace = true }
 aggregator = { workspace = true }
 gateway = { workspace = true }
+oms-paper = { workspace = true }
 
 [tool.uv.workspace]
 # 未実装のサービスはディレクトリが生まれたタイミングで追記する。
@@ -34,6 +36,7 @@ members = [
     "services/strategy-rule",
     "services/aggregator",
     "services/gateway",
+    "services/oms-paper",
 ]
 
 [dependency-groups]
@@ -73,7 +76,7 @@ pretty = true
 show_error_codes = true
 namespace_packages = true
 explicit_package_bases = true
-mypy_path = "contracts/python:services/universe-scanner/src:services/feature-engine/src:services/strategy-rule/src:services/aggregator/src:services/gateway/src"
+mypy_path = "contracts/python:services/universe-scanner/src:services/feature-engine/src:services/strategy-rule/src:services/aggregator/src:services/gateway/src:services/oms-paper/src"
 files = [
     "contracts/python/trade_contracts",
     "contracts/python/tests",
@@ -87,6 +90,8 @@ files = [
     "services/aggregator/tests",
     "services/gateway/src",
     "services/gateway/tests",
+    "services/oms-paper/src",
+    "services/oms-paper/tests",
 ]
 plugins = ["pydantic.mypy"]
 
@@ -110,6 +115,7 @@ testpaths = [
     "services/strategy-rule/tests",
     "services/aggregator/tests",
     "services/gateway/tests",
+    "services/oms-paper/tests",
 ]
 markers = [
     "integration: end-to-end tests that require a running Pub/Sub emulator / Supabase (skipped by default if unreachable)",
@@ -125,6 +131,7 @@ source = [
     "services/strategy-rule/src/strategy_rule",
     "services/aggregator/src/aggregator",
     "services/gateway/src/gateway",
+    "services/oms-paper/src/oms_paper",
 ]
 
 [tool.coverage.report]

@@ -1,0 +1,171 @@
+# services/oms-paper/
+
+`paper-orders` を購読し、`raw-market-data`（`OrderBookSnapshot`）を擬似約定の判定材料として、約定を `trades_paper` に書き込み `positions`（`trade_type=paper`）を更新する Paper OMS。
+
+アーキテクチャ全体・スキーマはルート [CLAUDE.md](../../CLAUDE.md) と [contracts/](../../contracts/) を参照。ここは `services/oms-paper/` 配下で作業するときの運用ルール。
+
+## 責務 / 非責務
+
+**責務**
+- `paper-orders` (OrderRequest) の購読
+- `raw-market-data` (OrderBookSnapshot) の購読・symbol 別の最新板キャッシュ
+- 板情報を元にした擬似約定判定（フル約定 / 部分約定 / 不約定）
+- 約定行を Supabase `trades_paper` に INSERT
+- `positions`（`trade_type=paper`）の UPSERT（BUY=新規 or 平均取得単価更新、SELL=全決済で DELETE）
+- `system_status.trading_style=day` のとき 14:50 (JST) に paper 全建玉を仮想成行決済
+
+**非責務**
+- リスク検証・ロット計算 → Gateway（OMS は Gateway が承認した OrderRequest を信頼する）
+- `system_status.daily_pnl` 更新（paper はキルスイッチ集計外） → そもそも対象外
+- 実発注 → OMS Live
+- 板情報・テクニカル指標生成 → Feature Engine
+- スイング自動決済（stop_loss / target / trailing / max_hold_days） → 本サービスのスコープ外（Phase 4 以降で別途）
+
+## 実装フェーズ
+
+aggregator / strategy-rule / gateway と同じ 3 フェーズパターン。段階コミット → `--no-ff` マージ。
+
+### Phase 1: 擬似約定のコア（純関数 + unit test）
+
+- **fill_simulator** `fill_simulator.py`: 入力 `OrderRequest` + `OrderBookSnapshot` → `FillResult`
+  - `OrderType.MARKET` の `BUY` は asks を低い価格から食い潰し、`SELL` は bids を高い価格から食い潰す
+  - 必要数量を満たせない場合は部分約定（`filled_quantity < quantity`）
+  - 板が空 / 該当方向の価格レベルが無い場合は不約定（`filled_quantity=0`）
+  - 約定価格は数量加重平均価格（VWAP）。`Decimal` で計算し、最終丸めは `ROUND_HALF_UP` で 1 円単位（市場慣習）に揃える
+  - `OrderType.LIMIT` は Phase 1 のスコープ外（来た場合は不約定 + 理由 `limit_not_supported`）
+- **position_updater** `position_updater.py`: 入力 `FillResult` + 既存 `PaperPosition | None` → `PositionUpdate`
+  - `BUY` で既存ポジションなし → 新規ポジション（`entry_price = fill_price`）
+  - `BUY` で既存 LONG あり → 数量加算 + 平均取得単価更新
+  - `SELL` で LONG あり → 数量減算（残量 0 で `delete=True`）
+  - `SELL` で LONG なし → エラー（Gateway 側で reject されている前提なのでログ + 約定スキップ）
+- **closeout** `closeout.py`: 入力 `list[PaperPosition]` → 決済用 `OrderRequest` リスト（純関数）
+  - 各ポジションに対し `Side.SELL` / `OrderType.MARKET` / `quantity = position.quantity` の `OrderRequest` を生成
+  - `unified_signal_id` は closeout 用のセンチネル UUID（呼び出し側で渡す）
+- I/O・時刻・DB・Pub/Sub を持ち込まない純関数だけで構成する
+
+### Phase 2: バックテストランナー
+
+- 入力:
+  - `OrderRequest` JSONL（gateway Phase 2 の `--output-approved`）
+  - `OrderBookSnapshot` JSONL（feature-engine の Phase 2 出力 or 専用フィクスチャ）
+  - 初期 `PaperPosition` JSON（オプション）
+- 動作: 時刻順マージしながらシンボル別に最新の板を保持し、注文が来たら直前の板でフルフィル試行 → 結果を出力
+- 出力:
+  - 約定 JSONL（`PaperFillRecord` = 約定行 + 元 OrderRequest 参照）
+  - 終了時 positions JSON
+  - 不約定ログ JSONL（理由付き）
+- CLI: `uv run python -m oms_paper backtest --orders ... --books ... --positions ... --output-fills ... --output-positions ... --output-rejected ...`
+
+### Phase 3: ストリーミング実装
+
+- 3a: `clients/pubsub.py`（subscriber × 2、publisher は不要）/ `clients/supabase.py`（`positions`, `trades_paper`, `system_status` の R/W）
+- 3b: `streaming/runner.py` — paper-orders と raw-market-data を joiner で突き合わせる
+  - シンボル別に最新の `OrderBookSnapshot` をメモリ保持
+  - paper-orders 受信時、対応シンボルの板を引いて擬似約定 → Supabase 書き込み → ack
+  - 板未受信のシンボルへの注文は短時間（数百 ms）待機 → タイムアウトで不約定 ack（再配信は冪等性のため避ける）
+  - 14:50 (JST) cron タスクが `system_status.trading_style=day` を確認し、paper positions 全件を closeout へ
+- 3c: CLI `stream` サブコマンド + e2e テスト（Pub/Sub エミュレータ + ローカル Supabase）
+
+## ディレクトリ構成（想定）
+
+```
+services/oms-paper/
+├── CLAUDE.md                    # 本ファイル
+├── pyproject.toml               # uv プロジェクト (trade-contracts ローカル参照)
+├── .env.example
+├── src/oms_paper/
+│   ├── __init__.py
+│   ├── __main__.py              # エントリポイント (CLI: stream / backtest)
+│   ├── config.py                # pydantic-settings ベースの env 読み込み
+│   ├── fill_simulator.py        # Phase 1 板情報からの擬似約定 (純関数)
+│   ├── position_updater.py      # Phase 1 ポジション遷移 (純関数)
+│   ├── closeout.py              # Phase 1 14:50 強制決済の OrderRequest 生成 (純関数)
+│   ├── backtest/                # Phase 2
+│   │   ├── __init__.py
+│   │   ├── reader.py
+│   │   ├── runner.py
+│   │   └── writer.py
+│   ├── clients/                 # Phase 3
+│   │   ├── pubsub.py
+│   │   └── supabase.py
+│   └── streaming/               # Phase 3
+│       ├── __init__.py
+│       └── runner.py
+└── tests/
+    ├── conftest.py
+    ├── unit/
+    ├── integration/
+    └── fixtures/
+```
+
+## 擬似約定ロジックの規約（Phase 1）
+
+- 通貨・金額・価格は **必ず `Decimal`**（`float` 禁止）。数量は `int`
+- `FillResult` は不約定時も同じ型で返す（`filled_quantity=0`, `fill_price=None`, `reason="empty_book"` 等）
+- VWAP 計算:
+  ```
+  remaining = order.quantity
+  consumed = []  # [(price, qty), ...]
+  for level in book_side:  # BUY なら asks の昇順, SELL なら bids の降順
+      take = min(level.quantity, remaining)
+      consumed.append((level.price, take))
+      remaining -= take
+      if remaining == 0:
+          break
+  filled_qty = sum(qty for _, qty in consumed)
+  vwap = sum(price * qty for price, qty in consumed) / filled_qty   # ROUND_HALF_UP, 1 円単位
+  ```
+- 単元株未満の部分約定も Phase 1 では許容する（実運用でも約定通知は単元未満で来うる）
+- `unified_signal_id` は `OrderRequest` から `trades_paper` 行へそのまま継承する
+
+## Supabase 連携の規約（Phase 3）
+
+- `positions` は `(symbol, trade_type='paper')` で UPSERT / DELETE
+  - DELETE は `quantity=0` になったとき（部分約定で残量があれば UPDATE）
+- `trades_paper` INSERT は約定 1 回につき 1 行
+- `system_status` は 14:50 cron で `.eq("id", 1).single()` のみ読み取り（OMS Paper は更新しない）
+- `unrealized_pnl` 更新は **Feature Engine の責務**。OMS Paper は `entry_price` / `quantity` のみ書く
+- 書き込み順序: `trades_paper` INSERT → `positions` UPSERT/DELETE → ack
+
+## Pub/Sub 連携の規約（Phase 3）
+
+- 購読:
+  - `paper-orders`（subscription 名は env `PUBSUB_SUBSCRIPTION_PAPER_ORDERS`、デフォルト `oms-paper-paper-orders`）
+  - `raw-market-data`（env `PUBSUB_SUBSCRIPTION_RAW_MARKET_DATA`、デフォルト `oms-paper-raw-market-data`）
+- メッセージ型は payload 中の `symbol` / 板構造で `OrderBookSnapshot` か `TickData` を判別。`TickData` は無視
+- `ack` は Supabase 書き込み成功後のみ（書き込み失敗時は `nack` して再配信）
+- 二重約定回避: `OrderRequest.order_id` で Supabase `trades_paper` 側に冪等性キーを持たせるか、上流の at-least-once を許容するかは Phase 3 着手時に確定
+
+## 設定（env）
+
+`.env.example` に列挙するキー例:
+- `OMS_PAPER_MODE`: `stream` | `backtest`
+- `SUPABASE_URL` / `SUPABASE_SECRET_KEY`
+- `PUBSUB_PROJECT_ID` / `PUBSUB_EMULATOR_HOST`
+- `PUBSUB_SUBSCRIPTION_PAPER_ORDERS`: `oms-paper-paper-orders`
+- `PUBSUB_SUBSCRIPTION_RAW_MARKET_DATA`: `oms-paper-raw-market-data`
+- `DAY_CLOSEOUT_TIME`: デフォルト `14:50`
+- `DAY_CLOSEOUT_TIMEZONE`: デフォルト `Asia/Tokyo`
+
+秘密情報は `.env.example` にダミー値で列挙、`.env` はコミットしない。
+
+## テスト方針
+
+- **ユニット**:
+  - fill_simulator: 板の各ケース（フル約定 / 部分約定 / 板空 / LIMIT 拒否 / 反対方向不足）
+  - VWAP 丸め（複数価格レベルにまたがる約定）
+  - position_updater: 新規 BUY / 既存への BUY 加算 / 部分 SELL / 全 SELL / SELL 失敗
+  - closeout: 0 件 / 複数銘柄 / すでに 0 株のポジション
+- **Phase 2 統合**: JSONL 入出力、注文と板のタイムスタンプ整合
+- **Phase 3 統合**: Pub/Sub エミュレータ + ローカル Supabase で約定 → DB 反映 → ack まで含む end-to-end
+- カバレッジ 80%+（ルート方針）
+- **約定価格 / 数量の計算は必ずエッジケースを書く**（ROUND モード, 単元未満残量, 板枯渇）
+
+## 開発時の注意
+
+- **OMS Paper はキルスイッチに影響しない**。`daily_pnl` は live のみ集計するため、paper の約定で `system_status` を書き換えない
+- **純関数とサイドエフェクトを厳密に分離**: fill_simulator / position_updater / closeout は I/O を持たない。I/O は `clients/` と `streaming/runner.py` に閉じる
+- **fail-closed**: 板が無い / Supabase 書き込み失敗時は約定を確定しない（at-least-once + 上流 retry に委ねる）
+- **`trade-contracts` を破らない**: 既存型で表現できないなら `contracts/` の 3 層同期手順に従って拡張
+- **Phase 1 では Pub/Sub / Supabase を触らない**。Phase 3 で `clients/` にまとめて導入
+- **空売りは contracts レベルで `PositionSide=LONG` のみ**。SELL は LONG 決済のみ。Gateway で弾かれているはずだが、OMS でも防御的にチェックする
