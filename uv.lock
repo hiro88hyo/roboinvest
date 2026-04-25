@@ -7,6 +7,7 @@ members = [
     "aggregator",
     "feature-engine",
     "gateway",
+    "oms-paper",
     "strategy-rule",
     "trade-ai-agent",
     "trade-contracts",
@@ -381,6 +382,27 @@ wheels = [
 ]
 
 [[package]]
+name = "oms-paper"
+version = "0.1.0"
+source = { editable = "services/oms-paper" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "tenacity" },
+    { name = "trade-contracts" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pydantic", specifier = ">=2.7" },
+    { name = "pydantic-settings", specifier = ">=2.4" },
+    { name = "tenacity", specifier = ">=9.0" },
+    { name = "trade-contracts", editable = "contracts/python" },
+]
+
+[[package]]
 name = "packaging"
 version = "26.1"
 source = { registry = "https://pypi.org/simple" }
@@ -663,6 +685,7 @@ dependencies = [
     { name = "aggregator" },
     { name = "feature-engine" },
     { name = "gateway" },
+    { name = "oms-paper" },
     { name = "strategy-rule" },
     { name = "trade-contracts" },
     { name = "universe-scanner" },
@@ -682,6 +705,7 @@ requires-dist = [
     { name = "aggregator", editable = "services/aggregator" },
     { name = "feature-engine", editable = "services/feature-engine" },
     { name = "gateway", editable = "services/gateway" },
+    { name = "oms-paper", editable = "services/oms-paper" },
     { name = "strategy-rule", editable = "services/strategy-rule" },
     { name = "trade-contracts", editable = "contracts/python" },
     { name = "universe-scanner", editable = "services/universe-scanner" },
