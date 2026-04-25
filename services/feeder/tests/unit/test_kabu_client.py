@@ -1,0 +1,181 @@
+"""KabuClient の単体テスト。httpx の MockTransport で REST 系を検証する。"""
+
+from __future__ import annotations
+
+import json
+
+import httpx
+import pytest
+from feeder.kabu_client import KabuApiError, KabuClient, SymbolRegistration
+
+
+def _make_client(handler: httpx.MockTransport) -> KabuClient:
+    return KabuClient(
+        base_url="http://localhost:18081/kabusapi",
+        api_password="dummy-pw",
+        ws_url="ws://localhost:18081/kabusapi/websocket",
+        http_client=httpx.AsyncClient(transport=handler),
+    )
+
+
+async def test_fetch_token_returns_token_and_caches() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        body = json.loads(request.content)
+        assert body == {"APIPassword": "dummy-pw"}
+        return httpx.Response(200, json={"Token": "abcdef" * 5})
+
+    client = _make_client(httpx.MockTransport(handler))
+    try:
+        token = await client.fetch_token()
+        assert token == "abcdef" * 5
+        assert client.token == token
+        # ensure_token は再発行を起こさない
+        again = await client.ensure_token()
+        assert again == token
+        assert len(seen) == 1
+    finally:
+        await client.aclose()
+
+
+async def test_fetch_token_raises_on_4xx_with_body() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, json={"Code": 4001001, "Message": "API パスワード不一致"})
+
+    client = _make_client(httpx.MockTransport(handler))
+    try:
+        with pytest.raises(KabuApiError) as exc:
+            await client.fetch_token()
+        assert exc.value.status_code == 401
+        assert exc.value.body == {"Code": 4001001, "Message": "API パスワード不一致"}
+    finally:
+        await client.aclose()
+
+
+async def test_register_sends_symbols_with_api_key() -> None:
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/token"):
+            return httpx.Response(200, json={"Token": "tok-123"})
+        captured["url"] = str(request.url)
+        captured["method"] = request.method
+        captured["api_key"] = request.headers.get("X-API-KEY")
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"RegistList": [{"Symbol": "7203", "Exchange": 1}]})
+
+    client = _make_client(httpx.MockTransport(handler))
+    try:
+        result = await client.register(
+            [
+                SymbolRegistration(symbol="7203", exchange=1),
+                SymbolRegistration(symbol="9984", exchange=1),
+            ]
+        )
+        assert captured["method"] == "PUT"
+        assert captured["api_key"] == "tok-123"
+        assert captured["body"] == {
+            "Symbols": [
+                {"Symbol": "7203", "Exchange": 1},
+                {"Symbol": "9984", "Exchange": 1},
+            ]
+        }
+        assert "RegistList" in result
+    finally:
+        await client.aclose()
+
+
+async def test_unregister_all_uses_put_with_no_body() -> None:
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/token"):
+            return httpx.Response(200, json={"Token": "tok-abc"})
+        captured["method"] = request.method
+        captured["url"] = str(request.url)
+        captured["content_length"] = len(request.content)
+        return httpx.Response(200, json={"RegistList": []})
+
+    client = _make_client(httpx.MockTransport(handler))
+    try:
+        await client.unregister_all()
+        assert captured["method"] == "PUT"
+        assert captured["url"] == "http://localhost:18081/kabusapi/unregister/all"
+        assert captured["content_length"] == 0
+    finally:
+        await client.aclose()
+
+
+async def test_get_symbol_propagates_kabu_error_body_for_4xx() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/token"):
+            return httpx.Response(200, json={"Token": "tok-xyz"})
+        return httpx.Response(
+            400,
+            json={"Code": 4001003, "Message": "銘柄コードが不正です"},
+        )
+
+    client = _make_client(httpx.MockTransport(handler))
+    try:
+        with pytest.raises(KabuApiError) as exc:
+            await client.get_symbol("XXXX", 1)
+        assert exc.value.status_code == 400
+        assert exc.value.body == {"Code": 4001003, "Message": "銘柄コードが不正です"}
+    finally:
+        await client.aclose()
+
+
+async def test_get_symbol_returns_dict_for_2xx() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/token"):
+            return httpx.Response(200, json={"Token": "tok-1"})
+        assert request.url.path.endswith("/symbol/7203@1")
+        return httpx.Response(
+            200,
+            json={"Symbol": "7203", "SymbolName": "トヨタ", "PriceRangeGroup": "10000"},
+        )
+
+    client = _make_client(httpx.MockTransport(handler))
+    try:
+        info = await client.get_symbol("7203", 1)
+        assert info["Symbol"] == "7203"
+        assert info["SymbolName"] == "トヨタ"
+    finally:
+        await client.aclose()
+
+
+async def test_invalidate_token_forces_refetch() -> None:
+    counter = {"token": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/token"):
+            counter["token"] += 1
+            return httpx.Response(200, json={"Token": f"tok-{counter['token']}"})
+        return httpx.Response(200, json={})
+
+    client = _make_client(httpx.MockTransport(handler))
+    try:
+        first = await client.ensure_token()
+        client.invalidate_token()
+        second = await client.ensure_token()
+        assert first != second
+        assert counter["token"] == 2
+    finally:
+        await client.aclose()
+
+
+async def test_check_handles_non_json_body() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, content=b"<html>internal error</html>")
+
+    client = _make_client(httpx.MockTransport(handler))
+    try:
+        with pytest.raises(KabuApiError) as exc:
+            await client.fetch_token()
+        assert exc.value.status_code == 500
+        assert isinstance(exc.value.body, dict)
+        assert exc.value.body.get("_raw", "").startswith("<html>")
+    finally:
+        await client.aclose()
