@@ -5,6 +5,7 @@ from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
 from oms_paper.__main__ import main
 from oms_paper._testing import DEFAULT_TS, make_order_book, make_order_request, make_paper_position
 from oms_paper.backtest.writer import write_jsonl, write_positions_json
@@ -152,6 +153,34 @@ def test_cli_backtest_missing_orders_file(tmp_path: Path) -> None:
     assert rc == 2
 
 
-def test_cli_stream_returns_not_implemented() -> None:
-    rc = main(["stream"])
+def test_cli_stream_requires_pubsub_project(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("PUBSUB_PROJECT_ID", raising=False)
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
+    monkeypatch.delenv("SUPABASE_SECRET_KEY", raising=False)
+    rc = main(["stream", "--iterations", "0"])
     assert rc == 2
+
+
+def test_cli_stream_requires_supabase(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PUBSUB_PROJECT_ID", "trade-ai-dev")
+    monkeypatch.setenv("PUBSUB_EMULATOR_HOST", "pubsub:8085")
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
+    monkeypatch.delenv("SUPABASE_SECRET_KEY", raising=False)
+    rc = main(["stream", "--iterations", "0"])
+    assert rc == 2
+
+
+def test_cli_stream_iterations_zero_with_env_runs_no_op(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """env が揃っていて --iterations 0 のときは何もせず正常終了する。
+
+    Pub/Sub / Supabase クライアントは ``__aenter__`` 時にネットワーク接続しないため、
+    iterations=0 ならハンドシェイクは発生しない。
+    """
+    monkeypatch.setenv("PUBSUB_PROJECT_ID", "trade-ai-dev")
+    monkeypatch.setenv("PUBSUB_EMULATOR_HOST", "pubsub:8085")
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_SECRET_KEY", "k")
+    rc = main(["stream", "--iterations", "0", "--no-closeout"])
+    assert rc == 0
