@@ -162,7 +162,9 @@ async def test_initial_cycle_registers_and_emits_records() -> None:
     assert stats.unregistered == 0
     assert stats.messages_received == 2
     assert stats.records_emitted == 2
-    assert stats.ended_reason == "ws_closed"
+    # WS / watchlist のどちらが先に終わるかは asyncio スケジューラ依存
+    # (両者ともすぐ StopAsyncIteration で抜ける)。どちらでも cycle 正常終了として許容
+    assert stats.ended_reason in {"ws_closed", "watchlist_exhausted"}
 
     # 呼び出し順序: ensure_token → unregister_all → register → connect_websocket
     op_sequence = [c[0] for c in kabu.calls]

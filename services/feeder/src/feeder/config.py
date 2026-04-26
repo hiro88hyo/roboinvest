@@ -30,6 +30,9 @@ class FeederSettings(BaseSettings):
     pubsub_project_id: str = ""
     pubsub_emulator_host: str = ""
     pubsub_topic_raw_market_data: str = "raw-market-data"
+    pubsub_publish_timeout_seconds: float = 30.0
+
+    watchlist_poll_interval_seconds: float = 60.0
 
     reconnect_initial_backoff_sec: float = 1.0
     reconnect_max_backoff_sec: float = 60.0
