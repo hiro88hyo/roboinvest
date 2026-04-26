@@ -23,6 +23,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+SUPABASE_DIR="$REPO_ROOT/infra"
 OUT_DIR="$REPO_ROOT/contracts/typescript/src/generated"
 OUT_FILE="$OUT_DIR/database.types.ts"
 
@@ -35,5 +36,5 @@ fi
 mkdir -p "$OUT_DIR"
 
 echo "Generating $OUT_FILE from local Supabase ..." >&2
-supabase gen types typescript --local --schema public >"$OUT_FILE"
+( cd "$SUPABASE_DIR" && supabase gen types typescript --local --schema public ) >"$OUT_FILE"
 echo "Done." >&2
