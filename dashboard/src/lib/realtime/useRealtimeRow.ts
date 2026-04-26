@@ -4,7 +4,6 @@ import {
   REALTIME_LISTEN_TYPES,
   REALTIME_POSTGRES_CHANGES_LISTEN_EVENT,
   REALTIME_SUBSCRIBE_STATES,
-  type RealtimePostgresChangesPayload,
 } from "@supabase/supabase-js";
 import { useEffect, useState } from "react";
 import { getBrowserClient } from "../supabase/client";
@@ -20,7 +19,7 @@ export interface UseRealtimeRowOptions<T> {
   initial: T | null;
 }
 
-export function useRealtimeRow<T extends Record<string, unknown>>(
+export function useRealtimeRow<T extends object>(
   opts: UseRealtimeRowOptions<T>,
 ): { row: T | null; status: ChannelStatus } {
   const { channelName, table, schema = "public", filter, initial } = opts;
@@ -44,7 +43,7 @@ export function useRealtimeRow<T extends Record<string, unknown>>(
         table,
         ...(filter ? { filter } : {}),
       },
-      (payload: RealtimePostgresChangesPayload<T>) => {
+      (payload) => {
         setRow((current) => applySingletonEvent(current, payload as unknown as RowEvent<T>));
       },
     );
