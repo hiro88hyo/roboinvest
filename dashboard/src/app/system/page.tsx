@@ -1,3 +1,4 @@
+import { SystemControls } from "@/components/system/SystemControls";
 import { SystemStatusDetail } from "@/components/system/SystemStatusDetail";
 import { getReadClient } from "@/lib/supabase/server";
 
@@ -14,11 +15,9 @@ export default async function SystemPage() {
   return (
     <main className="mx-auto max-w-3xl px-6 py-8">
       <h1 className="text-xl font-semibold tracking-tight">System</h1>
-      <p className="mt-1 text-xs text-neutral-500">
-        書き込み操作（キルスイッチ / トレードモード切替）は Phase 3 で実装します。
-      </p>
 
       <SystemStatusDetail initial={status ?? null} />
+      <SystemControls initial={status ?? null} />
     </main>
   );
 }
