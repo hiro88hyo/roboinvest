@@ -12,6 +12,7 @@ dependencies = [
     "aggregator",
     "gateway",
     "oms-paper",
+    "feeder",
 ]
 
 [tool.uv]
@@ -26,6 +27,7 @@ strategy-rule = { workspace = true }
 aggregator = { workspace = true }
 gateway = { workspace = true }
 oms-paper = { workspace = true }
+feeder = { workspace = true }
 
 [tool.uv.workspace]
 # 未実装のサービスはディレクトリが生まれたタイミングで追記する。
@@ -37,6 +39,7 @@ members = [
     "services/aggregator",
     "services/gateway",
     "services/oms-paper",
+    "services/feeder",
 ]
 
 [dependency-groups]
@@ -76,7 +79,7 @@ pretty = true
 show_error_codes = true
 namespace_packages = true
 explicit_package_bases = true
-mypy_path = "contracts/python:services/universe-scanner/src:services/feature-engine/src:services/strategy-rule/src:services/aggregator/src:services/gateway/src:services/oms-paper/src"
+mypy_path = "contracts/python:services/universe-scanner/src:services/feature-engine/src:services/strategy-rule/src:services/aggregator/src:services/gateway/src:services/oms-paper/src:services/feeder/src"
 files = [
     "contracts/python/trade_contracts",
     "contracts/python/tests",
@@ -92,11 +95,17 @@ files = [
     "services/gateway/tests",
     "services/oms-paper/src",
     "services/oms-paper/tests",
+    "services/feeder/src",
+    "services/feeder/tests",
 ]
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
 module = "jpholiday"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "websockets.*"
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
@@ -116,6 +125,7 @@ testpaths = [
     "services/aggregator/tests",
     "services/gateway/tests",
     "services/oms-paper/tests",
+    "services/feeder/tests",
 ]
 markers = [
     "integration: end-to-end tests that require a running Pub/Sub emulator / Supabase (skipped by default if unreachable)",
@@ -132,6 +142,7 @@ source = [
     "services/aggregator/src/aggregator",
     "services/gateway/src/gateway",
     "services/oms-paper/src/oms_paper",
+    "services/feeder/src/feeder",
 ]
 
 [tool.coverage.report]
