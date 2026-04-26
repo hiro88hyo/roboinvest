@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { RealtimeIndicator } from "./RealtimeIndicator";
 
 const links = [
   { href: "/", label: "Overview" },
@@ -22,6 +23,9 @@ export function Nav() {
             {l.label}
           </Link>
         ))}
+        <div className="ml-auto">
+          <RealtimeIndicator />
+        </div>
       </div>
     </nav>
   );
