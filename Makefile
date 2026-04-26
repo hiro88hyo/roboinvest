@@ -1,9 +1,17 @@
-.PHONY: lint-all test-all
+.PHONY: lint-all test-all dashboard-lint dashboard-test
 
 lint-all:
 	uv run ruff format --check .
 	uv run ruff check .
 	uv run mypy
+	$(MAKE) dashboard-lint
 
 test-all:
 	uv run pytest --cov --cov-report=term-missing
+	$(MAKE) dashboard-test
+
+dashboard-lint:
+	cd dashboard && npm run lint && npm run typecheck
+
+dashboard-test:
+	cd dashboard && npm test
