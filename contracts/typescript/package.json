@@ -1,0 +1,11 @@
+{
+  "name": "@trade-ai/contracts",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Shared TypeScript types generated from Supabase schema. Single Source of Truth は contracts/sql/.",
+  "type": "module",
+  "files": ["src"],
+  "exports": {
+    "./generated/database.types": "./src/generated/database.types.ts"
+  }
+}
