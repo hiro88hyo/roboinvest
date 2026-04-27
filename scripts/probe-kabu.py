@@ -8,13 +8,13 @@
 # ///
 """kabuステーション API 疎通スクリプト。
 
-市場時間外（土日・夜間）でも以下まで確認できる:
+市場時間外 (土日・夜間) でも以下まで確認できる:
   1. トークン取得 (POST /kabusapi/token)
   2. 口座残高取得 (GET /kabusapi/wallet/cash)
   3. 銘柄情報取得 (GET /kabusapi/symbol/{code}@{exchange})
   4. WebSocket ハンドシェイク (ws://.../kabusapi/websocket)
 
-PUSH 配信本体の確認は平日 9:00 以降（市場時間）に別途必要。
+PUSH 配信本体の確認は平日 9:00 以降 (市場時間) に別途必要。
 
 使い方:
   KABU_API_PASSWORD=xxx uv run scripts/probe-kabu.py --env test
@@ -52,19 +52,31 @@ class Endpoint:
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--env", choices=["prod", "test"], default="test", help="本番(18080) or 検証(18081)")
+    p = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument(
+        "--env",
+        choices=["prod", "test"],
+        default="test",
+        help="本番(18080) or 検証(18081)",
+    )
     p.add_argument("--host", default="localhost", help="kabuステーションが動いているホスト")
     p.add_argument(
         "--host-header",
         default=None,
         help=(
-            "HTTP/WS の Host ヘッダを上書き（既定は --host と同じ）。"
+            "HTTP/WS の Host ヘッダを上書き (既定は --host と同じ)。"
             "LAN 越しに繋ぐと Windows http.sys が Host: localhost しか受け付けず "
             "400 'Invalid Hostname' を返すため、その場合は `--host-header localhost` を指定する。"
         ),
     )
-    p.add_argument("--symbol", default="7203", help="銘柄情報取得に使う証券コード (default: 7203 トヨタ)")
+    p.add_argument(
+        "--symbol",
+        default="7203",
+        help="銘柄情報取得に使う証券コード (default: 7203 トヨタ)",
+    )
     p.add_argument("--exchange", default="1", help="市場コード (1=東証, 3=名証, default: 1)")
     p.add_argument(
         "--skip",
@@ -98,7 +110,9 @@ def _check(r: httpx.Response) -> dict:
         body = {"_raw": r.text}
     if r.is_success:
         return body
-    raise RuntimeError(f"HTTP {r.status_code} {r.reason_phrase} body={json.dumps(body, ensure_ascii=False)}")
+    raise RuntimeError(
+        f"HTTP {r.status_code} {r.reason_phrase} body={json.dumps(body, ensure_ascii=False)}"
+    )
 
 
 async def fetch_token(client: httpx.AsyncClient, ep: Endpoint, password: str) -> str:
@@ -137,7 +151,7 @@ async def probe_websocket(ep: Endpoint, timeout: float, host_header: str | None)
         try:
             msg = await asyncio.wait_for(ws.recv(), timeout=timeout)
             return str(msg)[:200]
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return None
 
 
@@ -191,7 +205,7 @@ async def main() -> int:
             try:
                 msg = await probe_websocket(ep, args.ws_timeout, host_header)
                 if msg is None:
-                    ok(f"接続成立（{args.ws_timeout}s 内に push なし。市場時間外のため正常）")
+                    ok(f"接続成立 ({args.ws_timeout}s 内に push なし。市場時間外のため正常)")
                 else:
                     ok(f"push 受信: {msg}")
             except Exception as e:
