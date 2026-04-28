@@ -8,11 +8,14 @@ import sys
 from pathlib import Path
 
 from .backtest import iter_features, run_backtest, write_jsonl
+from .clients.pubsub import PubSubPublisher, PubSubSubscriber
+from .clients.supabase import SupabaseWriter
 from .config import StrategyAiSettings
 from .engine import StrategyAiEngine
 from .llm.factory import build_llm_client
 from .llm.fixture import FixtureLLMClient
 from .strategy import AiStrategy
+from .streaming.runner import StreamRunner
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +66,18 @@ def _build_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help=("AiStrategy のレート制御。省略時は backtest 用に 0 (毎 features で評価)。"),
+    )
+
+    st = subparsers.add_parser(
+        "stream",
+        help="processed-features を購読して strategy-signals-b に publish する常駐ループ",
+    )
+    st.add_argument(
+        "--iterations",
+        dest="iterations",
+        type=int,
+        default=None,
+        help="(dev) N バッチだけ処理して終了する。未指定で無限ループ。",
     )
     return p
 
@@ -117,10 +132,60 @@ async def _run_backtest_cmd(args: argparse.Namespace) -> int:
     return 0
 
 
+async def _run_stream_cmd(*, iterations: int | None) -> int:
+    settings = StrategyAiSettings()
+    logging.basicConfig(
+        level=settings.log_level,
+        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
+    )
+
+    if not settings.supabase_url or not settings.supabase_secret_key:
+        logger.error("SUPABASE_URL / SUPABASE_SECRET_KEY が未設定です")
+        return 2
+    if not settings.pubsub_project_id:
+        logger.error("PUBSUB_PROJECT_ID が未設定です")
+        return 2
+    if not settings.gemini_api_key:
+        logger.error("GEMINI_API_KEY が未設定です (stream は実 LLM 必須)")
+        return 2
+
+    llm = build_llm_client(settings)
+    strategy = AiStrategy(llm=llm, min_interval_seconds=settings.ai_min_interval_seconds)
+
+    async with (
+        PubSubSubscriber(
+            project_id=settings.pubsub_project_id,
+            emulator_host=settings.pubsub_emulator_host,
+        ) as subscriber,
+        PubSubPublisher(
+            project_id=settings.pubsub_project_id,
+            emulator_host=settings.pubsub_emulator_host,
+        ) as publisher,
+        SupabaseWriter(
+            url=settings.supabase_url,
+            secret_key=settings.supabase_secret_key,
+        ) as writer,
+    ):
+        engine = StrategyAiEngine([strategy])
+        runner = StreamRunner(
+            subscriber=subscriber,
+            publisher=publisher,
+            writer=writer,
+            engine=engine,
+            settings=settings,
+        )
+        await runner.run(iterations=iterations)
+
+    logger.info("stream done: iterations=%s", iterations)
+    return 0
+
+
 def main() -> None:
     args = _build_parser().parse_args()
     if args.command == "backtest":
         sys.exit(asyncio.run(_run_backtest_cmd(args)))
+    if args.command == "stream":
+        sys.exit(asyncio.run(_run_stream_cmd(iterations=args.iterations)))
     raise SystemExit(f"unknown command: {args.command}")
 
 

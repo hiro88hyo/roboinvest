@@ -96,3 +96,35 @@ def test_cli_backtest_missing_input(tmp_path: Path) -> None:
         check=False,
     )
     assert result.returncode == 2
+
+
+def test_cli_stream_help_lists_iterations() -> None:
+    result = subprocess.run(
+        [sys.executable, "-m", "strategy_ai", "stream", "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "--iterations" in result.stdout
+
+
+def test_cli_stream_requires_supabase_env(tmp_path: Path) -> None:
+    """環境変数が空のままだと SUPABASE_URL の警告で returncode=2 で抜ける。"""
+    env = {
+        "PATH": "/usr/bin:/bin",
+        "BACKTEST_OUTPUT_DIR": str(tmp_path),
+        "SUPABASE_URL": "",
+        "SUPABASE_SECRET_KEY": "",
+        "PUBSUB_PROJECT_ID": "",
+        "GEMINI_API_KEY": "",
+    }
+    result = subprocess.run(
+        [sys.executable, "-m", "strategy_ai", "stream", "--iterations", "1"],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+    assert result.returncode == 2
+    assert "SUPABASE_URL" in result.stderr or "SUPABASE_URL" in result.stdout
