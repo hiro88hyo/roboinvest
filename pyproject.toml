@@ -9,6 +9,7 @@ dependencies = [
     "universe-scanner",
     "feature-engine",
     "strategy-rule",
+    "strategy-ai",
     "aggregator",
     "gateway",
     "oms-paper",
@@ -24,6 +25,7 @@ trade-contracts = { workspace = true }
 universe-scanner = { workspace = true }
 feature-engine = { workspace = true }
 strategy-rule = { workspace = true }
+strategy-ai = { workspace = true }
 aggregator = { workspace = true }
 gateway = { workspace = true }
 oms-paper = { workspace = true }
@@ -36,6 +38,7 @@ members = [
     "services/universe-scanner",
     "services/feature-engine",
     "services/strategy-rule",
+    "services/strategy-ai",
     "services/aggregator",
     "services/gateway",
     "services/oms-paper",
@@ -79,7 +82,7 @@ pretty = true
 show_error_codes = true
 namespace_packages = true
 explicit_package_bases = true
-mypy_path = "contracts/python:services/universe-scanner/src:services/feature-engine/src:services/strategy-rule/src:services/aggregator/src:services/gateway/src:services/oms-paper/src:services/feeder/src"
+mypy_path = "contracts/python:services/universe-scanner/src:services/feature-engine/src:services/strategy-rule/src:services/strategy-ai/src:services/aggregator/src:services/gateway/src:services/oms-paper/src:services/feeder/src"
 files = [
     "contracts/python/trade_contracts",
     "contracts/python/tests",
@@ -89,6 +92,8 @@ files = [
     "services/feature-engine/tests",
     "services/strategy-rule/src",
     "services/strategy-rule/tests",
+    "services/strategy-ai/src",
+    "services/strategy-ai/tests",
     "services/aggregator/src",
     "services/aggregator/tests",
     "services/gateway/src",
@@ -122,6 +127,7 @@ testpaths = [
     "services/universe-scanner/tests",
     "services/feature-engine/tests",
     "services/strategy-rule/tests",
+    "services/strategy-ai/tests",
     "services/aggregator/tests",
     "services/gateway/tests",
     "services/oms-paper/tests",
@@ -139,6 +145,7 @@ source = [
     "services/universe-scanner/src/universe_scanner",
     "services/feature-engine/src/feature_engine",
     "services/strategy-rule/src/strategy_rule",
+    "services/strategy-ai/src/strategy_ai",
     "services/aggregator/src/aggregator",
     "services/gateway/src/gateway",
     "services/oms-paper/src/oms_paper",
