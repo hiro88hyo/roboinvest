@@ -16,7 +16,7 @@ from decimal import Decimal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
-from trade_contracts.enums import Side, SignalSource
+from trade_contracts.enums import Side, SignalSource, TradingStyle
 
 
 class ExecutionDetail(BaseModel):
@@ -78,3 +78,36 @@ class LiveFillRecord(BaseModel):
     signal_source: SignalSource
     unified_signal_id: UUID
     executed_at: datetime
+
+
+class LivePosition(BaseModel):
+    """Supabase ``positions`` テーブルの ``trade_type='live'`` 行のメモリ表現。
+
+    フィールド構成は ``PaperPosition`` と同型 (LONG 現物前提、トレーリング/ストップ等を含む)。
+    contracts に上げず本サービス内に閉じる方針も oms-paper と同じ。
+    """
+
+    symbol: str
+    quantity: int = Field(gt=0)
+    entry_price: Decimal
+    holding_type: TradingStyle
+    target_price: Decimal | None = None
+    stop_loss_price: Decimal | None = None
+    max_hold_days: int | None = Field(default=None, ge=1)
+    trailing_stop_pct: Decimal | None = None
+    opened_at: datetime
+
+
+class PositionUpdate(BaseModel):
+    """``apply_fill`` の戻り値 (oms-paper の同名型と同じ意味)。
+
+    - 新規 / 更新時: ``position`` に新しい ``LivePosition``、``delete=False``
+    - 全決済時: ``position=None``、``delete=True``、``realized_pnl`` に確定損益
+    - 約定スキップ時 (no_fill / no_position_for_sell など):
+      ``position=existing``、``delete=False``、``error`` に理由
+    """
+
+    position: LivePosition | None = None
+    delete: bool = False
+    realized_pnl: Decimal | None = None
+    error: str | None = None

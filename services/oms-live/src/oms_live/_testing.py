@@ -12,8 +12,10 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
-from trade_contracts.enums import OrderType, Side, SignalSource, TradeMode
+from trade_contracts.enums import OrderType, Side, SignalSource, TradeMode, TradingStyle
 from trade_contracts.order import OrderRequest
+
+from oms_live.models import LiveFillRecord, LivePosition
 
 DEFAULT_TS = datetime(2026, 4, 29, 9, 0, tzinfo=UTC)
 
@@ -79,3 +81,53 @@ def make_kabu_order_payload(
             }
         ],
     }
+
+
+def make_live_position(
+    *,
+    symbol: str = "7203",
+    quantity: int = 100,
+    entry_price: Decimal = Decimal("1000"),
+    holding_type: TradingStyle = TradingStyle.DAY,
+    target_price: Decimal | None = None,
+    stop_loss_price: Decimal | None = None,
+    max_hold_days: int | None = None,
+    trailing_stop_pct: Decimal | None = None,
+    opened_at: datetime | None = None,
+) -> LivePosition:
+    return LivePosition(
+        symbol=symbol,
+        quantity=quantity,
+        entry_price=entry_price,
+        holding_type=holding_type,
+        target_price=target_price,
+        stop_loss_price=stop_loss_price,
+        max_hold_days=max_hold_days,
+        trailing_stop_pct=trailing_stop_pct,
+        opened_at=opened_at or DEFAULT_TS,
+    )
+
+
+def make_live_fill_record(
+    *,
+    symbol: str = "7203",
+    side: Side = Side.BUY,
+    quantity: int = 100,
+    price: Decimal = Decimal("1000"),
+    signal_source: SignalSource = SignalSource.CONSENSUS,
+    unified_signal_id: UUID | None = None,
+    executed_at: datetime | None = None,
+    trade_id: UUID | None = None,
+) -> LiveFillRecord:
+    kwargs: dict[str, Any] = {
+        "symbol": symbol,
+        "side": side,
+        "quantity": quantity,
+        "price": price,
+        "signal_source": signal_source,
+        "unified_signal_id": unified_signal_id or uuid4(),
+        "executed_at": executed_at or DEFAULT_TS,
+    }
+    if trade_id is not None:
+        kwargs["trade_id"] = trade_id
+    return LiveFillRecord(**kwargs)
