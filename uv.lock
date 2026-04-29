@@ -8,6 +8,7 @@ members = [
     "feature-engine",
     "feeder",
     "gateway",
+    "oms-live",
     "oms-paper",
     "strategy-ai",
     "strategy-rule",
@@ -638,6 +639,27 @@ wheels = [
 ]
 
 [[package]]
+name = "oms-live"
+version = "0.1.0"
+source = { editable = "services/oms-live" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "tenacity" },
+    { name = "trade-contracts" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pydantic", specifier = ">=2.7" },
+    { name = "pydantic-settings", specifier = ">=2.4" },
+    { name = "tenacity", specifier = ">=9.0" },
+    { name = "trade-contracts", editable = "contracts/python" },
+]
+
+[[package]]
 name = "oms-paper"
 version = "0.1.0"
 source = { editable = "services/oms-paper" }
@@ -1019,6 +1041,7 @@ dependencies = [
     { name = "feature-engine" },
     { name = "feeder" },
     { name = "gateway" },
+    { name = "oms-live" },
     { name = "oms-paper" },
     { name = "strategy-ai" },
     { name = "strategy-rule" },
@@ -1041,6 +1064,7 @@ requires-dist = [
     { name = "feature-engine", editable = "services/feature-engine" },
     { name = "feeder", editable = "services/feeder" },
     { name = "gateway", editable = "services/gateway" },
+    { name = "oms-live", editable = "services/oms-live" },
     { name = "oms-paper", editable = "services/oms-paper" },
     { name = "strategy-ai", editable = "services/strategy-ai" },
     { name = "strategy-rule", editable = "services/strategy-rule" },
