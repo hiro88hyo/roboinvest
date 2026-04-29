@@ -13,6 +13,7 @@ dependencies = [
     "aggregator",
     "gateway",
     "oms-paper",
+    "oms-live",
     "feeder",
 ]
 
@@ -29,6 +30,7 @@ strategy-ai = { workspace = true }
 aggregator = { workspace = true }
 gateway = { workspace = true }
 oms-paper = { workspace = true }
+oms-live = { workspace = true }
 feeder = { workspace = true }
 
 [tool.uv.workspace]
@@ -42,6 +44,7 @@ members = [
     "services/aggregator",
     "services/gateway",
     "services/oms-paper",
+    "services/oms-live",
     "services/feeder",
 ]
 
@@ -82,7 +85,7 @@ pretty = true
 show_error_codes = true
 namespace_packages = true
 explicit_package_bases = true
-mypy_path = "contracts/python:services/universe-scanner/src:services/feature-engine/src:services/strategy-rule/src:services/strategy-ai/src:services/aggregator/src:services/gateway/src:services/oms-paper/src:services/feeder/src"
+mypy_path = "contracts/python:services/universe-scanner/src:services/feature-engine/src:services/strategy-rule/src:services/strategy-ai/src:services/aggregator/src:services/gateway/src:services/oms-paper/src:services/oms-live/src:services/feeder/src"
 files = [
     "contracts/python/trade_contracts",
     "contracts/python/tests",
@@ -100,6 +103,8 @@ files = [
     "services/gateway/tests",
     "services/oms-paper/src",
     "services/oms-paper/tests",
+    "services/oms-live/src",
+    "services/oms-live/tests",
     "services/feeder/src",
     "services/feeder/tests",
 ]
@@ -131,6 +136,7 @@ testpaths = [
     "services/aggregator/tests",
     "services/gateway/tests",
     "services/oms-paper/tests",
+    "services/oms-live/tests",
     "services/feeder/tests",
 ]
 markers = [
@@ -149,6 +155,7 @@ source = [
     "services/aggregator/src/aggregator",
     "services/gateway/src/gateway",
     "services/oms-paper/src/oms_paper",
+    "services/oms-live/src/oms_live",
     "services/feeder/src/feeder",
 ]
 
