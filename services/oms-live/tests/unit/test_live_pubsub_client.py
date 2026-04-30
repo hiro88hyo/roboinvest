@@ -75,6 +75,17 @@ async def test_subscriber_pull_returns_empty_when_no_messages() -> None:
     assert msgs == []
 
 
+async def test_subscriber_pull_returns_empty_on_read_timeout() -> None:
+    """long-poll deadline 切れの ReadTimeout はアイドル扱いで空配列を返す。"""
+
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("simulated long-poll idle", request=request)
+
+    async with _build_subscriber(_handler) as sub:
+        msgs = await sub.pull("oms-live-live-orders", max_messages=5)
+    assert msgs == []
+
+
 async def test_subscriber_pull_rejects_non_positive_max_messages() -> None:
     async def _handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={})
