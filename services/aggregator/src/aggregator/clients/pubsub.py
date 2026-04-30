@@ -154,10 +154,16 @@ class PubSubSubscriber:
         if max_messages <= 0:
             raise ValueError("max_messages must be positive")
         path = f"/v1/projects/{self.project_id}/subscriptions/{subscription}:pull"
-        resp = await self._client.post(
-            path,
-            json={"maxMessages": max_messages, "returnImmediately": return_immediately},
-        )
+        try:
+            resp = await self._client.post(
+                path,
+                json={"maxMessages": max_messages, "returnImmediately": return_immediately},
+            )
+        except httpx.ReadTimeout:
+            # long-poll idle timeout — emulator が deadline 内にメッセージを返さなかった。
+            # アイドル状態として正常扱いし、空配列を返してループ継続させる。
+            logger.debug("pubsub pull: sub=%s read timeout (idle)", subscription)
+            return []
         if resp.status_code >= 500:
             raise PubSubError(
                 f"transient error: sub={subscription} status={resp.status_code} "
