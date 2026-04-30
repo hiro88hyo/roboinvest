@@ -4,17 +4,15 @@
 生成する。実際の発火タイミング (14:50 JST 等) と ``system_status`` の参照は
 Phase 3 のストリーミングランナーが担う。
 
-``unified_signal_id`` は元の統合シグナルへの FK だが、closeout には対応する
-``aggregator_logs`` 行が無い。Phase 3 着手時に「センチネル aggregator_logs 行を
-事前 INSERT」「FK を nullable に変更」のいずれかで決着する。Phase 1 では
-呼び出し側が払い出した UUID を素通しする。
+closeout 由来の注文は対応する ``aggregator_logs`` 行を持たないため、
+``unified_signal_id`` は ``None`` で出力する (``trades_paper.unified_signal_id``
+は nullable FK)。
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime
-from uuid import UUID
 
 from trade_contracts.enums import OrderType, Side, SignalSource, TradeMode
 from trade_contracts.order import OrderRequest
@@ -25,7 +23,6 @@ from .models import PaperPosition
 def build_closeout_orders(
     *,
     positions: Sequence[PaperPosition],
-    closeout_signal_id: UUID,
     created_at: datetime,
     trade_mode: TradeMode = TradeMode.PAPER,
     signal_source: SignalSource = SignalSource.CONSENSUS,
@@ -38,7 +35,7 @@ def build_closeout_orders(
 
     return [
         OrderRequest(
-            unified_signal_id=closeout_signal_id,
+            unified_signal_id=None,
             symbol=p.symbol,
             side=Side.SELL,
             quantity=p.quantity,

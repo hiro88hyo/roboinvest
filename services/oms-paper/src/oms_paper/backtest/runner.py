@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 class NoFillRecord(BaseModel):
     """擬似約定が成立しなかった注文の記録 (backtest 出力用)。"""
 
-    unified_signal_id: UUID
+    unified_signal_id: UUID | None = None
     symbol: str
     side: Side
     quantity: int
