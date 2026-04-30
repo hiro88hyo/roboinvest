@@ -40,7 +40,7 @@ aggregator / strategy-rule / gateway と同じ 3 フェーズパターン。段�
   - `SELL` で LONG なし → エラー（Gateway 側で reject されている前提なのでログ + 約定スキップ）
 - **closeout** `closeout.py`: 入力 `list[PaperPosition]` → 決済用 `OrderRequest` リスト（純関数）
   - 各ポジションに対し `Side.SELL` / `OrderType.MARKET` / `quantity = position.quantity` の `OrderRequest` を生成
-  - `unified_signal_id` は closeout 用のセンチネル UUID（呼び出し側で渡す）
+  - closeout 由来の注文は対応する `aggregator_logs` 行を持たないため、`unified_signal_id` は `None` で出力する（`trades_paper.unified_signal_id` は nullable FK）
 - I/O・時刻・DB・Pub/Sub を持ち込まない純関数だけで構成する
 
 ### Phase 2: バックテストランナー
@@ -116,7 +116,7 @@ services/oms-paper/
   vwap = sum(price * qty for price, qty in consumed) / filled_qty   # ROUND_HALF_UP, 1 円単位
   ```
 - 単元株未満の部分約定も Phase 1 では許容する（実運用でも約定通知は単元未満で来うる）
-- `unified_signal_id` は `OrderRequest` から `trades_paper` 行へそのまま継承する
+- `unified_signal_id` は `OrderRequest` から `trades_paper` 行へそのまま継承する。closeout 由来は `None`（`trades_paper.unified_signal_id` は nullable FK で対応する `aggregator_logs` 行を持たない）
 
 ## Supabase 連携の規約（Phase 3）
 

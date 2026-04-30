@@ -4,17 +4,15 @@
 生成する。発火タイミング (14:50 JST) と ``system_status`` の参照は
 Streaming Runner / scheduler が担う。
 
-oms-paper の同名モジュールと同型。``trade_mode`` のデフォルトが ``LIVE`` で
-あること、そして closeout の ``unified_signal_id`` は呼び出し側が生成するので
-**aggregator_logs に対応行が無く本番 Supabase で trades_live の FK 違反になる**
-持ち越し課題は oms-paper と共通 (Phase 4 でセンチネル INSERT or FK nullable 化で決着)。
+closeout 由来の注文は対応する ``aggregator_logs`` 行を持たないため、
+``unified_signal_id`` は ``None`` で出力する (``trades_live.unified_signal_id``
+は nullable FK)。oms-paper の同名モジュールと同型。
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime
-from uuid import UUID
 
 from trade_contracts.enums import OrderType, Side, SignalSource, TradeMode
 from trade_contracts.order import OrderRequest
@@ -25,7 +23,6 @@ from .models import LivePosition
 def build_closeout_orders(
     *,
     positions: Sequence[LivePosition],
-    closeout_signal_id: UUID,
     created_at: datetime,
     trade_mode: TradeMode = TradeMode.LIVE,
     signal_source: SignalSource = SignalSource.CONSENSUS,
@@ -38,7 +35,7 @@ def build_closeout_orders(
 
     return [
         OrderRequest(
-            unified_signal_id=closeout_signal_id,
+            unified_signal_id=None,
             symbol=p.symbol,
             side=Side.SELL,
             quantity=p.quantity,

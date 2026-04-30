@@ -228,7 +228,9 @@ class SupabaseClient:
             "quantity": record.quantity,
             "price": str(record.price),
             "signal_source": record.signal_source.value,
-            "unified_signal_id": str(record.unified_signal_id),
+            "unified_signal_id": (
+                str(record.unified_signal_id) if record.unified_signal_id is not None else None
+            ),
             "executed_at": record.executed_at.isoformat(),
         }
         resp = await self._client.post(

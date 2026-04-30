@@ -11,7 +11,7 @@ class OrderRequest(BaseModel):
     """Gateway が OMS に発行する注文リクエスト。"""
 
     order_id: UUID = Field(default_factory=uuid4)
-    unified_signal_id: UUID
+    unified_signal_id: UUID | None = None
     symbol: str
     side: Side
     quantity: int = Field(gt=0)

@@ -29,7 +29,6 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID, uuid4
 
 from pydantic import ValidationError
 from trade_contracts.enums import TradingStyle
@@ -299,8 +298,12 @@ class StreamRunner:
     # closeout (14:50 JST cron)
     # ------------------------------------------------------------------
 
-    async def run_closeout(self, *, signal_id: UUID | None = None) -> CloseoutStats:
-        """live 全建玉の強制決済。``trading_style != day`` なら no-op。"""
+    async def run_closeout(self) -> CloseoutStats:
+        """live 全建玉の強制決済。``trading_style != day`` なら no-op。
+
+        closeout 由来の OrderRequest / 約定行は対応する ``aggregator_logs`` 行を
+        持たないため ``unified_signal_id`` は ``None`` で書き込む。
+        """
         try:
             state = await self.supabase.read_system_status()
         except SupabaseError:
@@ -335,11 +338,8 @@ class StreamRunner:
                 write_errors=0,
             )
 
-        sentinel = signal_id or uuid4()
         now = self.wall_clock()
-        orders = build_closeout_orders(
-            positions=positions, closeout_signal_id=sentinel, created_at=now
-        )
+        orders = build_closeout_orders(positions=positions, created_at=now)
 
         closed = 0
         no_fills = 0

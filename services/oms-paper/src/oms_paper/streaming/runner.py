@@ -28,7 +28,6 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID, uuid4
 
 from pydantic import ValidationError
 from trade_contracts.enums import TradingStyle
@@ -161,11 +160,14 @@ class StreamRunner:
             acked=len(book_acks) + len(order_acks),
         )
 
-    async def run_closeout(self, *, signal_id: UUID | None = None) -> CloseoutStats:
+    async def run_closeout(self) -> CloseoutStats:
         """14:50 JST cron から呼ばれる前提の paper 全建玉強制決済。
 
         ``system_status.trading_style != day`` の場合は何もせず ``skipped`` を返す。
         各ポジションは最新の板で擬似約定する。板未受信なら no_fill。
+
+        closeout 由来の OrderRequest / 約定行は対応する ``aggregator_logs`` 行を
+        持たないため ``unified_signal_id`` は ``None`` で書き込む。
         """
         try:
             state = await self.supabase.read_system_status()
@@ -201,11 +203,8 @@ class StreamRunner:
                 write_errors=0,
             )
 
-        sentinel = signal_id or uuid4()
         now = self.wall_clock()
-        orders = build_closeout_orders(
-            positions=positions, closeout_signal_id=sentinel, created_at=now
-        )
+        orders = build_closeout_orders(positions=positions, created_at=now)
 
         closed = 0
         no_fills = 0
