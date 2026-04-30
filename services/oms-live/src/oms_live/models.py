@@ -68,7 +68,12 @@ class FillResult(BaseModel):
 
 
 class LiveFillRecord(BaseModel):
-    """Supabase ``trades_live`` 行のメモリ表現 (約定 1 件分)。"""
+    """Supabase ``trades_live`` 行のメモリ表現 (約定 1 件分)。
+
+    ``unified_signal_id`` は通常は ``OrderRequest`` から継承するが、closeout
+    (14:50 強制決済) は対応する ``aggregator_logs`` 行を持たないため ``None``。
+    Supabase 側の FK は nullable (NOT NULL 制約なし)。
+    """
 
     trade_id: UUID = Field(default_factory=uuid4)
     symbol: str
@@ -76,7 +81,7 @@ class LiveFillRecord(BaseModel):
     quantity: int = Field(gt=0)
     price: Decimal
     signal_source: SignalSource
-    unified_signal_id: UUID
+    unified_signal_id: UUID | None = None
     executed_at: datetime
 
 

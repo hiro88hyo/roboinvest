@@ -183,7 +183,7 @@ services/oms-live/
   - `"pending"` 未約定 (`CumQty==0` かつ `State in {1,2,4}`)
   - `"cancelled"` 取消済 (`State==5`)
   - `"rejected"` 受付失敗（`Result != 0` を sendorder で踏んだ場合に Runner が組み立て）
-- `unified_signal_id` は `OrderRequest` から `LiveFillRecord` へそのまま継承（`trades_live.unified_signal_id` FK）
+- `unified_signal_id` は `OrderRequest` から `LiveFillRecord` へそのまま継承（`trades_live.unified_signal_id` は nullable FK）。closeout 由来は対応する `aggregator_logs` 行を持たないため `None` で書き込む
 - 純関数は I/O・時刻・乱数を持ち込まない。`uuid4()` は `LiveFillRecord` のデフォルト値で発生するが、テストでは固定の `trade_id` を渡せる
 - LIMIT 注文は payload まで生成可能だが、Phase 1 のテストは MARKET を主軸（LIMIT 1 ケースで型整合確認のみ）
 

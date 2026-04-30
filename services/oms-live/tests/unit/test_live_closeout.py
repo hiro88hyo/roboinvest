@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from decimal import Decimal
-from uuid import uuid4
 
 from oms_live._testing import make_live_position
 from oms_live.closeout import build_closeout_orders
@@ -15,7 +14,6 @@ def test_build_closeout_orders_empty_returns_empty_list() -> None:
     assert (
         build_closeout_orders(
             positions=[],
-            closeout_signal_id=uuid4(),
             created_at=datetime.now(UTC),
         )
         == []
@@ -27,13 +25,8 @@ def test_build_closeout_orders_generates_market_sell_per_position() -> None:
         make_live_position(symbol="7203", quantity=100, entry_price=Decimal("1000")),
         make_live_position(symbol="9984", quantity=200, entry_price=Decimal("8000")),
     ]
-    sentinel = uuid4()
     created_at = datetime(2026, 4, 29, 14, 50, tzinfo=UTC)
-    orders = build_closeout_orders(
-        positions=positions,
-        closeout_signal_id=sentinel,
-        created_at=created_at,
-    )
+    orders = build_closeout_orders(positions=positions, created_at=created_at)
     assert len(orders) == 2
     assert [o.symbol for o in orders] == ["7203", "9984"]
     for order in orders:
@@ -41,7 +34,7 @@ def test_build_closeout_orders_generates_market_sell_per_position() -> None:
         assert order.order_type is OrderType.MARKET
         assert order.trade_mode is TradeMode.LIVE
         assert order.signal_source is SignalSource.CONSENSUS
-        assert order.unified_signal_id == sentinel
+        assert order.unified_signal_id is None
         assert order.created_at == created_at
     assert orders[0].quantity == 100
     assert orders[1].quantity == 200
@@ -55,7 +48,6 @@ def test_build_closeout_orders_preserves_input_order() -> None:
     ]
     orders = build_closeout_orders(
         positions=positions,
-        closeout_signal_id=uuid4(),
         created_at=datetime.now(UTC),
     )
     assert [o.symbol for o in orders] == ["A", "B", "C"]
