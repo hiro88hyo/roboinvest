@@ -107,6 +107,9 @@ def test_cli_stream_help_lists_iterations() -> None:
     )
     assert result.returncode == 0, result.stderr
     assert "--iterations" in result.stdout
+    assert "--fixture" in result.stdout
+    assert "--fixture-responses" in result.stdout
+    assert "--min-interval-seconds" in result.stdout
 
 
 def test_cli_stream_requires_supabase_env(tmp_path: Path) -> None:
@@ -128,3 +131,25 @@ def test_cli_stream_requires_supabase_env(tmp_path: Path) -> None:
     )
     assert result.returncode == 2
     assert "SUPABASE_URL" in result.stderr or "SUPABASE_URL" in result.stdout
+
+
+def test_cli_stream_live_requires_gemini_key(tmp_path: Path) -> None:
+    """SUPABASE / PUBSUB が揃っても GEMINI_API_KEY が無ければ stream は live 扱いで弾く。"""
+    env = {
+        "PATH": "/usr/bin:/bin",
+        "BACKTEST_OUTPUT_DIR": str(tmp_path),
+        "SUPABASE_URL": "http://localhost:54321",
+        "SUPABASE_SECRET_KEY": "sb_secret_dummy",
+        "PUBSUB_PROJECT_ID": "test-project",
+        "PUBSUB_EMULATOR_HOST": "localhost:8085",
+        "GEMINI_API_KEY": "",
+    }
+    result = subprocess.run(
+        [sys.executable, "-m", "strategy_ai", "stream", "--iterations", "1"],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+    assert result.returncode == 2
+    assert "GEMINI_API_KEY" in result.stderr or "GEMINI_API_KEY" in result.stdout
