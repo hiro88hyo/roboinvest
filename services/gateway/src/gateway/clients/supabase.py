@@ -207,8 +207,7 @@ class SupabaseClient:
             )
         if resp.status_code >= 300:
             raise SupabaseError(
-                f"read failed: table=daily_ohlcv status={resp.status_code} "
-                f"body={resp.text[:200]}"
+                f"read failed: table=daily_ohlcv status={resp.status_code} body={resp.text[:200]}"
             )
         rows = resp.json()
         if not isinstance(rows, list) or not rows:

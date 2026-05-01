@@ -504,6 +504,4 @@ async def test_paper_buy_falls_back_to_daily_ohlcv_when_no_position(
             )
             assert live_msgs == []
     finally:
-        await _delete_daily_ohlcv(
-            url=supabase_url, key=supabase_secret_key, symbol=test_symbol
-        )
+        await _delete_daily_ohlcv(url=supabase_url, key=supabase_secret_key, symbol=test_symbol)

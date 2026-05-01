@@ -166,9 +166,7 @@ class StreamRunner:
                 entry_price = await self.supabase.read_latest_price(symbol=signal.symbol)
                 entry_price_source = "positions"
                 if entry_price is None and trade_mode is TradeMode.PAPER:
-                    entry_price = await self.supabase.read_latest_daily_close(
-                        symbol=signal.symbol
-                    )
+                    entry_price = await self.supabase.read_latest_daily_close(symbol=signal.symbol)
                     if entry_price is not None:
                         entry_price_source = "daily_ohlcv"
                 if entry_price is None:

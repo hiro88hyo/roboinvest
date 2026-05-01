@@ -364,9 +364,7 @@ async def test_buy_without_latest_price_is_rejected() -> None:
     assert pubsub.published == []
     # live must NOT consult daily_ohlcv (fail-closed). Only positions GETs allowed.
     daily_calls = [
-        r
-        for r in supabase.requests
-        if r.method == "GET" and r.url.path == "/rest/v1/daily_ohlcv"
+        r for r in supabase.requests if r.method == "GET" and r.url.path == "/rest/v1/daily_ohlcv"
     ]
     assert daily_calls == []
 
@@ -399,9 +397,7 @@ async def test_paper_buy_falls_back_to_daily_ohlcv_when_no_position() -> None:
     assert order["trade_mode"] == "paper"
 
     daily_calls = [
-        r
-        for r in supabase.requests
-        if r.method == "GET" and r.url.path == "/rest/v1/daily_ohlcv"
+        r for r in supabase.requests if r.method == "GET" and r.url.path == "/rest/v1/daily_ohlcv"
     ]
     assert len(daily_calls) == 1
     assert daily_calls[0].url.params.get("symbol") == "eq.7203"
@@ -450,9 +446,7 @@ async def test_live_buy_without_position_does_not_fall_back_to_daily_ohlcv() -> 
     assert stats.rejected == 1
     assert pubsub.published == []
     daily_calls = [
-        r
-        for r in supabase.requests
-        if r.method == "GET" and r.url.path == "/rest/v1/daily_ohlcv"
+        r for r in supabase.requests if r.method == "GET" and r.url.path == "/rest/v1/daily_ohlcv"
     ]
     assert daily_calls == []
 
@@ -481,9 +475,7 @@ async def test_paper_buy_prefers_position_price_over_daily_ohlcv() -> None:
     order = json.loads(base64.b64decode(body["messages"][0]["data"]).decode())
     assert order["quantity"] == 200  # 2500 - 2400 = 100/share, 20_000/100 = 200
     daily_calls = [
-        r
-        for r in supabase.requests
-        if r.method == "GET" and r.url.path == "/rest/v1/daily_ohlcv"
+        r for r in supabase.requests if r.method == "GET" and r.url.path == "/rest/v1/daily_ohlcv"
     ]
     assert daily_calls == []
 
