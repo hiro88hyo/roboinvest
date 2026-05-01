@@ -18,9 +18,12 @@ At-least-once semantics:
 
 Entry price for BUY lot calculation comes from
 ``positions.current_price`` for the same symbol (Feature Engine writes the
-latest tick there). If no price is available, BUY is rejected with
-``missing_entry_price``. SELL never reads the price — it closes the
-existing LONG quantity as-is.
+latest tick there). When ``trade_mode=paper`` and no position row exists
+yet, the runner falls back to the latest ``daily_ohlcv.close`` so paper
+e2e runs can fire BUY signals on watchlist-only symbols. Live mode does
+NOT fall back — it stays fail-closed and rejects with ``missing_entry_price``
+to avoid sending real money on stale daily data. SELL never reads the
+price — it closes the existing LONG quantity as-is.
 """
 
 from __future__ import annotations
@@ -161,9 +164,20 @@ class StreamRunner:
             )
             if existing_qty == 0:
                 entry_price = await self.supabase.read_latest_price(symbol=signal.symbol)
+                entry_price_source = "positions"
+                if entry_price is None and trade_mode is TradeMode.PAPER:
+                    entry_price = await self.supabase.read_latest_daily_close(symbol=signal.symbol)
+                    if entry_price is not None:
+                        entry_price_source = "daily_ohlcv"
                 if entry_price is None:
                     self._log_reject(signal, "missing_entry_price", trade_mode)
                     return _Decision(approved=False, kill_switch_fired=False)
+                logger.info(
+                    "entry_price resolved: symbol=%s source=%s trade_mode=%s",
+                    signal.symbol,
+                    entry_price_source,
+                    trade_mode.value,
+                )
         elif signal.action is Action.SELL:
             existing_qty = await self.supabase.read_long_quantity(
                 symbol=signal.symbol, trade_mode=trade_mode

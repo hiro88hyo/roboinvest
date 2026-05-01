@@ -181,6 +181,51 @@ class SupabaseClient:
         wait=wait_exponential(multiplier=1, min=1, max=10),
         retry=retry_if_exception_type((httpx.HTTPError, SupabaseError)),
     )
+    async def read_latest_daily_close(self, *, symbol: str) -> Decimal | None:
+        """Return the latest known daily close for ``symbol`` from ``daily_ohlcv``.
+
+        Used as a paper-mode fallback when ``positions.current_price`` is
+        unavailable (no open position yet) — Universe Scanner refreshes
+        ``daily_ohlcv`` daily, so the most recent close is a reasonable proxy
+        for entry price in BUY lot calculation. Live mode does NOT fall back
+        here (fail-closed).
+        """
+        assert self._client is not None
+        resp = await self._client.get(
+            "/rest/v1/daily_ohlcv",
+            params={
+                "select": "close",
+                "symbol": f"eq.{symbol}",
+                "order": "date.desc",
+                "limit": "1",
+            },
+        )
+        if resp.status_code >= 500:
+            raise SupabaseError(
+                f"transient error: table=daily_ohlcv status={resp.status_code} "
+                f"body={resp.text[:200]}"
+            )
+        if resp.status_code >= 300:
+            raise SupabaseError(
+                f"read failed: table=daily_ohlcv status={resp.status_code} body={resp.text[:200]}"
+            )
+        rows = resp.json()
+        if not isinstance(rows, list) or not rows:
+            return None
+        raw = rows[0].get("close")
+        if raw is None:
+            return None
+        try:
+            return Decimal(str(raw))
+        except (InvalidOperation, ValueError) as exc:
+            raise SupabaseError(f"invalid daily_ohlcv close: {raw!r}") from exc
+
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((httpx.HTTPError, SupabaseError)),
+    )
     async def disable_trading(self, *, now: datetime | None = None) -> None:
         """Flip ``system_status.is_trading_allowed`` to ``false`` (kill-switch firing).
 
