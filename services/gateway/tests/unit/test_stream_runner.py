@@ -132,6 +132,7 @@ class _SupabaseRouter:
     system_status_rows: list[dict[str, Any]] = field(default_factory=list)
     positions_quantity_rows: list[list[dict[str, Any]]] = field(default_factory=list)
     positions_price_rows: list[list[dict[str, Any]]] = field(default_factory=list)
+    daily_ohlcv_rows: list[list[dict[str, Any]]] = field(default_factory=list)
     disable_status: int = 204
     requests: list[httpx.Request] = field(default_factory=list)
 
@@ -147,6 +148,9 @@ class _SupabaseRouter:
                 rows = self.positions_price_rows.pop(0) if self.positions_price_rows else []
             else:
                 rows = self.positions_quantity_rows.pop(0) if self.positions_quantity_rows else []
+            return httpx.Response(200, json=rows)
+        if request.method == "GET" and path == "/rest/v1/daily_ohlcv":
+            rows = self.daily_ohlcv_rows.pop(0) if self.daily_ohlcv_rows else []
             return httpx.Response(200, json=rows)
         if request.method == "PATCH" and path == "/rest/v1/system_status":
             return httpx.Response(self.disable_status)
@@ -358,6 +362,130 @@ async def test_buy_without_latest_price_is_rejected() -> None:
 
     assert stats.rejected == 1
     assert pubsub.published == []
+    # live must NOT consult daily_ohlcv (fail-closed). Only positions GETs allowed.
+    daily_calls = [
+        r
+        for r in supabase.requests
+        if r.method == "GET" and r.url.path == "/rest/v1/daily_ohlcv"
+    ]
+    assert daily_calls == []
+
+
+async def test_paper_buy_falls_back_to_daily_ohlcv_when_no_position() -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response([("a1", _unified_payload(action=Action.BUY, stop_loss_price="2400"))])
+        ]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trade_mode="paper")],
+        positions_quantity_rows=[[]],  # no existing LONG
+        positions_price_rows=[[]],  # no current_price (no open position)
+        daily_ohlcv_rows=[[{"close": "2500"}]],  # fallback
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+
+    assert stats.approved == 1
+    assert stats.rejected == 0
+    assert pubsub.published[0].url.path.endswith(f"/topics/{PAPER_TOPIC}:publish")
+    body = json.loads(pubsub.published[0].content.decode())
+    order = json.loads(base64.b64decode(body["messages"][0]["data"]).decode())
+    # entry=2500 (daily_ohlcv) stop=2400 → risk/share=100, qty=200
+    assert order["quantity"] == 200
+    assert order["trade_mode"] == "paper"
+
+    daily_calls = [
+        r
+        for r in supabase.requests
+        if r.method == "GET" and r.url.path == "/rest/v1/daily_ohlcv"
+    ]
+    assert len(daily_calls) == 1
+    assert daily_calls[0].url.params.get("symbol") == "eq.7203"
+
+
+async def test_paper_buy_rejects_when_neither_position_nor_daily_ohlcv() -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[_pull_response([("a1", _unified_payload(action=Action.BUY))])]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trade_mode="paper")],
+        positions_quantity_rows=[[]],
+        positions_price_rows=[[]],
+        daily_ohlcv_rows=[[]],  # no fallback either
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+
+    assert stats.rejected == 1
+    assert pubsub.published == []
+
+
+async def test_live_buy_without_position_does_not_fall_back_to_daily_ohlcv() -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response([("a1", _unified_payload(action=Action.BUY, stop_loss_price="2400"))])
+        ]
+    )
+    # daily_ohlcv has a row, but live mode must not consult it. positions_price empty
+    # → reject with missing_entry_price.
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trade_mode="live")],
+        positions_quantity_rows=[[]],
+        positions_price_rows=[[]],
+        daily_ohlcv_rows=[[{"close": "2500"}]],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+
+    assert stats.rejected == 1
+    assert pubsub.published == []
+    daily_calls = [
+        r
+        for r in supabase.requests
+        if r.method == "GET" and r.url.path == "/rest/v1/daily_ohlcv"
+    ]
+    assert daily_calls == []
+
+
+async def test_paper_buy_prefers_position_price_over_daily_ohlcv() -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response([("a1", _unified_payload(action=Action.BUY, stop_loss_price="2400"))])
+        ]
+    )
+    # position has current_price → daily_ohlcv must not be consulted.
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trade_mode="paper")],
+        positions_quantity_rows=[[]],
+        positions_price_rows=[[{"current_price": "2500"}]],
+        daily_ohlcv_rows=[[{"close": "9999"}]],  # would skew lot calc if used
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+
+    assert stats.approved == 1
+    body = json.loads(pubsub.published[0].content.decode())
+    order = json.loads(base64.b64decode(body["messages"][0]["data"]).decode())
+    assert order["quantity"] == 200  # 2500 - 2400 = 100/share, 20_000/100 = 200
+    daily_calls = [
+        r
+        for r in supabase.requests
+        if r.method == "GET" and r.url.path == "/rest/v1/daily_ohlcv"
+    ]
+    assert daily_calls == []
 
 
 async def test_kill_switch_off_rejects_without_update() -> None:

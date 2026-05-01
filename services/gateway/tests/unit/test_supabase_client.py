@@ -170,6 +170,67 @@ async def test_read_latest_price_raises_on_invalid_value() -> None:
             await client.read_latest_price(symbol="7203")
 
 
+async def test_read_latest_daily_close_returns_decimal() -> None:
+    captured: list[httpx.Request] = []
+
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json=[{"close": "2305.5"}])
+
+    async with _build_client(_handler) as client:
+        price = await client.read_latest_daily_close(symbol="7203")
+
+    assert price is not None
+    assert str(price) == "2305.5"
+    assert captured[0].url.path == "/rest/v1/daily_ohlcv"
+    assert captured[0].url.params.get("symbol") == "eq.7203"
+    assert captured[0].url.params.get("order") == "date.desc"
+    assert captured[0].url.params.get("limit") == "1"
+    assert captured[0].url.params.get("select") == "close"
+
+
+async def test_read_latest_daily_close_returns_none_when_empty() -> None:
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[])
+
+    async with _build_client(_handler) as client:
+        assert await client.read_latest_daily_close(symbol="7203") is None
+
+
+async def test_read_latest_daily_close_returns_none_when_null_close() -> None:
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[{"close": None}])
+
+    async with _build_client(_handler) as client:
+        assert await client.read_latest_daily_close(symbol="7203") is None
+
+
+async def test_read_latest_daily_close_raises_on_invalid_value() -> None:
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[{"close": "not-a-number"}])
+
+    async with _build_client(_handler) as client:
+        with pytest.raises(SupabaseError, match="invalid daily_ohlcv close"):
+            await client.read_latest_daily_close(symbol="7203")
+
+
+async def test_read_latest_daily_close_retries_on_5xx() -> None:
+    calls: list[httpx.Request] = []
+
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if len(calls) == 1:
+            return httpx.Response(503, text="busy")
+        return httpx.Response(200, json=[{"close": "2310"}])
+
+    async with _build_client(_handler) as client:
+        price = await client.read_latest_daily_close(symbol="7203")
+
+    assert price is not None
+    assert str(price) == "2310"
+    assert len(calls) == 2
+
+
 async def test_disable_trading_patches_row() -> None:
     captured: list[httpx.Request] = []
 
