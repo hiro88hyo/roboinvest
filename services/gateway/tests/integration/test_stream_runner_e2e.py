@@ -126,6 +126,42 @@ async def _delete_position(*, url: str, key: str, symbol: str) -> None:
         )
 
 
+async def _insert_daily_ohlcv(
+    *,
+    url: str,
+    key: str,
+    symbol: str,
+    date: str,
+    close: str,
+) -> None:
+    row = {
+        "symbol": symbol,
+        "date": date,
+        "open": close,
+        "high": close,
+        "low": close,
+        "close": close,
+        "volume": 1_000_000,
+        "turnover": "1000000000",
+    }
+    headers = {**_supabase_headers(key), "Prefer": "return=minimal"}
+    async with httpx.AsyncClient(base_url=url.rstrip("/"), timeout=10.0) as client:
+        resp = await client.post("/rest/v1/daily_ohlcv", headers=headers, json=[row])
+        if resp.status_code >= 300:
+            raise RuntimeError(
+                f"failed to insert daily_ohlcv row: {resp.status_code} {resp.text[:200]}"
+            )
+
+
+async def _delete_daily_ohlcv(*, url: str, key: str, symbol: str) -> None:
+    async with httpx.AsyncClient(base_url=url.rstrip("/"), timeout=10.0) as client:
+        await client.delete(
+            "/rest/v1/daily_ohlcv",
+            params={"symbol": f"eq.{symbol}"},
+            headers=_supabase_headers(key),
+        )
+
+
 @pytest.fixture
 async def provisioned_subs(
     pubsub_admin: httpx.AsyncClient,
@@ -383,3 +419,91 @@ async def test_daily_loss_limit_flips_is_trading_allowed(
         )
     assert live_msgs == []
     assert paper_msgs == []
+
+
+async def test_paper_buy_falls_back_to_daily_ohlcv_when_no_position(
+    provisioned_subs: dict[str, str],
+    pubsub_project_id: str,
+    pubsub_emulator_host: str,
+    supabase_url: str,
+    supabase_secret_key: str,
+    test_symbol: str,
+    system_status_sandbox: None,
+) -> None:
+    """paper モードで positions に行がなくても daily_ohlcv の close を
+    エントリープライスに使って BUY が approve されることを確認する。"""
+    settings = _build_settings(
+        supabase_url=supabase_url,
+        supabase_secret_key=supabase_secret_key,
+        pubsub_project_id=pubsub_project_id,
+        pubsub_emulator_host=pubsub_emulator_host,
+        trade_signals_sub=provisioned_subs["trade_signals_sub"],
+    )
+
+    await _write_system_status_row(
+        url=supabase_url,
+        key=supabase_secret_key,
+        row={
+            "id": 1,
+            "is_trading_allowed": True,
+            "trade_mode": "paper",
+            "trading_style": "day",
+            "daily_pnl": "0",
+            "weekly_pnl": "0",
+            "monthly_pnl": "0",
+            "daily_loss_limit": "10000",
+            "weekly_loss_limit": "30000",
+            "monthly_loss_limit": "100000",
+        },
+    )
+
+    today = datetime.now(UTC).date().isoformat()
+    await _insert_daily_ohlcv(
+        url=supabase_url,
+        key=supabase_secret_key,
+        symbol=test_symbol,
+        date=today,
+        close="2500",
+    )
+
+    signal = _unified_signal(symbol=test_symbol, stop_loss_price=Decimal("2400"))
+    async with PubSubPublisher(
+        project_id=pubsub_project_id,
+        emulator_host=pubsub_emulator_host,
+    ) as publisher:
+        await publisher.publish(
+            TRADE_SIGNALS_TOPIC,
+            data=signal.model_dump_json().encode("utf-8"),
+            attributes={"symbol": test_symbol},
+        )
+
+    try:
+        await _run_one_iteration(settings=settings)
+
+        async with PubSubSubscriber(
+            project_id=pubsub_project_id,
+            emulator_host=pubsub_emulator_host,
+        ) as subscriber:
+            received = await subscriber.pull(
+                provisioned_subs["paper_orders_sub"], max_messages=5, return_immediately=True
+            )
+            assert received, "no OrderRequest published to paper-orders"
+            order = OrderRequest.model_validate_json(received[0].data)
+            assert order.symbol == test_symbol
+            assert order.unified_signal_id == signal.signal_id
+            assert order.trade_mode is TradeMode.PAPER
+            assert order.side.value == "BUY"
+            # entry=2500 (daily_ohlcv) stop=2400 → risk/share=100, qty=200
+            assert order.quantity == 200
+            await subscriber.acknowledge(
+                provisioned_subs["paper_orders_sub"], [m.ack_id for m in received]
+            )
+
+            live_msgs = await subscriber.pull(
+                provisioned_subs["live_orders_sub"], max_messages=5, return_immediately=True
+            )
+            assert live_msgs == []
+    finally:
+        await _delete_daily_ohlcv(
+            url=supabase_url, key=supabase_secret_key, symbol=test_symbol
+        )
