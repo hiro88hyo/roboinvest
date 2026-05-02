@@ -201,6 +201,29 @@ class SupabaseClient:
         wait=wait_exponential(multiplier=1, min=1, max=10),
         retry=retry_if_exception_type((httpx.HTTPError, SupabaseError)),
     )
+    async def update_paper_position_stop_loss(self, *, symbol: str, stop_loss_price: str) -> None:
+        """既存 paper position の ``stop_loss_price`` のみを PATCH。
+
+        swing トレーリングストップ用。``quantity`` / ``entry_price`` は触らない。
+        ``stop_loss_price`` は文字列で受け取り、Decimal の丸めを呼び出し側
+        (``swing_monitor.evaluate_swing_exit``) に委ねる。
+        """
+        assert self._client is not None
+        resp = await self._client.patch(
+            "/rest/v1/positions",
+            params={"symbol": f"eq.{symbol}", "trade_type": "eq.paper"},
+            headers={"Prefer": "return=minimal"},
+            json={"stop_loss_price": stop_loss_price},
+        )
+        self._raise_for_status(resp, table="positions", op="update_stop_loss")
+        logger.info("supabase update: positions symbol=%s stop_loss=%s", symbol, stop_loss_price)
+
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((httpx.HTTPError, SupabaseError)),
+    )
     async def delete_paper_position(self, *, symbol: str) -> None:
         """``(symbol, trade_type='paper')`` の行を DELETE。冪等。"""
         assert self._client is not None

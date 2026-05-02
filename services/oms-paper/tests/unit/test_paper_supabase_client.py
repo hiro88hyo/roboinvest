@@ -285,6 +285,58 @@ async def test_update_paper_position_quantity_patches_only_quantity_and_entry() 
     assert "unrealized_pnl" not in body
 
 
+# --- update_paper_position_stop_loss -----------------------------------------
+
+
+async def test_update_paper_position_stop_loss_patches_only_stop_loss() -> None:
+    captured: list[httpx.Request] = []
+
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(204, content=b"")
+
+    async with _build_client(_handler) as client:
+        await client.update_paper_position_stop_loss(symbol="7203", stop_loss_price="1078")
+
+    assert len(captured) == 1
+    req = captured[0]
+    assert req.method == "PATCH"
+    assert req.url.path == "/rest/v1/positions"
+    assert req.url.params.get("symbol") == "eq.7203"
+    assert req.url.params.get("trade_type") == "eq.paper"
+    body = json.loads(req.content.decode())
+    assert body == {"stop_loss_price": "1078"}
+    # quantity / entry_price / current_price は触らない
+    assert "quantity" not in body
+    assert "entry_price" not in body
+    assert "current_price" not in body
+
+
+async def test_update_paper_position_stop_loss_raises_on_4xx() -> None:
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, text="row not found")
+
+    async with _build_client(_handler) as client:
+        with pytest.raises(SupabaseError, match="update_stop_loss failed"):
+            await client.update_paper_position_stop_loss(symbol="missing", stop_loss_price="1000")
+
+
+async def test_update_paper_position_stop_loss_retries_on_5xx() -> None:
+    calls = 0
+
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            return httpx.Response(503, text="boom")
+        return httpx.Response(204, content=b"")
+
+    async with _build_client(_handler) as client:
+        await client.update_paper_position_stop_loss(symbol="7203", stop_loss_price="1078")
+
+    assert calls == 3  # 5xx 2 回 → 3 回目で成功
+
+
 # --- delete_paper_position ---------------------------------------------------
 
 
