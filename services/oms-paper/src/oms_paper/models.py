@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
@@ -82,3 +83,24 @@ class PositionUpdate(BaseModel):
     position: PaperPosition | None = None
     delete: bool = False
     error: str | None = None
+
+
+class SwingDecision(BaseModel):
+    """``evaluate_swing_exit`` の戻り値。
+
+    swing ポジションに対する 3 種類の処置を表す:
+
+    - ``action='exit'``: 損切り / 利確 / 期限超過のいずれかで成行決済する。
+      ``reason`` は ``"stop_loss"`` | ``"target"`` | ``"max_hold_days"``。
+    - ``action='trail'``: ``stop_loss_price`` を ``new_stop_loss_price`` に
+      切り上げるだけ。約定は発生しない。
+    - ``action='hold'``: 何もしない (holding_type が swing でない / 全閾値が
+      未設定 / トリガー未発火)。
+
+    ``reason`` は ``action='exit'`` のときだけ非 ``None``、
+    ``new_stop_loss_price`` は ``action='trail'`` のときだけ非 ``None``。
+    """
+
+    action: Literal["exit", "trail", "hold"]
+    reason: str | None = None
+    new_stop_loss_price: Decimal | None = None
