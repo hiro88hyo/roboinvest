@@ -18,7 +18,7 @@ OMS Live を **検証環境** (kabu 18081) に対して動かし、`live-orders`
 - [ ] Linux 側で `docker compose -f infra/docker-compose.dev.yml up -d` で Pub/Sub エミュレータ起動済み
 - [ ] Linux 側で `cd infra && supabase start` で Supabase ローカル稼働中 (`supabase status` で確認)
 - [ ] Pub/Sub topic `live-orders` 作成済み (`infra/pubsub/init-topics.sh`)
-- [ ] **対象銘柄を 1 つ決めて**、最低株数 (100 株 等) と現在価格を把握 (low-priced ETF 推奨)
+- [ ] **対象銘柄を 1 つ決めて**、最低株数 (100 株 等) と現在価格を把握 (low-priced ETF 推奨)。`scripts/probe-kabu-oms.py --symbol <code>` の `board` ステップで現在値・最良気配が確認できる
 - [ ] 対象銘柄の買付余力が十分にあること (`scripts/probe-kabu-oms.py` で `wallet/cash` 確認)
 - [ ] **Dashboard を開いて kill switch 操作の場所を把握** (`http://localhost:3001/system`)
 
@@ -36,14 +36,17 @@ ssh -N -L 18081:127.0.0.1:18081 user@<windows-ip>
 
 ### Step 1: REST 疎通確認 (no send, 5 分)
 
-`scripts/probe-kabu-oms.py` で GET 系を全部叩いて、トークン取得 / 残高 / 銘柄情報 / 注文一覧の応答を観測。
+`scripts/probe-kabu-oms.py` で GET 系を全部叩いて、トークン取得 / 残高 / 銘柄情報 / **板情報 (現在値・最良気配)** / 現物残高 / 注文一覧の応答を観測。
 
 ```bash
 export KABU_API_PASSWORD=<api-pw>
 uv run scripts/probe-kabu-oms.py --env test --symbol 7203
 ```
 
-**期待**: `ALL OK` で終わる。`wallet/cash` の `StockAccountWallet` が買付余力を反映していること。
+**期待**:
+- `ALL OK` で終わる
+- `wallet/cash` の `StockAccountWallet` が買付余力を反映していること
+- `board` ステップで `CurrentPrice` / `BidPrice` / `AskPrice` が出力され、対象銘柄の現在値が把握できること (検証環境では市場時間外に `CurrentPrice=null` が返る場合あり)
 
 ### Step 2: 単発 sendorder + cancel (no Supabase, 3 分)
 

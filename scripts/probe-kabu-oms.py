@@ -13,13 +13,14 @@
   1. POST /kabusapi/token            (トークン取得)
   2. GET  /kabusapi/wallet/cash      (買付余力)
   3. GET  /kabusapi/symbol/{c}@{e}   (銘柄情報・呼値)
-  4. GET  /kabusapi/positions        (現物残高)
-  5. GET  /kabusapi/orders           (注文一覧, 直近 N 件)
+  4. GET  /kabusapi/board/{c}@{e}    (板情報 + 現在値)
+  5. GET  /kabusapi/positions        (現物残高)
+  6. GET  /kabusapi/orders           (注文一覧, 直近 N 件)
 
   -- 以下は --send 指定時のみ実行 (デフォルト OFF) --
-  6. POST /kabusapi/sendorder        (発注)
-  7. GET  /kabusapi/orders?id=<id>   (発注後の状態取得)
-  8. PUT  /kabusapi/cancelorder      (--auto-cancel 指定時のみ)
+  7. POST /kabusapi/sendorder        (発注)
+  8. GET  /kabusapi/orders?id=<id>   (発注後の状態取得)
+  9. PUT  /kabusapi/cancelorder      (--auto-cancel 指定時のみ)
 
 検証環境 (18081) は約定が市場時間内のみだが、トークン発行・残高照会・板取得・
 注文受付までは 24h 通る。Golden Week 中など休日に sendorder が「受付」「reject」
@@ -92,7 +93,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--skip",
         nargs="*",
-        choices=["wallet", "symbol", "positions", "orders"],
+        choices=["wallet", "symbol", "board", "positions", "orders"],
         default=[],
         help="GET 系でスキップしたいチェック",
     )
@@ -218,6 +219,16 @@ async def fetch_symbol(
 ) -> dict[str, Any]:
     r = await client.get(
         f"{ep.http_base}/symbol/{symbol}@{exchange}",
+        headers={"X-API-KEY": token},
+    )
+    return _check_dict(r)
+
+
+async def fetch_board(
+    client: httpx.AsyncClient, ep: Endpoint, token: str, symbol: str, exchange: int
+) -> dict[str, Any]:
+    r = await client.get(
+        f"{ep.http_base}/board/{symbol}@{exchange}",
         headers={"X-API-KEY": token},
     )
     return _check_dict(r)
@@ -391,8 +402,30 @@ async def main() -> int:
                 fail(f"symbol 取得失敗: {e!r}")
                 return 1
 
+        if "board" not in args.skip:
+            step(f"4. 板情報 + 現在値 (GET /board/{args.symbol}@{args.exchange})")
+            try:
+                board = await fetch_board(client, ep, token, args.symbol, args.exchange)
+                # 主要フィールドだけサマリ表示。検証環境 (18081) は market 終了後
+                # CurrentPrice が None を返すことがある (kabuステーション仕様)
+                summary = {
+                    "CurrentPrice": board.get("CurrentPrice"),
+                    "BidPrice": board.get("BidPrice"),
+                    "AskPrice": board.get("AskPrice"),
+                    "BidQty": board.get("BidQty"),
+                    "AskQty": board.get("AskQty"),
+                    "TradingVolume": board.get("TradingVolume"),
+                    "TradingValue": board.get("TradingValue"),
+                }
+                ok(json.dumps(summary, ensure_ascii=False))
+                # 詳細 (Sell1〜Sell10 / Buy1〜Buy10 等) はデバッグ用に info で出す
+                info(f"raw={json.dumps(board, ensure_ascii=False)}")
+            except Exception as e:
+                fail(f"board 取得失敗: {e!r}")
+                return 1
+
         if "positions" not in args.skip:
-            step("4. 現物残高 (GET /positions?product=1)")
+            step("5. 現物残高 (GET /positions?product=1)")
             try:
                 positions = await fetch_positions(client, ep, token)
                 ok(f"{len(positions)} 件")
@@ -403,7 +436,7 @@ async def main() -> int:
                 return 1
 
         if "orders" not in args.skip:
-            step("5. 注文一覧 (GET /orders)")
+            step("6. 注文一覧 (GET /orders)")
             try:
                 orders = await fetch_orders(client, ep, token)
                 ok(f"{len(orders)} 件 (先頭 {args.orders_limit} 件のみ表示)")
@@ -415,7 +448,7 @@ async def main() -> int:
 
         if args.send:
             assert order_password is not None  # parse 段階で保証
-            step("6. 発注 (POST /sendorder)")
+            step("7. 発注 (POST /sendorder)")
             try:
                 payload = build_sendorder_payload(args, order_password)
                 # Password はログに出さない
@@ -433,7 +466,7 @@ async def main() -> int:
                 fail(f"sendorder Result != 0 or OrderId 不在: result={result_code}")
                 return 1
 
-            step(f"7. 発注後状態 (GET /orders?id={order_id})")
+            step(f"8. 発注後状態 (GET /orders?id={order_id})")
             try:
                 states = await fetch_orders(client, ep, token, order_id=order_id)
                 if not states:
@@ -446,7 +479,7 @@ async def main() -> int:
                 return 1
 
             if args.auto_cancel:
-                step(f"8. 取消 (PUT /cancelorder OrderId={order_id})")
+                step(f"9. 取消 (PUT /cancelorder OrderId={order_id})")
                 try:
                     cancel_resp = await cancel_order(
                         client,
