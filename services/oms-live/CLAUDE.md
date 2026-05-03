@@ -220,6 +220,11 @@ services/oms-live/
 - `ORDER_FILL_POLL_INTERVAL_SECONDS`: `1.0`
 - `ORDER_FILL_TIMEOUT_SECONDS`: `30.0`
 
+**Phase 3 安全装備 (本番投入前のセーフティネット)**:
+- `OMS_LIVE_MAX_QTY_PER_ORDER`: 1 注文あたり最大株数。空欄で無制限。Runner の `_process_order` で existence check の後に評価。違反は `safety_rejected` で ack。**closeout には適用しない** (持ち越し決済を阻害しないため)
+- `OMS_LIVE_ALLOWED_SYMBOLS`: カンマ区切り (例: `7203,9984`)。空欄で全銘柄許可。違反は `safety_rejected`。**closeout には適用しない**
+- `OMS_LIVE_DRY_RUN`: `true` で sendorder/Supabase 書込を一切行わず ack のみ。`run_closeout` も即 `skipped_reason=dry_run` で no-op。Phase 3 検証中の安全弁
+
 秘密情報は `.env.example` にダミー値で列挙、`.env` はコミットしない。
 
 ## テスト方針
