@@ -24,6 +24,7 @@ import logging
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Self
+from uuid import UUID
 
 import httpx
 from pydantic import ValidationError
@@ -266,10 +267,16 @@ class SupabaseClient:
         retry=retry_if_exception_type((httpx.HTTPError, SupabaseError)),
     )
     async def insert_trade_live(self, record: LiveFillRecord) -> None:
-        """実約定を ``trades_live`` に INSERT する (1 約定 = 1 行)。"""
+        """実約定を ``trades_live`` に INSERT する (1 約定 = 1 行)。
+
+        ``record.order_id`` が付いていれば DB の partial unique index で二重
+        INSERT は弾かれる (23505 → 409)。アプリ層では ``live_trade_exists_for_order_id``
+        による事前 check と組み合わせて二段で守る。
+        """
         assert self._client is not None
         row = {
             "trade_id": str(record.trade_id),
+            "order_id": str(record.order_id) if record.order_id is not None else None,
             "symbol": record.symbol,
             "side": record.side.value,
             "quantity": record.quantity,
@@ -287,12 +294,40 @@ class SupabaseClient:
         )
         self._raise_for_status(resp, table="trades_live", op="insert")
         logger.info(
-            "supabase insert: trades_live trade_id=%s symbol=%s side=%s qty=%d",
+            "supabase insert: trades_live trade_id=%s order_id=%s symbol=%s side=%s qty=%d",
             record.trade_id,
+            record.order_id,
             record.symbol,
             record.side.value,
             record.quantity,
         )
+
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((httpx.HTTPError, SupabaseError)),
+    )
+    async def live_trade_exists_for_order_id(self, order_id: UUID) -> bool:
+        """``trades_live`` に ``order_id`` 一致行が存在するかを返す。
+
+        Runner が ``insert_trade_live`` の前に呼ぶ。``True`` なら冪等性のため
+        新規発注をスキップし ack する。``select=order_id&limit=1`` で軽量化。
+        """
+        assert self._client is not None
+        resp = await self._client.get(
+            "/rest/v1/trades_live",
+            params={
+                "select": "order_id",
+                "order_id": f"eq.{order_id}",
+                "limit": "1",
+            },
+        )
+        self._raise_for_status(resp, table="trades_live", op="read")
+        rows = resp.json()
+        if not isinstance(rows, list):
+            raise SupabaseError(f"unexpected trades_live payload: {type(rows).__name__}")
+        return len(rows) > 0
 
     def _raise_for_status(self, resp: httpx.Response, *, table: str, op: str) -> None:
         if resp.status_code >= 500:
