@@ -47,6 +47,8 @@ def test_build_fill_record_returns_live_record() -> None:
     assert rec.price == Decimal("1234.5")
     assert rec.unified_signal_id == order.unified_signal_id
     assert rec.executed_at == EXEC_AT
+    # 冪等性キーが carry されること
+    assert rec.order_id == order.order_id
 
 
 def test_build_fill_record_returns_none_on_no_fill() -> None:

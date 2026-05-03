@@ -200,7 +200,7 @@ services/oms-live/
 
 - 購読: `live-orders`（subscription 名は env `PUBSUB_SUBSCRIPTION_LIVE_ORDERS`、デフォルト `oms-live-live-orders`）
 - `ack` は Supabase 書込 + kabu 約定確定後のみ。kabu 取消含む確定状態に達したらすべて ack（再送は冪等性問題のため避ける）
-- 二重約定回避: `OrderRequest.order_id` を kabu の `OrderId` と紐付けて Supabase `trades_live` に保存（Phase 2 で contracts 拡張要否を判断）
+- 二重約定回避: `OrderRequest.order_id` を `LiveFillRecord.order_id` に carry し、`trades_live.order_id`（partial unique index、SQL マイグレーション 010）に書き込む。Runner は sendorder の前に `SupabaseClient.live_trade_exists_for_order_id` で重複検知し、True なら sendorder せず ack して `BatchStats.skipped_duplicate` を計上する。これで「前回 sendorder + Supabase 書込が完全成功した後に redeliver」のケースは二重発注を完全に防ぐ。`closeout` 由来の `OrderRequest` は `order_id=uuid4()` で常時 unique なので check は不要 (Runner では行わない)。なお「sendorder 成功 + Supabase 書込失敗で再配信」のケースは trades_live に行が無いため check は通り再走する — このシナリオは別途 `_process_order` を fail-fast にする方向で扱う Phase が必要
 
 ## 設定（env）
 

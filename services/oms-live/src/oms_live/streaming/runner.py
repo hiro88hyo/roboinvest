@@ -7,9 +7,14 @@ at-least-once 規約 (oms-paper と同じ思想):
 
 * 実発注 + Supabase 書込が完了した時点で ack。
 * Supabase 書込失敗は **ack 列に積まず** Pub/Sub の再配信に委ねる (fail-closed)。
-  ただし「sendorder は成功したが Supabase 書込が失敗した」場合、再配信で同じ
-  ``order_id`` の注文がもう一度走る。kabu は同一 ``OrderId`` を弾けないため、
-  上流の at-least-once と冪等性キーは contracts 拡張で扱う (Phase 4 候補)。
+* 冪等性: ``OrderRequest.order_id`` を ``trades_live.order_id`` (partial unique
+  index) に carry。Runner は sendorder の前に ``live_trade_exists_for_order_id``
+  で重複検知し、True なら sendorder せず ack して "skipped_duplicate" を計上する。
+  これで「前回 sendorder + Supabase 書込が完全に成功した後に redeliver」のケースは
+  二重発注を完全に防ぐ。なお「sendorder 成功 + Supabase 書込失敗で再配信」では
+  trades_live に行が無いため check は通り、sendorder が再走する (kabu 側で同一
+  銘柄・同一秒の二重発注になる) — これは別途 Runner 側で fail-closed の見直しが
+  必要だが、本フェーズでは扱わない。
 * sendorder の Result != 0 (受付拒否) は業務上の no_fill として ack。
 * 約定タイムアウト時は cancel_order を投げて ack (再配信は冪等性問題のため避ける)。
 * スキーマ不正・JSON パース失敗の poison message は ack。
@@ -59,6 +64,7 @@ class BatchStats:
     no_fills: int
     write_errors: int
     acked: int
+    skipped_duplicate: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +111,7 @@ class StreamRunner:
         filled = 0
         no_fills = 0
         write_errors = 0
+        skipped_duplicate = 0
         acks: list[str] = []
 
         for msg in order_msgs:
@@ -125,6 +132,8 @@ class StreamRunner:
                 continue
             if outcome == "filled":
                 filled += 1
+            elif outcome == "skipped_duplicate":
+                skipped_duplicate += 1
             else:
                 no_fills += 1
             acks.append(msg.ack_id)
@@ -139,10 +148,25 @@ class StreamRunner:
             no_fills=no_fills,
             write_errors=write_errors,
             acked=len(acks),
+            skipped_duplicate=skipped_duplicate,
         )
 
     async def _process_order(self, order: OrderRequest) -> str:
-        """``"filled" | "no_fill"``。Supabase 書込失敗時のみ ``SupabaseError`` を伝播する。"""
+        """``"filled" | "no_fill" | "skipped_duplicate"``。
+
+        Supabase 書込失敗時のみ ``SupabaseError`` を伝播する。
+        重複検知時は sendorder せず即 ack する (idempotency hardening)。
+        """
+
+        # 0) idempotency check: redeliver された (前回完全成功済) 注文は弾く
+        if await self.supabase.live_trade_exists_for_order_id(order.order_id):
+            logger.info(
+                "live order skipped (already filled): order_id=%s symbol=%s signal_id=%s",
+                order.order_id,
+                order.symbol,
+                order.unified_signal_id,
+            )
+            return "skipped_duplicate"
 
         # 1) sendorder
         payload = build_sendorder_payload(
