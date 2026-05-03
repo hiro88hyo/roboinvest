@@ -73,9 +73,14 @@ class LiveFillRecord(BaseModel):
     ``unified_signal_id`` は通常は ``OrderRequest`` から継承するが、closeout
     (14:50 強制決済) は対応する ``aggregator_logs`` 行を持たないため ``None``。
     Supabase 側の FK は nullable (NOT NULL 制約なし)。
+
+    ``order_id`` は ``OrderRequest.order_id`` をそのまま carry する冪等性キー。
+    DB の partial unique index と組み合わせて二重 INSERT を防ぐ。後付け追加の
+    ため Optional だが、現行の Runner 経路では必ず付与される。
     """
 
     trade_id: UUID = Field(default_factory=uuid4)
+    order_id: UUID | None = None
     symbol: str
     side: Side
     quantity: int = Field(gt=0)
