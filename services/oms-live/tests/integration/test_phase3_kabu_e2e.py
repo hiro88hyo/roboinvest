@@ -37,10 +37,8 @@ ENV (全部揃って初めて走る):
   - スクリプト終了時の cleanup: 万が一 fill が片方だけ走った場合に備え、test 後の
     finally で対象銘柄の positions(live) / trades_live を強制削除する
 
-Phase 3 直前に拡張する候補 (本 PR 範囲外):
-  - 同一 order_id 二回投入で skipped_duplicate=1 を確認するケース
+Phase 3 直前に拡張する候補:
   - 14:50 closeout の発火確認 (system_status.trading_style=day で run_closeout)
-  - 安全装備 (OMS_LIVE_MAX_QTY_PER_ORDER 等の env knob) を検証するケース
   - test_e2e.py との helper 共通化 (現状は重複コピーで scope を抑える)
 """
 
@@ -48,7 +46,7 @@ from __future__ import annotations
 
 import base64
 import os
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -61,7 +59,7 @@ from oms_live.clients.pubsub import PubSubSubscriber
 from oms_live.clients.supabase import SupabaseClient
 from oms_live.config import OmsLiveSettings
 from oms_live.kabu_client import KabuLiveClient
-from oms_live.streaming.runner import StreamRunner
+from oms_live.streaming.runner import BatchStats, StreamRunner
 from trade_contracts.enums import OrderType, Side, SignalSource, TradeMode
 from trade_contracts.order import OrderRequest
 
@@ -364,17 +362,23 @@ def _make_order(
     side: Side,
     quantity: int,
     signal_id: UUID,
+    order_id: UUID | None = None,
 ) -> OrderRequest:
-    return OrderRequest(
-        unified_signal_id=signal_id,
-        symbol=symbol,
-        side=side,
-        quantity=quantity,
-        order_type=OrderType.MARKET,
-        trade_mode=TradeMode.LIVE,
-        signal_source=SignalSource.CONSENSUS,
-        created_at=datetime.now(UTC),
-    )
+    """``order_id=None`` のときは ``OrderRequest.order_id`` の default_factory に
+    任せる。冪等性テストのように同一 order_id を再利用する場合のみ明示渡しする。"""
+    kwargs: dict[str, Any] = {
+        "unified_signal_id": signal_id,
+        "symbol": symbol,
+        "side": side,
+        "quantity": quantity,
+        "order_type": OrderType.MARKET,
+        "trade_mode": TradeMode.LIVE,
+        "signal_source": SignalSource.CONSENSUS,
+        "created_at": datetime.now(UTC),
+    }
+    if order_id is not None:
+        kwargs["order_id"] = order_id
+    return OrderRequest(**kwargs)
 
 
 def _build_settings(
@@ -388,6 +392,8 @@ def _build_settings(
     kabu_api_password: str,
     kabu_order_password: str,
     kabu_default_exchange: int,
+    oms_live_max_qty_per_order: int | None = None,
+    oms_live_allowed_symbols: str = "",
 ) -> OmsLiveSettings:
     return OmsLiveSettings(
         supabase_url=supabase_url,
@@ -403,14 +409,19 @@ def _build_settings(
         kabu_account_type=4,
         order_fill_poll_interval_seconds=1.0,
         order_fill_timeout_seconds=30.0,
+        oms_live_max_qty_per_order=oms_live_max_qty_per_order,
+        oms_live_allowed_symbols=oms_live_allowed_symbols,
     )
 
 
-async def _drain_until_filled(
+async def _drain_until_stats(
     *,
     settings: OmsLiveSettings,
+    predicate: Callable[[BatchStats], bool],
     max_iterations: int = 30,
-) -> None:
+) -> BatchStats:
+    """``runner.run_once()`` を ``predicate`` が True を返すまで繰り返す。
+    予定回数内で満たされなければ ``AssertionError``。"""
     async with (
         PubSubSubscriber(
             project_id=settings.pubsub_project_id,
@@ -434,8 +445,21 @@ async def _drain_until_filled(
         )
         for _ in range(max_iterations):
             stats = await runner.run_once()
-            if stats.filled > 0:
-                return
+            if predicate(stats):
+                return stats
+    raise AssertionError(f"predicate not satisfied within {max_iterations} iterations")
+
+
+async def _drain_until_filled(
+    *,
+    settings: OmsLiveSettings,
+    max_iterations: int = 30,
+) -> None:
+    await _drain_until_stats(
+        settings=settings,
+        predicate=lambda s: s.filled > 0,
+        max_iterations=max_iterations,
+    )
 
 
 # --- tests ------------------------------------------------------------------
@@ -553,3 +577,270 @@ async def test_phase3_buy_then_sell_round_trip(
         await _delete_aggregator_log(
             url=supabase_url, key=supabase_secret_key, signal_id=sell_signal_id
         )
+
+
+async def test_phase3_idempotency_duplicate_order_id(
+    provisioned_subs: dict[str, str],
+    pubsub_project_id: str,
+    pubsub_emulator_host: str,
+    supabase_url: str,
+    supabase_secret_key: str,
+    kabu_base_url: str,
+    kabu_api_password: str,
+    kabu_order_password: str,
+    phase3_symbol: str,
+    phase3_quantity: int,
+    phase3_exchange: int,
+) -> None:
+    """同一 ``order_id`` を 2 回 publish しても sendorder は 1 回だけで、
+    2 回目は ``skipped_duplicate=1`` で ack される (PR #5 冪等性ハードニングの実走 verify)。
+
+    成功条件:
+      - 1 回目 BUY → ``filled=1`` で trades_live に 1 行
+      - 2 回目 BUY (同 order_id) → ``skipped_duplicate=1`` で sendorder せず ack
+      - 2 回目で trades_live は増えない / positions(live) も変化しない
+      - SELL でクリーンアップして round-trip を閉じる
+    """
+    buy_signal_id = uuid4()
+    sell_signal_id = uuid4()
+    fixed_order_id = uuid4()
+
+    settings = _build_settings(
+        supabase_url=supabase_url,
+        supabase_secret_key=supabase_secret_key,
+        pubsub_project_id=pubsub_project_id,
+        pubsub_emulator_host=pubsub_emulator_host,
+        live_orders_sub=provisioned_subs["live_orders_sub"],
+        kabu_base_url=kabu_base_url,
+        kabu_api_password=kabu_api_password,
+        kabu_order_password=kabu_order_password,
+        kabu_default_exchange=phase3_exchange,
+    )
+
+    try:
+        await _seed_aggregator_log(
+            url=supabase_url, key=supabase_secret_key, signal_id=buy_signal_id, symbol=phase3_symbol
+        )
+        await _seed_aggregator_log(
+            url=supabase_url,
+            key=supabase_secret_key,
+            signal_id=sell_signal_id,
+            symbol=phase3_symbol,
+            action="SELL",
+        )
+
+        # 1 回目 BUY: 通常 fill
+        buy1 = _make_order(
+            symbol=phase3_symbol,
+            side=Side.BUY,
+            quantity=phase3_quantity,
+            signal_id=buy_signal_id,
+            order_id=fixed_order_id,
+        )
+        await _publish(
+            project=pubsub_project_id,
+            emulator_host=pubsub_emulator_host,
+            topic=LIVE_ORDERS_TOPIC,
+            data=buy1.model_dump_json().encode("utf-8"),
+        )
+        await _drain_until_filled(settings=settings)
+
+        trades_after_first = await _read_trades(
+            url=supabase_url, key=supabase_secret_key, symbol=phase3_symbol
+        )
+        assert len(trades_after_first) == 1, (
+            f"1 回目で trades_live が 1 行でない: {trades_after_first}"
+        )
+        assert trades_after_first[0]["order_id"] == str(fixed_order_id)
+
+        # 2 回目 BUY (同じ order_id): skipped_duplicate のはず、sendorder されない
+        buy2 = _make_order(
+            symbol=phase3_symbol,
+            side=Side.BUY,
+            quantity=phase3_quantity,
+            signal_id=buy_signal_id,
+            order_id=fixed_order_id,
+        )
+        await _publish(
+            project=pubsub_project_id,
+            emulator_host=pubsub_emulator_host,
+            topic=LIVE_ORDERS_TOPIC,
+            data=buy2.model_dump_json().encode("utf-8"),
+        )
+        stats = await _drain_until_stats(
+            settings=settings,
+            predicate=lambda s: s.skipped_duplicate > 0,
+        )
+        assert stats.skipped_duplicate == 1, f"skipped_duplicate=1 を期待: {stats}"
+        assert stats.filled == 0, f"二度目で filled が立つのは異常: {stats}"
+
+        trades_after_second = await _read_trades(
+            url=supabase_url, key=supabase_secret_key, symbol=phase3_symbol
+        )
+        assert len(trades_after_second) == 1, (
+            f"二度目の BUY で trades_live が増えている: {trades_after_second}"
+        )
+
+        pos_after_dup = await _read_live_position(
+            url=supabase_url, key=supabase_secret_key, symbol=phase3_symbol
+        )
+        assert pos_after_dup is not None
+        assert pos_after_dup["quantity"] == phase3_quantity, (
+            f"二度目の BUY が positions(live) に反映されてしまった: {pos_after_dup}"
+        )
+
+        # SELL でクリーンアップ (新しい order_id)
+        sell = _make_order(
+            symbol=phase3_symbol,
+            side=Side.SELL,
+            quantity=phase3_quantity,
+            signal_id=sell_signal_id,
+        )
+        await _publish(
+            project=pubsub_project_id,
+            emulator_host=pubsub_emulator_host,
+            topic=LIVE_ORDERS_TOPIC,
+            data=sell.model_dump_json().encode("utf-8"),
+        )
+        await _drain_until_filled(settings=settings)
+    finally:
+        await _delete_trades(url=supabase_url, key=supabase_secret_key, symbol=phase3_symbol)
+        await _delete_position(url=supabase_url, key=supabase_secret_key, symbol=phase3_symbol)
+        await _delete_aggregator_log(
+            url=supabase_url, key=supabase_secret_key, signal_id=buy_signal_id
+        )
+        await _delete_aggregator_log(
+            url=supabase_url, key=supabase_secret_key, signal_id=sell_signal_id
+        )
+
+
+async def test_phase3_safety_rejected_max_qty(
+    provisioned_subs: dict[str, str],
+    pubsub_project_id: str,
+    pubsub_emulator_host: str,
+    supabase_url: str,
+    supabase_secret_key: str,
+    kabu_base_url: str,
+    kabu_api_password: str,
+    kabu_order_password: str,
+    phase3_symbol: str,
+    phase3_quantity: int,
+    phase3_exchange: int,
+) -> None:
+    """``OMS_LIVE_MAX_QTY_PER_ORDER`` 違反は sendorder されず ``safety_rejected=1`` で ack。
+
+    sendorder が走らないため kabu / Supabase 側には何の副作用も起きないことを確認
+    (trades_live / positions(live) は空のまま)。
+    """
+    signal_id = uuid4()
+    # phase3_quantity-1 を上限にすれば必ず違反する
+    settings = _build_settings(
+        supabase_url=supabase_url,
+        supabase_secret_key=supabase_secret_key,
+        pubsub_project_id=pubsub_project_id,
+        pubsub_emulator_host=pubsub_emulator_host,
+        live_orders_sub=provisioned_subs["live_orders_sub"],
+        kabu_base_url=kabu_base_url,
+        kabu_api_password=kabu_api_password,
+        kabu_order_password=kabu_order_password,
+        kabu_default_exchange=phase3_exchange,
+        oms_live_max_qty_per_order=phase3_quantity - 1,
+    )
+
+    try:
+        order = _make_order(
+            symbol=phase3_symbol,
+            side=Side.BUY,
+            quantity=phase3_quantity,
+            signal_id=signal_id,
+        )
+        await _publish(
+            project=pubsub_project_id,
+            emulator_host=pubsub_emulator_host,
+            topic=LIVE_ORDERS_TOPIC,
+            data=order.model_dump_json().encode("utf-8"),
+        )
+        stats = await _drain_until_stats(
+            settings=settings,
+            predicate=lambda s: s.safety_rejected > 0,
+        )
+        assert stats.safety_rejected == 1, f"safety_rejected=1 を期待: {stats}"
+        assert stats.filled == 0, f"safety 違反で filled が立つのは異常: {stats}"
+
+        # sendorder されていないこと → trades_live / positions(live) 共に空
+        assert (
+            await _read_live_position(
+                url=supabase_url, key=supabase_secret_key, symbol=phase3_symbol
+            )
+        ) is None, "max_qty 違反で positions(live) が作られてしまった"
+        assert (
+            await _read_trades(url=supabase_url, key=supabase_secret_key, symbol=phase3_symbol)
+        ) == [], "max_qty 違反で trades_live に書き込まれてしまった"
+    finally:
+        # safety_rejected 経路では positions / trades_live に書き込まれない想定だが、
+        # 念のため cleanup しておく
+        await _delete_trades(url=supabase_url, key=supabase_secret_key, symbol=phase3_symbol)
+        await _delete_position(url=supabase_url, key=supabase_secret_key, symbol=phase3_symbol)
+
+
+async def test_phase3_safety_rejected_allowed_symbols(
+    provisioned_subs: dict[str, str],
+    pubsub_project_id: str,
+    pubsub_emulator_host: str,
+    supabase_url: str,
+    supabase_secret_key: str,
+    kabu_base_url: str,
+    kabu_api_password: str,
+    kabu_order_password: str,
+    phase3_symbol: str,
+    phase3_quantity: int,
+    phase3_exchange: int,
+) -> None:
+    """``OMS_LIVE_ALLOWED_SYMBOLS`` に含まれない symbol は ``safety_rejected=1`` で ack。"""
+    signal_id = uuid4()
+    # 対象 symbol を含まない CSV を意図的に渡す
+    blocked_csv = "0000" if phase3_symbol != "0000" else "0001"
+    settings = _build_settings(
+        supabase_url=supabase_url,
+        supabase_secret_key=supabase_secret_key,
+        pubsub_project_id=pubsub_project_id,
+        pubsub_emulator_host=pubsub_emulator_host,
+        live_orders_sub=provisioned_subs["live_orders_sub"],
+        kabu_base_url=kabu_base_url,
+        kabu_api_password=kabu_api_password,
+        kabu_order_password=kabu_order_password,
+        kabu_default_exchange=phase3_exchange,
+        oms_live_allowed_symbols=blocked_csv,
+    )
+
+    try:
+        order = _make_order(
+            symbol=phase3_symbol,
+            side=Side.BUY,
+            quantity=phase3_quantity,
+            signal_id=signal_id,
+        )
+        await _publish(
+            project=pubsub_project_id,
+            emulator_host=pubsub_emulator_host,
+            topic=LIVE_ORDERS_TOPIC,
+            data=order.model_dump_json().encode("utf-8"),
+        )
+        stats = await _drain_until_stats(
+            settings=settings,
+            predicate=lambda s: s.safety_rejected > 0,
+        )
+        assert stats.safety_rejected == 1, f"safety_rejected=1 を期待: {stats}"
+        assert stats.filled == 0, f"safety 違反で filled が立つのは異常: {stats}"
+
+        assert (
+            await _read_live_position(
+                url=supabase_url, key=supabase_secret_key, symbol=phase3_symbol
+            )
+        ) is None, "allowed_symbols 違反で positions(live) が作られてしまった"
+        assert (
+            await _read_trades(url=supabase_url, key=supabase_secret_key, symbol=phase3_symbol)
+        ) == [], "allowed_symbols 違反で trades_live に書き込まれてしまった"
+    finally:
+        await _delete_trades(url=supabase_url, key=supabase_secret_key, symbol=phase3_symbol)
+        await _delete_position(url=supabase_url, key=supabase_secret_key, symbol=phase3_symbol)
