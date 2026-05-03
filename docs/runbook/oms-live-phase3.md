@@ -116,20 +116,36 @@ uv run pytest services/oms-live/tests/integration/test_phase3_kabu_e2e.py -v -s
 
 `trades_live.unified_signal_id` は `aggregator_logs` の seed 行を指す。テストの `finally` で 3 テーブル全部 cleanup される。
 
+## psql 用クエリ集
+
+頻出操作は `scripts/oms-live-phase3/` に SQL ファイルとして用意してある。`psql -f` で叩ける。
+
+| 用途 | ファイル | 引数 |
+|---|---|---|
+| 状態確認 (system_status / positions(live) / trades_live 直近 10 件) | `check-state.sql` | なし |
+| kill switch ON | `kill-switch-on.sql` | なし |
+| kill switch OFF (再開) | `kill-switch-off.sql` | なし |
+| 指定 symbol の positions(live) / trades_live を全削除 | `cleanup-symbol.sql` | `-v symbol=7203` |
+
+ローカル Supabase に対する接続文字列例:
+```
+postgresql://postgres:postgres@127.0.0.1:54322/postgres
+```
+
 ## 中止手順 (異常時)
 
 走行中に何か変だったら **すぐ実行**:
 
 1. **Pub/Sub publish を止める** (テストプロセス `Ctrl+C`)。Runner pull もループ抜けで止まる
 2. **kill switch を立てる**: Dashboard `http://localhost:3001/system` の **取引許可: OFF** ボタンを押す。または psql で:
-   ```sql
-   update system_status set is_trading_allowed = false where id = 1;
+   ```bash
+   psql "$SUPABASE_DB_URL" -f scripts/oms-live-phase3/kill-switch-on.sql
    ```
    これで以降の Gateway 経路の注文は全 reject される。**ただし Phase 3 e2e は Gateway を介さず `live-orders` トピックに直接 publish するため、kill switch は次の publish 以降にしか効かない**。すでに live-orders にバッファされている message は Runner が pull する。Runner を止めるには pytest プロセス停止 + `python -m oms_live` を起動していたら `Ctrl+C`
 3. **kabuステーション GUI** で未約定の発注が残っていないか確認、残っていれば GUI から手動取消
 4. **`positions(live)` に意図しないポジションが残っていないか確認**:
-   ```sql
-   select * from positions where trade_type = 'live';
+   ```bash
+   psql "$SUPABASE_DB_URL" -f scripts/oms-live-phase3/check-state.sql
    ```
    残っていれば手動 SELL (kabuステーション GUI から成行売) → 14:50 のデイクローズアウトに任せても良い
 
@@ -137,11 +153,11 @@ uv run pytest services/oms-live/tests/integration/test_phase3_kabu_e2e.py -v -s
 
 異常対応後に Phase 3 を再開する場合:
 
-```sql
-update system_status set is_trading_allowed = true where id = 1;
+```bash
+psql "$SUPABASE_DB_URL" -f scripts/oms-live-phase3/kill-switch-off.sql
 ```
 
-または Dashboard で **取引許可: ON** に戻す。再開前に `daily_pnl` がリセットされているか / `daily_loss_limit` を超えていないか確認すること。
+または Dashboard で **取引許可: ON** に戻す。再開前に `daily_pnl` がリセットされているか / `daily_loss_limit` を超えていないか確認すること (`check-state.sql` で確認可能)。
 
 ## 後始末
 
@@ -149,9 +165,10 @@ update system_status set is_trading_allowed = true where id = 1;
 
 - [ ] Pub/Sub テストプロセス停止
 - [ ] SSH トンネル切断
-- [ ] `positions(live)` が空になっていることを確認 (`select * from positions where trade_type='live';`)
+- [ ] `positions(live)` が空になっていることを確認 (`psql "$SUPABASE_DB_URL" -f scripts/oms-live-phase3/check-state.sql`)
 - [ ] kabuステーション GUI で未約定注文が残っていないか確認
 - [ ] `system_status.daily_pnl` の値を記録 (Phase 3 結果として残す)
+- [ ] テスト走行で対象 symbol にゴミ行が残った場合は `psql "$SUPABASE_DB_URL" -v symbol=<code> -f scripts/oms-live-phase3/cleanup-symbol.sql` で掃除
 
 ## 残課題 / Phase 4 候補
 
