@@ -91,6 +91,9 @@ class _SupabaseRouter:
     live_position_rows: list[list[dict[str, Any]]] = field(default_factory=list)
     list_position_rows: list[list[dict[str, Any]]] = field(default_factory=list)
     system_status_rows: list[dict[str, Any]] = field(default_factory=list)
+    # GET /rest/v1/trades_live (existence check) のレスポンス列。
+    # 1 回の order_id check につき 1 件 pop。空ならデフォルト [] (重複なし) を返す。
+    trades_live_check_rows: list[list[dict[str, Any]]] = field(default_factory=list)
     insert_trade_status: int = 204
     insert_position_status: int = 204
     update_position_status: int = 204
@@ -120,6 +123,9 @@ class _SupabaseRouter:
             return httpx.Response(self.update_position_status, content=b"")
         if method == "DELETE" and path == "/rest/v1/positions":
             return httpx.Response(self.delete_position_status, content=b"")
+        if method == "GET" and path == "/rest/v1/trades_live":
+            rows = self.trades_live_check_rows.pop(0) if self.trades_live_check_rows else []
+            return httpx.Response(200, json=rows)
         if method == "POST" and path == "/rest/v1/trades_live":
             return httpx.Response(self.insert_trade_status, content=b"")
         return httpx.Response(404, text=f"unmocked: {method} {path}")
@@ -313,11 +319,47 @@ async def test_run_once_buy_new_position_writes_trade_and_position_and_acks() ->
     assert ("POST", "/rest/v1/positions") in methods
     # BUY なので realized_pnl 加算 (PATCH /system_status) は無し
     assert ("PATCH", "/rest/v1/system_status") not in methods
+    # 冪等性 check (GET /trades_live?order_id=eq.<id>) が走っていること
+    insert_req = next(
+        r for r in supabase.requests if r.method == "POST" and r.url.path == "/rest/v1/trades_live"
+    )
+    inserted = json.loads(insert_req.content.decode())[0]
+    assert inserted["order_id"] == str(order.order_id)
 
     # Pub/Sub ack も飛んでいること
     assert len(pubsub.acked) == 1
     body = json.loads(pubsub.acked[0].content.decode())
     assert body == {"ackIds": ["a1"]}
+
+
+async def test_run_once_skips_when_order_id_already_in_trades_live() -> None:
+    """前回成功した同一 order_id を再配信されたら sendorder せず ack する。"""
+    order = make_order_request(side=Side.BUY, quantity=100)
+    pubsub = _PubSubRouter(batches=[_pull_response([("a1", order.model_dump_json().encode())])])
+    # existence check が「あり」を返す
+    supabase = _SupabaseRouter(
+        trades_live_check_rows=[[{"order_id": str(order.order_id)}]],
+    )
+    kabu = _KabuRouter()  # sendorder_responses なし — 呼ばれたら 500
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, kabu=kabu, run_body=_body)
+    assert stats.orders_pulled == 1
+    assert stats.filled == 0
+    assert stats.no_fills == 0
+    assert stats.skipped_duplicate == 1
+    assert stats.write_errors == 0
+    assert stats.acked == 1
+
+    # kabu には一切リクエストを投げていないこと (token も含めて 0)
+    assert kabu.requests == []
+    # Supabase には existence check の GET だけ
+    methods = [(r.method, r.url.path) for r in supabase.requests]
+    assert methods == [("GET", "/rest/v1/trades_live")]
+    # ack も飛ぶ
+    assert len(pubsub.acked) == 1
 
 
 async def test_run_once_sell_full_close_calls_add_realized_pnl_and_delete() -> None:
@@ -379,8 +421,9 @@ async def test_run_once_sendorder_rejected_records_no_fill_and_acks() -> None:
     assert stats.no_fills == 1
     assert stats.write_errors == 0
     assert stats.acked == 1
-    # Supabase は呼ばない
-    assert supabase.requests == []
+    # Supabase の書込系 (POST/PATCH/DELETE) は呼ばない (existence check の GET は走る)
+    write_methods = {"POST", "PATCH", "DELETE"}
+    assert [r for r in supabase.requests if r.method in write_methods] == []
     # ack は飛ぶ
     assert len(pubsub.acked) == 1
 

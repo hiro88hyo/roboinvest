@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Coroutine
 from decimal import Decimal
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -345,6 +346,23 @@ async def test_insert_trade_live_posts_serialized_row() -> None:
     assert row["quantity"] == 100
     assert row["price"] == "1234.5"
     assert row["unified_signal_id"] == str(rec.unified_signal_id)
+    assert row["order_id"] is None
+
+
+async def test_insert_trade_live_serializes_order_id_when_present() -> None:
+    captured: list[httpx.Request] = []
+
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(204, content=b"")
+
+    order_id = uuid4()
+    rec = make_live_fill_record(order_id=order_id)
+    async with _build_client(_handler) as client:
+        await client.insert_trade_live(rec)
+
+    body = json.loads(captured[0].content.decode())
+    assert body[0]["order_id"] == str(order_id)
 
 
 async def test_insert_trade_live_raises_on_4xx() -> None:
@@ -354,6 +372,48 @@ async def test_insert_trade_live_raises_on_4xx() -> None:
     async with _build_client(_handler) as client:
         with pytest.raises(SupabaseError, match="insert failed"):
             await client.insert_trade_live(make_live_fill_record())
+
+
+# --- live_trade_exists_for_order_id -----------------------------------------
+
+
+async def test_live_trade_exists_returns_true_when_row_present() -> None:
+    captured: list[httpx.Request] = []
+
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json=[{"order_id": "11111111-1111-1111-1111-111111111111"}])
+
+    order_id = UUID("11111111-1111-1111-1111-111111111111")
+    async with _build_client(_handler) as client:
+        exists = await client.live_trade_exists_for_order_id(order_id)
+
+    assert exists is True
+    req = captured[0]
+    assert req.method == "GET"
+    assert req.url.path == "/rest/v1/trades_live"
+    assert req.url.params.get("order_id") == f"eq.{order_id}"
+    assert req.url.params.get("select") == "order_id"
+    assert req.url.params.get("limit") == "1"
+
+
+async def test_live_trade_exists_returns_false_when_no_row() -> None:
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[])
+
+    async with _build_client(_handler) as client:
+        exists = await client.live_trade_exists_for_order_id(uuid4())
+
+    assert exists is False
+
+
+async def test_live_trade_exists_raises_on_5xx() -> None:
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="boom")
+
+    async with _build_client(_handler) as client:
+        with pytest.raises(SupabaseError, match="transient"):
+            await client.live_trade_exists_for_order_id(uuid4())
 
 
 async def test_delete_live_position_raises_on_5xx() -> None:

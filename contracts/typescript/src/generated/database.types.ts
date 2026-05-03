@@ -240,6 +240,7 @@ export type Database = {
       trades_live: {
         Row: {
           executed_at: string
+          order_id: string | null
           price: number
           quantity: number
           side: string
@@ -250,6 +251,7 @@ export type Database = {
         }
         Insert: {
           executed_at?: string
+          order_id?: string | null
           price: number
           quantity: number
           side: string
@@ -260,6 +262,7 @@ export type Database = {
         }
         Update: {
           executed_at?: string
+          order_id?: string | null
           price?: number
           quantity?: number
           side?: string

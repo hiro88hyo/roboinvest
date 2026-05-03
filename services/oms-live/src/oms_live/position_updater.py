@@ -42,7 +42,11 @@ def build_fill_record(
     fill: FillResult,
     executed_at: datetime,
 ) -> LiveFillRecord | None:
-    """``trades_live`` 1 行に対応する約定レコードを生成する。不約定時は ``None``。"""
+    """``trades_live`` 1 行に対応する約定レコードを生成する。不約定時は ``None``。
+
+    ``order.order_id`` は冪等性キーとして ``LiveFillRecord.order_id`` に carry し、
+    Supabase 側の partial unique index で二重 INSERT を弾けるようにする。
+    """
 
     if fill.filled_quantity <= 0 or fill.fill_price is None:
         return None
@@ -53,6 +57,7 @@ def build_fill_record(
         price=fill.fill_price,
         signal_source=order.signal_source,
         unified_signal_id=order.unified_signal_id,
+        order_id=order.order_id,
         executed_at=executed_at,
     )
 

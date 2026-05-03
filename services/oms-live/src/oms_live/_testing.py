@@ -118,6 +118,7 @@ def make_live_fill_record(
     unified_signal_id: UUID | None = None,
     executed_at: datetime | None = None,
     trade_id: UUID | None = None,
+    order_id: UUID | None = None,
 ) -> LiveFillRecord:
     kwargs: dict[str, Any] = {
         "symbol": symbol,
@@ -130,4 +131,6 @@ def make_live_fill_record(
     }
     if trade_id is not None:
         kwargs["trade_id"] = trade_id
+    if order_id is not None:
+        kwargs["order_id"] = order_id
     return LiveFillRecord(**kwargs)
