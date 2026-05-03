@@ -65,6 +65,8 @@ class BatchStats:
     write_errors: int
     acked: int
     skipped_duplicate: int = 0
+    safety_rejected: int = 0
+    dry_run_skipped: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +114,8 @@ class StreamRunner:
         no_fills = 0
         write_errors = 0
         skipped_duplicate = 0
+        safety_rejected = 0
+        dry_run_skipped = 0
         acks: list[str] = []
 
         for msg in order_msgs:
@@ -134,6 +138,10 @@ class StreamRunner:
                 filled += 1
             elif outcome == "skipped_duplicate":
                 skipped_duplicate += 1
+            elif outcome == "safety_rejected":
+                safety_rejected += 1
+            elif outcome == "dry_run_skipped":
+                dry_run_skipped += 1
             else:
                 no_fills += 1
             acks.append(msg.ack_id)
@@ -149,13 +157,17 @@ class StreamRunner:
             write_errors=write_errors,
             acked=len(acks),
             skipped_duplicate=skipped_duplicate,
+            safety_rejected=safety_rejected,
+            dry_run_skipped=dry_run_skipped,
         )
 
     async def _process_order(self, order: OrderRequest) -> str:
-        """``"filled" | "no_fill" | "skipped_duplicate"``。
+        """``"filled" | "no_fill" | "skipped_duplicate" | "safety_rejected" | "dry_run_skipped"``。
 
         Supabase 書込失敗時のみ ``SupabaseError`` を伝播する。
         重複検知時は sendorder せず即 ack する (idempotency hardening)。
+        Phase 3 安全装備 (allowed_symbols / max_qty / dry_run) は existence check の
+        後・sendorder の前に評価する。
         """
 
         # 0) idempotency check: redeliver された (前回完全成功済) 注文は弾く
@@ -167,6 +179,36 @@ class StreamRunner:
                 order.unified_signal_id,
             )
             return "skipped_duplicate"
+
+        # 0.5) safety knobs (Phase 3): allowed_symbols / max_qty / dry_run
+        allowed = self.settings.allowed_symbol_set
+        if allowed and order.symbol not in allowed:
+            logger.warning(
+                "live order rejected by allowed_symbols: order_id=%s symbol=%s allowed=%s",
+                order.order_id,
+                order.symbol,
+                sorted(allowed),
+            )
+            return "safety_rejected"
+        max_qty = self.settings.oms_live_max_qty_per_order
+        if max_qty is not None and order.quantity > max_qty:
+            logger.warning(
+                "live order rejected by max_qty_per_order: order_id=%s symbol=%s qty=%d max=%d",
+                order.order_id,
+                order.symbol,
+                order.quantity,
+                max_qty,
+            )
+            return "safety_rejected"
+        if self.settings.oms_live_dry_run:
+            logger.info(
+                "live order skipped (DRY_RUN): order_id=%s symbol=%s side=%s qty=%d",
+                order.order_id,
+                order.symbol,
+                order.side.value,
+                order.quantity,
+            )
+            return "dry_run_skipped"
 
         # 1) sendorder
         payload = build_sendorder_payload(
@@ -327,7 +369,22 @@ class StreamRunner:
 
         closeout 由来の OrderRequest / 約定行は対応する ``aggregator_logs`` 行を
         持たないため ``unified_signal_id`` は ``None`` で書き込む。
+
+        Phase 3 安全装備:
+        - ``oms_live_dry_run=True`` のときは Supabase / kabu に一切触れず即 no-op
+        - ``allowed_symbols`` / ``max_qty_per_order`` は closeout には適用しない
+          (持ち越し決済を阻害しないため)
         """
+        if self.settings.oms_live_dry_run:
+            logger.info("closeout: skipped (DRY_RUN)")
+            return CloseoutStats(
+                triggered=False,
+                skipped_reason="dry_run",
+                positions_seen=0,
+                closed=0,
+                no_fills=0,
+                write_errors=0,
+            )
         try:
             state = await self.supabase.read_system_status()
         except SupabaseError:
