@@ -367,7 +367,10 @@ async def test_book_with_no_liquidity_is_no_fill() -> None:
     stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
 
     assert stats.no_fills == 1
-    assert supabase.requests == []  # no read because we short-circuit on no fill
+    # 注文経路は早期 return で Supabase 書込ゼロ。
+    # swing cache の list_paper_positions は走るが、本テストの趣旨と独立。
+    writes = [r for r in supabase.requests if r.method in {"POST", "PATCH", "DELETE"}]
+    assert writes == []
 
 
 async def test_tick_data_on_raw_market_data_is_ignored_but_acked() -> None:
@@ -538,6 +541,345 @@ async def test_closeout_handles_supabase_read_failure() -> None:
     stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
     assert stats.triggered is False
     assert stats.skipped_reason == "read_system_status_failed"
+
+
+# --- swing auto-close (Phase 4) ------------------------------------------
+
+
+def _swing_position_row(**overrides: Any) -> dict[str, Any]:
+    """swing 用 default を _position_row に上書き。"""
+    base = _position_row(holding_type="swing", **overrides)
+    return base
+
+
+async def test_swing_no_positions_in_cache_is_skip() -> None:
+    """swing position が DB に無いと、板更新が来ても何も起きない。"""
+    book = make_order_book(symbol="7203", bids=(("1100", 500),))
+    pubsub = _PubSubRouter(
+        book_batches=[_pull_response([("bk-1", book.model_dump_json().encode("utf-8"))])],
+    )
+    supabase = _SupabaseRouter(list_position_rows=[[]])  # swing cache fetch → empty
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+    assert stats.swing_exits == 0
+    assert stats.swing_trails == 0
+    assert stats.swing_no_fills == 0
+    writes = [r for r in supabase.requests if r.method in {"POST", "PATCH", "DELETE"}]
+    assert writes == []
+
+
+async def test_swing_stop_loss_breach_triggers_exit() -> None:
+    """bids[0] が stop_loss 以下 → SELL 約定 + trades_paper INSERT + position DELETE。"""
+    book = make_order_book(symbol="7203", bids=(("950", 500),))
+    pubsub = _PubSubRouter(
+        book_batches=[_pull_response([("bk-1", book.model_dump_json().encode("utf-8"))])],
+    )
+    supabase = _SupabaseRouter(
+        list_position_rows=[
+            [
+                _swing_position_row(
+                    quantity=100,
+                    entry_price="1000",
+                    stop_loss_price="950",
+                    target_price="1100",
+                )
+            ]
+        ],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+    assert stats.swing_exits == 1
+    assert stats.swing_trails == 0
+    assert stats.swing_no_fills == 0
+    assert stats.swing_write_errors == 0
+
+    posts = [r for r in supabase.requests if r.method == "POST"]
+    paths = [r.url.path for r in posts]
+    assert "/rest/v1/trades_paper" in paths
+    insert_trade = next(r for r in posts if r.url.path == "/rest/v1/trades_paper")
+    body = json.loads(insert_trade.content.decode())[0]
+    assert body["symbol"] == "7203"
+    assert body["side"] == "SELL"
+    assert body["quantity"] == 100
+    assert body["price"] == "950"
+    assert body["unified_signal_id"] is None  # swing exit は aggregator_logs 行なし
+    assert body["signal_source"] == "CONSENSUS"
+
+    deletes = [r for r in supabase.requests if r.method == "DELETE"]
+    assert len(deletes) == 1
+    assert deletes[0].url.params.get("symbol") == "eq.7203"
+
+
+async def test_swing_target_hit_triggers_exit() -> None:
+    book = make_order_book(symbol="7203", bids=(("1100", 500),))
+    pubsub = _PubSubRouter(
+        book_batches=[_pull_response([("bk-1", book.model_dump_json().encode("utf-8"))])],
+    )
+    supabase = _SupabaseRouter(
+        list_position_rows=[
+            [_swing_position_row(quantity=100, target_price="1100", stop_loss_price="950")]
+        ],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+    assert stats.swing_exits == 1
+
+
+async def test_swing_trail_only_patches_stop_loss() -> None:
+    """stop も target も触れない / max_hold 未経過、trail 候補が既存 stop を更新。"""
+    book = make_order_book(symbol="7203", bids=(("1100", 500),))
+    pubsub = _PubSubRouter(
+        book_batches=[_pull_response([("bk-1", book.model_dump_json().encode("utf-8"))])],
+    )
+    supabase = _SupabaseRouter(
+        list_position_rows=[
+            [
+                _swing_position_row(
+                    quantity=100,
+                    stop_loss_price="980",
+                    trailing_stop_pct="0.02",
+                )
+            ]
+        ],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+    assert stats.swing_trails == 1
+    assert stats.swing_exits == 0
+
+    patches = [r for r in supabase.requests if r.method == "PATCH"]
+    assert len(patches) == 1
+    body = json.loads(patches[0].content.decode())
+    # 1100 * 0.98 = 1078
+    assert body == {"stop_loss_price": "1078"}
+    # trades_paper への書き込みはなし
+    posts = [r for r in supabase.requests if r.method == "POST"]
+    assert all(r.url.path != "/rest/v1/trades_paper" for r in posts)
+    deletes = [r for r in supabase.requests if r.method == "DELETE"]
+    assert deletes == []
+
+
+async def test_swing_hold_no_writes() -> None:
+    """価格が stop と target の間、trailing は stop を更新できない → hold。"""
+    book = make_order_book(symbol="7203", bids=(("1090", 500),))
+    pubsub = _PubSubRouter(
+        book_batches=[_pull_response([("bk-1", book.model_dump_json().encode("utf-8"))])],
+    )
+    supabase = _SupabaseRouter(
+        list_position_rows=[
+            [
+                _swing_position_row(
+                    quantity=100,
+                    stop_loss_price="1078",  # 既に切上げ済み
+                    target_price="1200",
+                    trailing_stop_pct="0.02",  # candidate=1068 < 1078
+                )
+            ]
+        ],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+    assert stats.swing_exits == 0
+    assert stats.swing_trails == 0
+    assert stats.swing_no_fills == 0
+    writes = [r for r in supabase.requests if r.method in {"POST", "PATCH", "DELETE"}]
+    assert writes == []
+
+
+async def test_swing_skips_day_positions_in_cache() -> None:
+    """holding_type=day は cache に乗らないので評価対象外。"""
+    book = make_order_book(symbol="7203", bids=(("950", 500),))
+    pubsub = _PubSubRouter(
+        book_batches=[_pull_response([("bk-1", book.model_dump_json().encode("utf-8"))])],
+    )
+    supabase = _SupabaseRouter(
+        list_position_rows=[
+            [_position_row(stop_loss_price="950", quantity=100)]  # holding_type=day
+        ],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+    assert stats.swing_exits == 0
+    writes = [r for r in supabase.requests if r.method in {"POST", "PATCH", "DELETE"}]
+    assert writes == []
+
+
+async def test_swing_consecutive_books_only_exit_once() -> None:
+    """exit 後に同 symbol の板が再来しても、cache から消えているので no-op。"""
+    book = make_order_book(symbol="7203", bids=(("950", 500),))
+    pubsub = _PubSubRouter(
+        book_batches=[
+            _pull_response([("bk-1", book.model_dump_json().encode("utf-8"))]),
+            _pull_response([("bk-2", book.model_dump_json().encode("utf-8"))]),
+        ],
+    )
+    supabase = _SupabaseRouter(
+        list_position_rows=[
+            [_swing_position_row(quantity=100, stop_loss_price="950")],
+        ],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        # 1 回目 exit 確定 (cache から削除) → 2 回目は cache 空で no-op
+        # cache TTL 30s で 2 回目は再 fetch しない
+        s1 = await runner.run_once()
+        s2 = await runner.run_once()
+        return [s1, s2]
+
+    [s1, s2] = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+    assert s1.swing_exits == 1
+    assert s2.swing_exits == 0
+    deletes = [r for r in supabase.requests if r.method == "DELETE"]
+    assert len(deletes) == 1  # 1 回だけ DELETE
+
+
+async def test_swing_no_bids_in_book_is_no_fill() -> None:
+    """板の bids が空 → SELL 約定できないので swing_no_fills を計上。"""
+    book = make_order_book(symbol="7203", bids=(), asks=(("1000", 100),))
+    pubsub = _PubSubRouter(
+        book_batches=[_pull_response([("bk-1", book.model_dump_json().encode("utf-8"))])],
+    )
+    supabase = _SupabaseRouter(
+        list_position_rows=[[_swing_position_row(quantity=100, stop_loss_price="950")]],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+    assert stats.swing_no_fills == 1
+    assert stats.swing_exits == 0
+    writes = [r for r in supabase.requests if r.method in {"POST", "PATCH", "DELETE"}]
+    assert writes == []
+
+
+async def test_swing_supabase_write_failure_keeps_position_in_cache() -> None:
+    """exit 経路で trades_paper INSERT が 5xx → write_error 計上、cache 維持。"""
+    book = make_order_book(symbol="7203", bids=(("950", 500),))
+    pubsub = _PubSubRouter(
+        book_batches=[
+            _pull_response([("bk-1", book.model_dump_json().encode("utf-8"))]),
+            _pull_response([("bk-2", book.model_dump_json().encode("utf-8"))]),
+        ],
+    )
+    supabase = _SupabaseRouter(
+        list_position_rows=[[_swing_position_row(quantity=100, stop_loss_price="950")]],
+        insert_trade_status=500,
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        s1 = await runner.run_once()
+        # cache 維持のため 2 回目も同条件で再評価
+        # ただし 2 回目も同じ 500 でリトライ後 SupabaseError
+        s2 = await runner.run_once()
+        return [s1, s2]
+
+    [s1, s2] = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+    assert s1.swing_exits == 0
+    assert s1.swing_write_errors == 1
+    # 2 回目も同 symbol で再評価 (cache 維持)
+    assert s2.swing_write_errors == 1
+
+
+async def test_swing_cache_refresh_failure_returns_write_error() -> None:
+    """list_paper_positions 自体が 5xx → swing_write_errors=1 の 1 サイクル分。"""
+    book = make_order_book(symbol="7203", bids=(("950", 500),))
+    pubsub = _PubSubRouter(
+        book_batches=[_pull_response([("bk-1", book.model_dump_json().encode("utf-8"))])],
+    )
+
+    @dataclass
+    class _Failing:
+        calls: int = 0
+
+        async def __call__(self, request: httpx.Request) -> httpx.Response:
+            self.calls += 1
+            if request.method == "GET" and request.url.path == "/rest/v1/positions":
+                # tenacity は 3 回 retry → 全部 500 で SupabaseError
+                return httpx.Response(500, text="boom")
+            return httpx.Response(404, text=f"unmocked: {request.method} {request.url.path}")
+
+    supabase_handler = _Failing()
+
+    async def _noop_sleep(_: float) -> None:
+        return None
+
+    s = _settings()
+    async with (
+        PubSubSubscriber(
+            project_id=s.pubsub_project_id,
+            emulator_host=s.pubsub_emulator_host,
+            transport=httpx.MockTransport(pubsub),
+        ) as subscriber,
+        SupabaseClient(
+            url=s.supabase_url,
+            secret_key=s.supabase_secret_key,
+            transport=httpx.MockTransport(supabase_handler),
+        ) as supa,
+    ):
+        runner = StreamRunner(
+            subscriber=subscriber,
+            supabase=supa,
+            settings=s,
+            idle_backoff_seconds=1.0,
+            sleep=_noop_sleep,
+            wall_clock=lambda: DEFAULT_TS,
+        )
+        stats = await runner.run_once()
+
+    assert stats.swing_write_errors == 1
+    assert stats.swing_exits == 0
+
+
+async def test_swing_cache_ttl_reuses_within_window() -> None:
+    """TTL 内なら list_paper_positions は 1 度しか叩かない。"""
+    book = make_order_book(symbol="7203", bids=(("1100", 500),))
+    pubsub = _PubSubRouter(
+        book_batches=[
+            _pull_response([("bk-1", book.model_dump_json().encode("utf-8"))]),
+            _pull_response([("bk-2", book.model_dump_json().encode("utf-8"))]),
+        ],
+    )
+    # list_position_rows は 1 度だけ pop される想定
+    supabase = _SupabaseRouter(
+        list_position_rows=[
+            [_swing_position_row(quantity=100, stop_loss_price="950", target_price="2000")]
+        ],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        s1 = await runner.run_once()
+        s2 = await runner.run_once()
+        return [s1, s2]
+
+    await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+    # list_paper_positions = symbol 無し GET 1 回のみ (2 回目は TTL 内で再フェッチなし)
+    list_gets = [
+        r
+        for r in supabase.requests
+        if r.method == "GET"
+        and r.url.path == "/rest/v1/positions"
+        and r.url.params.get("symbol") is None
+    ]
+    assert len(list_gets) == 1
 
 
 # --- helpers --------------------------------------------------------------

@@ -243,6 +243,46 @@ async def _delete_trades(*, url: str, key: str, symbol: str) -> None:
         )
 
 
+async def _insert_paper_position(
+    *,
+    url: str,
+    key: str,
+    symbol: str,
+    quantity: int,
+    entry_price: Decimal,
+    holding_type: str = "swing",
+    stop_loss_price: Decimal | None = None,
+    target_price: Decimal | None = None,
+    trailing_stop_pct: Decimal | None = None,
+    max_hold_days: int | None = None,
+) -> None:
+    """swing position を Supabase に直接 INSERT する (Phase 4 e2e seed 用)。"""
+    row: dict[str, Any] = {
+        "symbol": symbol,
+        "trade_type": "paper",
+        "side": "LONG",
+        "quantity": quantity,
+        "entry_price": str(entry_price),
+        "current_price": str(entry_price),
+        "unrealized_pnl": "0",
+        "holding_type": holding_type,
+        "opened_at": datetime.now(UTC).isoformat(),
+    }
+    if stop_loss_price is not None:
+        row["stop_loss_price"] = str(stop_loss_price)
+    if target_price is not None:
+        row["target_price"] = str(target_price)
+    if trailing_stop_pct is not None:
+        row["trailing_stop_pct"] = str(trailing_stop_pct)
+    if max_hold_days is not None:
+        row["max_hold_days"] = max_hold_days
+    headers = {**_supabase_headers(key), "Prefer": "return=minimal"}
+    async with httpx.AsyncClient(base_url=url.rstrip("/"), timeout=10.0) as client:
+        resp = await client.post("/rest/v1/positions", headers=headers, json=[row])
+        if resp.status_code >= 300:
+            raise RuntimeError(f"failed to seed positions: {resp.status_code} {resp.text[:200]}")
+
+
 async def _read_paper_position(*, url: str, key: str, symbol: str) -> dict[str, Any] | None:
     async with httpx.AsyncClient(base_url=url.rstrip("/"), timeout=10.0) as client:
         resp = await client.get(
@@ -348,6 +388,39 @@ async def _drain_until_filled(
         for _ in range(max_iterations):
             stats = await runner.run_once()
             if stats.filled > 0:
+                break
+    assert runner is not None
+    return runner
+
+
+async def _drain_until_swing(
+    *,
+    settings: OmsPaperSettings,
+    field_name: str,
+    max_iterations: int = 10,
+) -> StreamRunner:
+    """run_once を最大 max_iterations 回繰り返し、指定 swing 系フィールドが
+    1 以上になるまで進める。``field_name`` は ``swing_exits`` か ``swing_trails``。"""
+    runner: StreamRunner | None = None
+    async with (
+        PubSubSubscriber(
+            project_id=settings.pubsub_project_id,
+            emulator_host=settings.pubsub_emulator_host,
+        ) as subscriber,
+        SupabaseClient(
+            url=settings.supabase_url,
+            secret_key=settings.supabase_secret_key,
+        ) as supabase,
+    ):
+        runner = StreamRunner(
+            subscriber=subscriber,
+            supabase=supabase,
+            settings=settings,
+            idle_backoff_seconds=0.0,
+        )
+        for _ in range(max_iterations):
+            stats = await runner.run_once()
+            if getattr(stats, field_name) > 0:
                 break
     assert runner is not None
     return runner
@@ -507,3 +580,131 @@ async def test_full_sell_order_deletes_position_and_records_trade(
         await _delete_aggregator_log(
             url=supabase_url, key=supabase_secret_key, signal_id=sell_signal_id
         )
+
+
+async def test_swing_stop_loss_breach_triggers_exit(
+    provisioned_subs: dict[str, str],
+    pubsub_project_id: str,
+    pubsub_emulator_host: str,
+    supabase_url: str,
+    supabase_secret_key: str,
+    test_symbol: str,
+) -> None:
+    """swing position を pre-seed → 損切り条件を満たす板を publish →
+    自動 SELL 約定 + position DELETE + trades_paper INSERT(unified_signal_id=NULL)。"""
+    # 板の bids[0] = 950, swing position の stop_loss_price = 950 → 損切り発火
+    book = OrderBookSnapshot(
+        symbol=test_symbol,
+        timestamp=datetime.now(UTC),
+        bids=[PriceLevel(price=Decimal("950"), quantity=500)],
+        asks=[PriceLevel(price=Decimal("955"), quantity=500)],
+    )
+
+    await _insert_paper_position(
+        url=supabase_url,
+        key=supabase_secret_key,
+        symbol=test_symbol,
+        quantity=100,
+        entry_price=Decimal("1000"),
+        holding_type="swing",
+        stop_loss_price=Decimal("950"),
+        target_price=Decimal("1100"),
+    )
+    await _publish(
+        project=pubsub_project_id,
+        emulator_host=pubsub_emulator_host,
+        topic=RAW_MARKET_DATA_TOPIC,
+        data=book.model_dump_json().encode("utf-8"),
+    )
+
+    settings = _build_settings(
+        supabase_url=supabase_url,
+        supabase_secret_key=supabase_secret_key,
+        pubsub_project_id=pubsub_project_id,
+        pubsub_emulator_host=pubsub_emulator_host,
+        paper_orders_sub=provisioned_subs["paper_orders_sub"],
+        raw_market_data_sub=provisioned_subs["raw_market_data_sub"],
+    )
+
+    try:
+        await _drain_until_swing(settings=settings, field_name="swing_exits")
+
+        # 1) position は DELETE 済み
+        pos_after = await _read_paper_position(
+            url=supabase_url, key=supabase_secret_key, symbol=test_symbol
+        )
+        assert pos_after is None
+
+        # 2) trades_paper に SELL 行が 1 つ、unified_signal_id=NULL
+        trades = await _read_trades(url=supabase_url, key=supabase_secret_key, symbol=test_symbol)
+        assert len(trades) == 1
+        assert trades[0]["side"] == "SELL"
+        assert trades[0]["quantity"] == 100
+        assert Decimal(str(trades[0]["price"])) == Decimal("950")
+        assert trades[0]["unified_signal_id"] is None
+        assert trades[0]["signal_source"] == "CONSENSUS"
+    finally:
+        await _delete_trades(url=supabase_url, key=supabase_secret_key, symbol=test_symbol)
+        await _delete_position(url=supabase_url, key=supabase_secret_key, symbol=test_symbol)
+
+
+async def test_swing_trail_only_updates_stop_loss_price(
+    provisioned_subs: dict[str, str],
+    pubsub_project_id: str,
+    pubsub_emulator_host: str,
+    supabase_url: str,
+    supabase_secret_key: str,
+    test_symbol: str,
+) -> None:
+    """swing position に trailing_stop_pct=0.02、現在 stop=980 で seed → 板 bids=1100 を
+    publish → stop は 1078 に切り上げ、trades_paper には何も書かれない。"""
+    book = OrderBookSnapshot(
+        symbol=test_symbol,
+        timestamp=datetime.now(UTC),
+        bids=[PriceLevel(price=Decimal("1100"), quantity=500)],
+        asks=[PriceLevel(price=Decimal("1105"), quantity=500)],
+    )
+
+    await _insert_paper_position(
+        url=supabase_url,
+        key=supabase_secret_key,
+        symbol=test_symbol,
+        quantity=100,
+        entry_price=Decimal("1000"),
+        holding_type="swing",
+        stop_loss_price=Decimal("980"),
+        trailing_stop_pct=Decimal("0.02"),
+    )
+    await _publish(
+        project=pubsub_project_id,
+        emulator_host=pubsub_emulator_host,
+        topic=RAW_MARKET_DATA_TOPIC,
+        data=book.model_dump_json().encode("utf-8"),
+    )
+
+    settings = _build_settings(
+        supabase_url=supabase_url,
+        supabase_secret_key=supabase_secret_key,
+        pubsub_project_id=pubsub_project_id,
+        pubsub_emulator_host=pubsub_emulator_host,
+        paper_orders_sub=provisioned_subs["paper_orders_sub"],
+        raw_market_data_sub=provisioned_subs["raw_market_data_sub"],
+    )
+
+    try:
+        await _drain_until_swing(settings=settings, field_name="swing_trails")
+
+        # 1) position はまだ存在し、stop_loss_price が 1078 に更新されている
+        pos_after = await _read_paper_position(
+            url=supabase_url, key=supabase_secret_key, symbol=test_symbol
+        )
+        assert pos_after is not None
+        assert pos_after["quantity"] == 100  # 数量は変わらず
+        assert Decimal(str(pos_after["stop_loss_price"])) == Decimal("1078")
+
+        # 2) trades_paper には何も書かれていない
+        trades = await _read_trades(url=supabase_url, key=supabase_secret_key, symbol=test_symbol)
+        assert trades == []
+    finally:
+        await _delete_trades(url=supabase_url, key=supabase_secret_key, symbol=test_symbol)
+        await _delete_position(url=supabase_url, key=supabase_secret_key, symbol=test_symbol)

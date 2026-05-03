@@ -27,10 +27,11 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 
 from pydantic import ValidationError
-from trade_contracts.enums import TradingStyle
+from trade_contracts.enums import OrderType, Side, SignalSource, TradeMode, TradingStyle
 from trade_contracts.market import OrderBookSnapshot
 from trade_contracts.order import OrderRequest
 
@@ -41,6 +42,7 @@ from ..config import OmsPaperSettings
 from ..fill_simulator import simulate_fill
 from ..models import PaperPosition
 from ..position_updater import apply_fill, build_fill_record
+from ..swing_monitor import evaluate_swing_exit
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +61,10 @@ class BatchStats:
     no_fills: int
     write_errors: int
     acked: int
+    swing_exits: int = 0
+    swing_trails: int = 0
+    swing_no_fills: int = 0
+    swing_write_errors: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +87,11 @@ class StreamRunner:
     sleep: Sleep = field(default=asyncio.sleep)
     monotonic: MonotonicClock = field(default=time.monotonic)
     wall_clock: WallClock = field(default_factory=lambda: lambda: datetime.now(UTC))
+    # swing 自動決済 (Phase 4) 用キャッシュ。symbol → PaperPosition (holding_type=swing)
+    # のみ保持。TTL 経過で list_paper_positions から再フェッチ。
+    swing_position_cache: dict[str, PaperPosition] = field(default_factory=dict)
+    swing_cache_ttl_seconds: float = 30.0
+    swing_cache_loaded_at: float | None = None
 
     async def run(self, *, iterations: int | None = None) -> list[BatchStats]:
         results: list[BatchStats] = []
@@ -103,11 +114,19 @@ class StreamRunner:
             max_messages=self.settings.pubsub_pull_max_messages,
             return_immediately=True,
         )
-        books_applied, book_acks = self._consume_books(books_msgs)
+        books_applied, book_acks, updated_symbols = self._consume_books(books_msgs)
         if book_acks:
             await self.subscriber.acknowledge(
                 self.settings.pubsub_subscription_raw_market_data, book_acks
             )
+
+        # 板更新があった symbol について swing position を評価
+        (
+            swing_exits,
+            swing_trails,
+            swing_no_fills,
+            swing_write_errors,
+        ) = await self._evaluate_swing_for_symbols(updated_symbols)
 
         order_msgs = await self.subscriber.pull(
             self.settings.pubsub_subscription_paper_orders,
@@ -158,6 +177,10 @@ class StreamRunner:
             no_fills=no_fills,
             write_errors=write_errors,
             acked=len(book_acks) + len(order_acks),
+            swing_exits=swing_exits,
+            swing_trails=swing_trails,
+            swing_no_fills=swing_no_fills,
+            swing_write_errors=swing_write_errors,
         )
 
     async def run_closeout(self) -> CloseoutStats:
@@ -269,17 +292,186 @@ class StreamRunner:
             write_errors=write_errors,
         )
 
-    def _consume_books(self, messages: list[PulledMessage]) -> tuple[int, list[str]]:
+    def _consume_books(self, messages: list[PulledMessage]) -> tuple[int, list[str], set[str]]:
         applied = 0
         acks: list[str] = []
+        updated: set[str] = set()
         for msg in messages:
             book = _parse_book(msg)
             acks.append(msg.ack_id)  # parse error / TickData も ack
             if book is None:
                 continue
             self.book_cache[book.symbol] = book
+            updated.add(book.symbol)
             applied += 1
-        return applied, acks
+        return applied, acks, updated
+
+    async def _ensure_swing_cache_fresh(self) -> None:
+        """``swing_cache_ttl_seconds`` を超過していたら ``list_paper_positions`` で再取得。
+
+        ``holding_type=swing`` のポジションだけをキャッシュに残す。
+        """
+        now = self.monotonic()
+        if (
+            self.swing_cache_loaded_at is not None
+            and now - self.swing_cache_loaded_at < self.swing_cache_ttl_seconds
+        ):
+            return
+        positions = await self.supabase.list_paper_positions()
+        self.swing_position_cache = {
+            p.symbol: p for p in positions if p.holding_type is TradingStyle.SWING
+        }
+        self.swing_cache_loaded_at = now
+
+    async def _evaluate_swing_for_symbols(self, symbols: set[str]) -> tuple[int, int, int, int]:
+        """板更新のあった symbol について swing 自動決済を評価する。
+
+        Returns ``(exits, trails, no_fills, write_errors)``。
+
+        * cache refresh 失敗時は ``write_errors=1`` を返す (1 サイクル分)。
+          次の板で再評価する。
+        * ``bids`` が空 / 非 swing position は ``no_fills`` でも ``exits`` でもなく
+          単にスキップ (no_fills は "swing position があるのに約定できなかった"
+          ケースのみ計上)。
+        * ``exit`` で書き込み成功 → cache から該当を pop。書き込み失敗 → cache 維持
+          (次の板で retry)。
+        * ``trail`` で書き込み成功 → cache の position の ``stop_loss_price`` を更新。
+        """
+        if not symbols:
+            return 0, 0, 0, 0
+        try:
+            await self._ensure_swing_cache_fresh()
+        except SupabaseError:
+            logger.exception("swing cache refresh failed; will retry next cycle")
+            return 0, 0, 0, 1
+
+        exits = 0
+        trails = 0
+        no_fills = 0
+        write_errors = 0
+        now = self.wall_clock()
+
+        for symbol in symbols:
+            position = self.swing_position_cache.get(symbol)
+            if position is None:
+                continue
+            book = self.book_cache.get(symbol)
+            if book is None or not book.bids:
+                logger.info("swing skip: no bids for symbol=%s", symbol)
+                no_fills += 1
+                continue
+            latest_price = book.bids[0].price
+            decision = evaluate_swing_exit(position=position, latest_price=latest_price, now=now)
+            if decision.action == "hold":
+                continue
+            try:
+                if decision.action == "exit":
+                    outcome = await self._run_swing_exit(
+                        position=position,
+                        book=book,
+                        reason=decision.reason or "",
+                        now=now,
+                    )
+                    if outcome == "exit":
+                        exits += 1
+                        self.swing_position_cache.pop(symbol, None)
+                    else:
+                        no_fills += 1
+                else:  # "trail"
+                    assert decision.new_stop_loss_price is not None
+                    await self._run_swing_trail(
+                        symbol=symbol,
+                        new_stop_loss_price=decision.new_stop_loss_price,
+                    )
+                    self.swing_position_cache[symbol] = position.model_copy(
+                        update={"stop_loss_price": decision.new_stop_loss_price}
+                    )
+                    trails += 1
+            except SupabaseError:
+                logger.exception(
+                    "swing decision write failed: symbol=%s action=%s",
+                    symbol,
+                    decision.action,
+                )
+                write_errors += 1
+        return exits, trails, no_fills, write_errors
+
+    async def _run_swing_exit(
+        self,
+        *,
+        position: PaperPosition,
+        book: OrderBookSnapshot,
+        reason: str,
+        now: datetime,
+    ) -> str:
+        """swing exit 注文を組み立て、擬似約定 → trades_paper INSERT → positions DELETE。
+
+        Returns ``'exit'`` / ``'no_fill'``。 ``SupabaseError`` は呼び出し側で捕捉。
+        closeout と同じく ``unified_signal_id`` は ``None`` (対応する
+        ``aggregator_logs`` 行を持たないため)。
+        """
+        order = OrderRequest(
+            unified_signal_id=None,
+            symbol=position.symbol,
+            side=Side.SELL,
+            quantity=position.quantity,
+            order_type=OrderType.MARKET,
+            trade_mode=TradeMode.PAPER,
+            signal_source=SignalSource.CONSENSUS,
+            created_at=now,
+        )
+        fill = simulate_fill(order=order, book=book)
+        if fill.filled_quantity == 0 or fill.fill_price is None:
+            logger.warning(
+                "swing exit no_fill: symbol=%s reason=%s fill_reason=%s",
+                position.symbol,
+                reason,
+                fill.reason,
+            )
+            return "no_fill"
+        update = apply_fill(
+            order=order,
+            fill=fill,
+            existing=position,
+            holding_type=position.holding_type,
+            executed_at=now,
+        )
+        if update.error is not None:
+            logger.warning(
+                "swing exit apply_fill error: symbol=%s error=%s",
+                position.symbol,
+                update.error,
+            )
+            return "no_fill"
+        record = build_fill_record(order=order, fill=fill, executed_at=now)
+        if record is None:
+            return "no_fill"
+
+        await self.supabase.insert_trade_paper(record)
+        if update.delete:
+            await self.supabase.delete_paper_position(symbol=position.symbol)
+        elif update.position is not None:
+            # 部分約定 (paper では稀): 残量を PATCH
+            await self.supabase.update_paper_position_quantity(
+                symbol=position.symbol,
+                quantity=update.position.quantity,
+                entry_price=str(update.position.entry_price),
+            )
+        logger.info(
+            "swing exit filled: symbol=%s reason=%s qty=%d price=%s",
+            position.symbol,
+            reason,
+            record.quantity,
+            record.price,
+        )
+        return "exit"
+
+    async def _run_swing_trail(self, *, symbol: str, new_stop_loss_price: Decimal) -> None:
+        """``stop_loss_price`` のみ PATCH。 ``SupabaseError`` は呼び出し側で捕捉。"""
+        await self.supabase.update_paper_position_stop_loss(
+            symbol=symbol, stop_loss_price=str(new_stop_loss_price)
+        )
+        logger.info("swing trail: symbol=%s new_stop=%s", symbol, new_stop_loss_price)
 
     async def _process_order(self, order: OrderRequest) -> str:
         """Returns 'filled' or 'no_fill'. Raises SupabaseError on write failure."""
