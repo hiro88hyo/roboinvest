@@ -13,13 +13,13 @@
 - 約定行を Supabase `trades_paper` に INSERT
 - `positions`（`trade_type=paper`）の UPSERT（BUY=新規 or 平均取得単価更新、SELL=全決済で DELETE）
 - `system_status.trading_style=day` のとき 14:50 (JST) に paper 全建玉を仮想成行決済
+- `holding_type=swing` の paper 建玉に対する自動決済（`stop_loss_price` 割れ / `target_price` 到達 / `max_hold_days` 経過）と `trailing_stop_pct` による `stop_loss_price` 切り上げ。板更新トリガで評価し、決済時は closeout と同形式の `unified_signal_id=None` / `signal_source=CONSENSUS` で約定行を書く
 
 **非責務**
 - リスク検証・ロット計算 → Gateway（OMS は Gateway が承認した OrderRequest を信頼する）
 - `system_status.daily_pnl` 更新（paper はキルスイッチ集計外） → そもそも対象外
 - 実発注 → OMS Live
 - 板情報・テクニカル指標生成 → Feature Engine
-- スイング自動決済（stop_loss / target / trailing / max_hold_days） → 本サービスのスコープ外（Phase 4 以降で別途）
 
 ## 実装フェーズ
 
@@ -66,6 +66,19 @@ aggregator / strategy-rule / gateway と同じ 3 フェーズパターン。段�
   - 14:50 (JST) cron タスクが `system_status.trading_style=day` を確認し、paper positions 全件を closeout へ
 - 3c: CLI `stream` サブコマンド + e2e テスト（Pub/Sub エミュレータ + ローカル Supabase）
 
+### Phase 4: スイング自動決済
+
+- `swing_monitor.py` (純関数 `evaluate_swing_exit`): `PaperPosition` + 最新価格 + `now` から `SwingDecision`（`exit` / `trail` / `hold`）を返す。判定優先順位は `stop_loss > target > max_hold_days > trail > hold`。trailing は単調増加のみで `ROUND_HALF_UP` で 1 円丸め
+- `clients/supabase.py` に `update_paper_position_stop_loss`（`stop_loss_price` 列のみ PATCH）を追加
+- `streaming/runner.py`:
+  - `swing_position_cache: dict[symbol, PaperPosition]` を 30 秒 TTL で `list_paper_positions` から再フェッチ（`holding_type=swing` のみ保持）
+  - `_consume_books` で更新があった symbol について `evaluate_swing_exit` を呼ぶ
+  - `exit` → closeout と同形式の SELL 注文を組んで `simulate_fill` → `apply_fill` → `trades_paper` INSERT → `positions` DELETE。`unified_signal_id=None`、`signal_source=CONSENSUS`
+  - `trail` → `update_paper_position_stop_loss` のみ。`trades_paper` には書かない
+  - 評価に使う最新価格は `book.bids[0].price`（最良買気配）。bids 空なら `swing_no_fills` で計上してスキップ
+  - 書込失敗時は cache を維持し、次の板で retry
+- `BatchStats` に `swing_exits` / `swing_trails` / `swing_no_fills` / `swing_write_errors` を追加（default=0）
+
 ## ディレクトリ構成（想定）
 
 ```
@@ -80,6 +93,7 @@ services/oms-paper/
 │   ├── fill_simulator.py        # Phase 1 板情報からの擬似約定 (純関数)
 │   ├── position_updater.py      # Phase 1 ポジション遷移 (純関数)
 │   ├── closeout.py              # Phase 1 14:50 強制決済の OrderRequest 生成 (純関数)
+│   ├── swing_monitor.py         # Phase 4 スイング自動決済の判定 (純関数)
 │   ├── backtest/                # Phase 2
 │   │   ├── __init__.py
 │   │   ├── reader.py
