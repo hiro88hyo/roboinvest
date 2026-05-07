@@ -103,6 +103,8 @@ async def run_stream(
             api_password=settings.kabu_api_password,
             ws_url=settings.kabu_ws_url,
             timeout_seconds=settings.kabu_http_timeout_seconds,
+            ws_ping_interval=settings.kabu_ws_ping_interval_seconds,
+            ws_ping_timeout=settings.kabu_ws_ping_timeout_seconds,
         ) as kabu,
         SupabaseWatchlistReader(
             url=settings.supabase_url,

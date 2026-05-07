@@ -24,6 +24,13 @@ class FeederSettings(BaseSettings):
     kabu_default_exchange: int = 1
     kabu_http_timeout_seconds: float = 10.0
 
+    # WebSocket keepalive ping 設定。kabu/Caddy は pong を返さない疑いがあり
+    # (本番疎通 2026-05-07: library default 20/20s で ~80 秒後に
+    # ConnectionClosedError 発火) デフォルトでは client-side ping を無効化する。
+    # 必要なら env で値を入れて library default や任意の値を有効化できる。
+    kabu_ws_ping_interval_seconds: float | None = None
+    kabu_ws_ping_timeout_seconds: float | None = None
+
     supabase_url: str = ""
     supabase_secret_key: str = ""
 
