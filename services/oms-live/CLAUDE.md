@@ -15,6 +15,7 @@
 - `positions`（`trade_type=live`）の UPSERT（BUY=新規 or 平均取得単価更新、SELL=全決済で DELETE）
 - `system_status.daily_pnl` / `weekly_pnl` / `monthly_pnl` の加算（live 約定のみ）
 - `system_status.trading_style=day` のとき 14:50 (JST) に live 全建玉を成行決済
+- kabu `/positions` と Supabase `positions(live)` の整合性チェック (`reconciler.py`、`scripts/reconcile-positions.py` から起動)
 
 **非責務**
 - リスク検証・ロット計算 → Gateway（OMS は Gateway が承認した OrderRequest を信頼する）
@@ -148,6 +149,33 @@ oms-paper / gateway と同じ 3 フェーズパターン。段階コミット �
 - `OMS_LIVE_PHASE3_EXCHANGE=9` (SOR) を export すること。Exchange=1 (東証直) は本番で reject される
 - 詳細手順は [docs/runbook/oms-live-phase3.md](../../docs/runbook/oms-live-phase3.md) 参照
 
+## Positions reconciler
+
+`reconciler.py` は kabu `/positions` と Supabase `positions(live)` の差分を分類する純関数を提供する。
+
+**Why**: OMS Live の write path は `trades_live` 経由の約定だけを `positions` に反映するため、個人取引・kabu ステーションアプリ手動発注で発生した建玉は Supabase に乗らない。reconciler はこのズレを検出するためのもの (memory `positions_integrity.md` 参照)。
+
+- 純関数: `parse_kabu_position` / `parse_kabu_positions` / `compute_position_diff` / `build_imported_position`
+- I/O 適用層: `apply_reconcile_actions(actions, supabase, *, now, apply_imports, holding_type)`
+- 起動 CLI: `scripts/reconcile-positions.py` (workspace ルートから `uv run python scripts/reconcile-positions.py`)
+
+差分カテゴリと挙動:
+
+| カテゴリ | dry-run (default) | `--apply` |
+| --- | --- | --- |
+| `to_import` (kabu only) | warning ログのみ | `insert_live_position` で取り込み (holding_type=swing 既定、各種閾値 None) |
+| `quantity_mismatches` | warning ログのみ | warning のみ (**自動修正しない**) |
+| `supabase_orphans` (supabase only) | warning ログのみ | warning のみ (**強制 DELETE しない** — 個人保有を巻き込まないため) |
+| `matched` | no-op | no-op |
+
+実行前提:
+- **OMS Live と並行起動しないこと**。`positions` の write path 競合を避ける
+- kabu `/positions` は GET なので市場時間外でも叩ける
+- env: `KABU_API_BASE_URL` / `KABU_API_PASSWORD` / `SUPABASE_URL` / `SUPABASE_SECRET_KEY`
+- `parse_kabu_position` は `Side="2"` (買建) のみ受け付ける。`LeavesQty + HoldQty == 0` はスキップ
+
+将来 Runner の起動シーケンスに組み込む場合は `compute_position_diff` を流用。`apply_reconcile_actions` は dry-run/apply の分岐を持つので、起動時は `apply_imports=False` で warning のみ出すのが安全 (現行 CLI と同じ挙動)。
+
 ## ディレクトリ構成（想定）
 
 ```
@@ -163,6 +191,7 @@ services/oms-live/
 │   ├── kabu_client.py           # Phase 1 REST ラッパー
 │   ├── order_builder.py         # Phase 1 OrderRequest -> sendorder payload (純関数)
 │   ├── order_parser.py          # Phase 1 /orders 応答 -> KabuOrderState / FillResult (純関数)
+│   ├── reconciler.py            # kabu /positions と Supabase positions(live) の整合性チェック
 │   ├── _testing.py              # テスト用ファクトリ
 │   ├── clients/                 # Phase 2
 │   │   ├── pubsub.py
