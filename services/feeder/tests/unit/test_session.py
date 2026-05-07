@@ -6,6 +6,7 @@ async generator ベースの watchlist feed を渡して挙動を観察する。
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -20,19 +21,30 @@ from feeder.kabu_client import KabuApiError, SymbolRegistration
 from feeder.streaming.reconnect import BackoffPolicy
 from feeder.streaming.session import FeederSession, MessageSink
 from trade_contracts.market import OrderBookSnapshot, TickData
+from websockets.exceptions import ConnectionClosedError
 
 
 class _FakeWS:
     """``websockets.connect`` が返す ``ClientConnection`` の最小モック。"""
 
-    def __init__(self, messages: list[str | bytes]) -> None:
+    def __init__(
+        self,
+        messages: list[str | bytes],
+        *,
+        final_exception: BaseException | None = None,
+    ) -> None:
         self._messages = list(messages)
+        self._final_exception = final_exception
 
     def __aiter__(self) -> _FakeWS:
         return self
 
     async def __anext__(self) -> str | bytes:
         if not self._messages:
+            if self._final_exception is not None:
+                exc = self._final_exception
+                self._final_exception = None
+                raise exc
             raise StopAsyncIteration
         return self._messages.pop(0)
 
@@ -42,6 +54,7 @@ class _FakeKabu:
     """``KabuStreamingClient`` Protocol を満たす in-memory fake。"""
 
     ws_messages: list[list[str | bytes]] = field(default_factory=list)
+    ws_final_exceptions: list[BaseException | None] = field(default_factory=list)
     register_errors: list[KabuApiError | None] = field(default_factory=list)
     unregister_all_error: KabuApiError | None = None
     connect_errors: list[Exception | None] = field(default_factory=list)
@@ -86,7 +99,8 @@ class _FakeKabu:
         if err is not None:
             raise err
         msgs = self.ws_messages.pop(0) if self.ws_messages else []
-        yield _FakeWS(msgs)
+        final_exc = self.ws_final_exceptions.pop(0) if self.ws_final_exceptions else None
+        yield _FakeWS(msgs, final_exception=final_exc)
 
 
 async def _watchlist_feed(
@@ -342,6 +356,53 @@ async def test_invalid_ws_payload_is_skipped() -> None:
     assert results[0].messages_received == 3
     assert results[0].records_emitted == 1
     assert len(sink.records) == 1
+
+
+async def test_ws_connection_closed_triggers_backoff_reconnect() -> None:
+    """keepalive ping timeout などで WS が ``ConnectionClosedError`` を出した場合、
+    ``OSError`` 契約に詰め替えて reconnect 経路に乗ること。
+
+    watchlist task が先に完了するレースを避けるため、初回 snapshot の後で
+    Event を await して hang する feed を使う。これで WS 側の例外が確実に
+    最初に観測される。
+    """
+
+    async def _hanging_feed() -> AsyncIterator[list[WatchlistRow]]:
+        yield [_row("7203")]
+        # 永久に await: ws task が例外を投げて wl task を cancel するまで返らない
+        await asyncio.Event().wait()
+        yield []  # pragma: no cover - cancel される前提なので到達しない
+
+    closed_exc = ConnectionClosedError(rcvd=None, sent=None)
+    kabu = _FakeKabu(
+        ws_messages=[[_ws_tick_msg("7203")]],
+        ws_final_exceptions=[closed_exc],
+    )
+    sleep_log: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleep_log.append(seconds)
+
+    session = FeederSession(
+        kabu=kabu,
+        watchlist_feed=_hanging_feed(),
+        default_exchange=1,
+        sink=_CapturingSink(),
+        backoff=BackoffPolicy(initial_seconds=0.5, multiplier=2.0, jitter_ratio=0.0),
+        sleep=fake_sleep,
+    )
+
+    # 1 反復で OSError 経路に乗ることを確認 (run() の except (TimeoutError, OSError)
+    # に乗るので results[0].ended_reason は "connection_error")
+    results = await session.run(iterations=1)
+
+    assert len(results) == 1
+    assert results[0].ended_reason == "connection_error"
+    # connection_error のとき CycleStats は (0,0,0,0) で記録される (run() の
+    # exception ハンドラ仕様)。実 publish 数の検証は他テストに任せ、ここでは
+    # 経路だけ確認する
+    # ConnectionClosedError は auth lost ではないので invalidate_token は来ない
+    assert not any(c[0] == "invalidate_token" for c in kabu.calls)
 
 
 async def test_attempt_resets_after_successful_cycle() -> None:

@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from trade_contracts.market import OrderBookSnapshot, TickData
+from websockets.exceptions import ConnectionClosed
 
 from ..kabu_client import KabuApiError, SymbolRegistration
 from ..parser import parse_push_message
@@ -211,14 +212,19 @@ class FeederSession:
         )
 
     async def _consume_ws(self, ws: AsyncIterable[str | bytes], counters: _Counters) -> None:
-        async for raw in ws:
-            counters.messages_received += 1
-            payload = _decode_json(raw)
-            if payload is None:
-                continue
-            for record in parse_push_message(payload):
-                await self.sink(record)
-                counters.records_emitted += 1
+        try:
+            async for raw in ws:
+                counters.messages_received += 1
+                payload = _decode_json(raw)
+                if payload is None:
+                    continue
+                for record in parse_push_message(payload):
+                    await self.sink(record)
+                    counters.records_emitted += 1
+        except ConnectionClosed as exc:
+            # keepalive ping timeout など WS 切断は OSError 契約に揃え、
+            # session.run の (TimeoutError, OSError) ハンドラで reconnect させる
+            raise OSError(f"websocket closed: {exc}") from exc
 
     async def _consume_watchlist(self, counters: _Counters) -> None:
         """初回以降の watchlist スナップショットを取り、差分を反映し続ける。"""
