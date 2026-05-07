@@ -47,16 +47,42 @@ def test_to_fill_result_partial_uses_vwap_with_round_half_up() -> None:
         cum_qty=200,
         state=3,
         details=[
-            {"ExecutionID": "E-1", "ExecutionTime": None, "Price": 1000, "Qty": 100},
-            {"ExecutionID": "E-2", "ExecutionTime": None, "Price": 1001, "Qty": 100},
+            {"ExecutionID": "E-1", "ExecutionTime": None, "Price": 1000.005, "Qty": 100},
+            {"ExecutionID": "E-2", "ExecutionTime": None, "Price": 1000.015, "Qty": 100},
         ],
     )
     state = parse_order_state(payload)
     fill = to_fill_result(state)
-    # vwap = (1000*100 + 1001*100) / 200 = 1000.5 -> ROUND_HALF_UP -> 1001
+    # vwap = (1000.005*100 + 1000.015*100) / 200 = 1000.010 -> ROUND_HALF_UP -> 1000.01
     assert fill.reason == "partial"
     assert fill.filled_quantity == 200
-    assert fill.fill_price == Decimal("1001")
+    assert fill.fill_price == Decimal("1000.01")
+
+
+def test_to_fill_result_preserves_subyen_fill_price() -> None:
+    """NTT (9432) など 0.05/0.1 円刻みの実 fill 価格が落ちないことを保証する回帰テスト。
+
+    2026-05-07 本番実機検証で 1 円丸め (Decimal("1")) のため
+    BUY ¥151.50 → ¥152、SELL ¥151.45 → ¥151 と歪み、(151-152)*100 = -¥100 が
+    daily_pnl に積まれた (実損は -¥5)。0.01 円丸めにより subyen fill が保持される。
+    """
+    payload = make_kabu_order_payload(
+        state=5,
+        cum_qty=100,
+        order_qty=100,
+        details=[
+            {
+                "ExecutionID": "E-1",
+                "ExecutionTime": "2026-05-07T13:51:39+09:00",
+                "Price": 151.45,
+                "Qty": 100,
+            }
+        ],
+    )
+    state = parse_order_state(payload)
+    fill = to_fill_result(state)
+    assert fill.reason == "filled"
+    assert fill.fill_price == Decimal("151.45")
 
 
 def test_to_fill_result_pending_when_state_waiting() -> None:

@@ -18,7 +18,7 @@ from trade_contracts.enums import Side
 
 from .models import ExecutionDetail, FillResult, KabuOrderState
 
-_PRICE_QUANT = Decimal("1")
+_PRICE_QUANT = Decimal("0.01")
 _TOKYO = ZoneInfo("Asia/Tokyo")
 
 # kabu State コード (本番 2026-05-07 実機検証で判明した実態に基づく定義)
@@ -83,8 +83,11 @@ def to_fill_result(state: KabuOrderState) -> FillResult:
       - 0 < cum_qty < order_qty: ``partial``
     - 待機 / 処理中 / 訂正中 (state in {1, 2, 4}): ``pending``
 
-    ``fill_price`` は ``Details`` から数量加重平均を ``ROUND_HALF_UP`` で 1 円単位
-    に丸めて返す。``Details`` が空で cum_qty > 0 の場合は ``state.price`` を
+    ``fill_price`` は ``Details`` から数量加重平均を ``ROUND_HALF_UP`` で
+    0.01 円単位に丸めて返す。NTT (¥0.05/¥0.1 刻み) や Toyota (¥0.5 刻み) など
+    呼値ティック粒度を超えた丸めを行うと実損益が大きく歪む (2026-05-07 本番
+    実機で 1 円丸めにより daily_pnl が実損 -¥5 → -¥100 に歪んだ実害)。
+    ``Details`` が空で cum_qty > 0 の場合は ``state.price`` を
     フォールバックとして使う (kabu の仕様上は Details が常に入るはずだが防御的)。
     """
 
