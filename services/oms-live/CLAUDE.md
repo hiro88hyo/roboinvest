@@ -25,11 +25,11 @@
 
 ## 接続経路の前提（重要）
 
-**kabuステーション API は Windows http.sys レイヤーで `http://localhost:<port>/` でしか応答しない**（user メモ `kabu_localhost_only.md` 参照）。Feeder と同じ前提で、本サービスも Windows 機外から叩く場合は SSH ポートフォワード or Windows nginx リバプロを経由する。
+**kabuステーション API は Windows http.sys レイヤーで `http://localhost:<port>/` でしか応答しない**（user メモ `kabu_localhost_only.md` 参照）。Feeder と同じ前提で、本サービスも Windows 機外から叩く場合は SSH ポートフォワード or Windows リバプロ (Caddy / nginx) を経由する。
 
 - **開発・疎通**: SSH ポートフォワード `ssh -N -L 18081:127.0.0.1:18081 user@<win-ip>` で Linux 側 `localhost:18081` に張り付け
-- **本番**: Windows 機の nginx で `http://<win-ip>:18080/` → `http://127.0.0.1:18080/`（`Host: localhost` 強制必須）
-- 疎通確認は `scripts/probe-kabu.py` を流用
+- **本番**: Windows 機の Caddy リバプロ経由で LAN IP の `28080` (本番) / `28081` (検証) に公開 (`Host: localhost` 強制で http.sys を満たす)。Linux 側からは `http://<win-ip>:28080/kabusapi` で叩ける
+- 疎通確認は `scripts/probe-kabu.py` または `scripts/probe-kabu-oms.py` (`--port` で 28080/28081 を上書き可)
 
 `KABU_API_BASE_URL` を env で受け、トンネル / リバプロのいずれでも差し替え可能にする。
 
@@ -46,7 +46,7 @@
 ### 発注 (現物株)
 - `POST /kabusapi/sendorder`
   - `Symbol` (str): 銘柄コード
-  - `Exchange` (int): 1=東証, 3=名証 …
+  - `Exchange` (int): **本番では `9` (SOR) 必須**。au カブコム証券は個別株を SOR (PTS / 東証から best price 選択) でルーティングしており、`1` (東証直) を指定すると `Code: 100378 "指定された市場でのお取引はお受けできません。"` で reject される (2026-05-07 本番実機検証)。`KABU_DEFAULT_EXCHANGE` のデフォルトは現状 `1` のままだが、本番接続時は env で `9` に上書きすること。`3=名証` 等は今回未検証
   - `SecurityType` (int): 1=株式
   - `Side` (str): "1"=売, "2"=買
   - `CashMargin` (int): 1=現物
@@ -67,23 +67,32 @@
 
 ### 約定確認
 - `GET /kabusapi/orders?id=<OrderId>` → 1 要素のリスト
-  - `State` (int): 1=待機, 2=処理中, 3=処理済, 4=訂正中, 5=取消中
-  - `OrderState` (int): 1=待機, 2=処理中, 3=処理済, 4=訂正中, 5=取消中
+  - `State` (int) / `OrderState` (int): 1=待機, 2=処理中, 3=処理済, 4=訂正中, 5=**終端** (約定完了 / 取消完了 / 失効 を包括)
+    - 公式ドキュメントは「5=取消中」と表記するが、本番実機 (2026-05-07) ではライフサイクルの **終端ステータス** として返る (約定完了でも State=5 + CumQty>0)。
+    - **State=3 は中間状態としても出現する**: 取引所に流れた直後 (Details RecType=1/4 のみ、約定 Detail RecType=8 未着) で `CumQty=0` のことがある。`State==3 + CumQty==0` を「拒否」と解釈してはならない (poll を継続する必要あり)。
   - `CumQty` (int): 約定済み数量
   - `OrderQty` (int): 発注数量
-  - `Details` (list): 約定明細 `[{ExecutionID, ExecutionTime, Price, Qty, ...}, ...]`
-- 約定確定の判定: `State==3 and CumQty>0`、部分約定は `CumQty < OrderQty`
+  - `Details` (list): 約定明細 `[{ExecutionID, ExecutionTime, Price, Qty, RecType, ...}, ...]`
+    - `RecType` の意味: 1=受付, 4=発注, 8=約定 (約定 Detail を確実に判定するなら RecType=8 を見る)
+- 約定確定の判定 (実機ベース):
+  - 全量約定: `State==5 and CumQty == OrderQty`、または `State==3 and CumQty == OrderQty`
+  - 部分約定: `0 < CumQty < OrderQty`
+  - 取消 / 失効: `State==5 and CumQty==0`
+  - **中間状態 (poll 継続)**: `State==3 and CumQty==0` または `State in {1,2,4}`
+- 詳細な実装は `order_parser.py` の `to_fill_result` の docstring を参照
 
 ### ポジション・口座
 - `GET /kabusapi/positions` (証券種別フィルタあり) → 残高一覧
   - 起動時に Supabase `positions` (live) と乖離していないかチェックする目的で使用
 - `GET /kabusapi/wallet/cash` → 買付余力
 - `GET /kabusapi/symbol/{code}@{exchange}` → 銘柄情報（呼値・上下限）
-  - 検証環境（18081）では wallet/symbol が null を返す。Phase 3 e2e は本番（18080）で実施
+  - 検証環境（18081）では wallet/symbol が null を返す。Phase 3 e2e は本番（28080 / Caddy 経由）で実施
 
 ### 検証環境の制約
-- 検証環境（18081）はトークン発行・残高照会・板取得まで 24h 可だが **約定は市場時間内のみ**
-- Phase 3 e2e は平日 9:00-15:00 JST に限る
+- 検証環境（18081）はトークン発行・GET 系 REST 経路（残高照会・板取得）まで 24h 通る
+- ただし **`POST /sendorder` は黙殺される** (`Result: 0, OrderId: null` を返すが /orders にも /positions にも一切反映されない、2026-05-07 確認)。約定経路の検証には使えない
+- **Phase 3 round-trip e2e は本番 (28080) 必須**。検証 (18081) で sendorder を試みないこと
+- 本番接続も平日 9:00-15:00 JST の市場時間内に限る (約定が成立しないと poll がタイムアウトする)
 
 ## 実装フェーズ
 
@@ -115,7 +124,7 @@ oms-paper / gateway と同じ 3 フェーズパターン。段階コミット �
 - **テスト**: `tests/unit/test_live_*.py` プレフィックス（mypy duplicate-module 衝突回避）
   - `kabu_client`: `httpx.MockTransport` で 200/4xx 双方
   - `order_builder`: BUY/SELL/MARKET/LIMIT の payload 整合
-  - `order_parser`: 完全約定 / 部分約定 / 未約定 / 取消 の各ケース
+  - `order_parser`: 完全約定 / 部分約定 / 未約定 / 取消 / 中間状態 (State=3 + CumQty=0 → pending) の各ケース
 
 ### Phase 2: ストリーミング Runner
 
@@ -130,12 +139,14 @@ oms-paper / gateway と同じ 3 フェーズパターン。段階コミット �
 - 2e: 14:50 JST cron で `system_status.trading_style=day` を確認 → live positions 全件 closeout
 - LIMIT 注文は当面サポートしない (Aggregator が出さない前提)
 
-### Phase 3: 検証環境での e2e
+### Phase 3: 本番環境での e2e (検証 18081 では sendorder 黙殺のため不可)
 
-- 検証環境 (18081) で `make e2e-oms-live` 相当を回す integration test
+- **本番 (28080 / Caddy 経由) で実発注 round-trip e2e** を回す integration test
   - 平日 9:00-15:00 JST に限る（trading_calendar で skip マーカー切替）
   - 1 銘柄に対して buy → fill 確認 → sell → fill 確認 → positions / trades_live / daily_pnl が期待通り遷移するかチェック
-- 本番 (18080) には Phase 3 では繋がない。Phase 4 で「ステージング期間」を経て段階導入
+- 安全装備 (`OMS_LIVE_MAX_QTY_PER_ORDER` / `OMS_LIVE_ALLOWED_SYMBOLS`) を必ず効かせる
+- `OMS_LIVE_PHASE3_EXCHANGE=9` (SOR) を export すること。Exchange=1 (東証直) は本番で reject される
+- 詳細手順は [docs/runbook/oms-live-phase3.md](../../docs/runbook/oms-live-phase3.md) 参照
 
 ## ディレクトリ構成（想定）
 
@@ -206,10 +217,10 @@ services/oms-live/
 
 `.env.example` に列挙するキー例:
 - `OMS_LIVE_MODE`: `stream` | `dry-run`
-- `KABU_API_BASE_URL`: 例 `http://localhost:18081/kabusapi`
+- `KABU_API_BASE_URL`: 例 `http://192.168.x.y:28080/kabusapi` (本番、Caddy 経由)。SSH トンネル経由なら `http://localhost:18081/kabusapi` (検証) など
 - `KABU_API_PASSWORD`: API パスワード（**Feeder と別パスワード推奨**）
 - `KABU_ORDER_PASSWORD`: 注文パスワード（API パスワードとは別）
-- `KABU_DEFAULT_EXCHANGE`: `1` (東証)
+- `KABU_DEFAULT_EXCHANGE`: `1` (東証直、デフォルト)。**本番 (au カブコム証券) では `9` (SOR) 必須**。Phase 3 e2e は `OMS_LIVE_PHASE3_EXCHANGE=9` で env 上書きされる
 - `KABU_ACCOUNT_TYPE`: `4` (特定)
 - `KABU_HTTP_TIMEOUT_SECONDS`: `10.0`
 - `SUPABASE_URL` / `SUPABASE_SECRET_KEY`
@@ -234,7 +245,7 @@ services/oms-live/
   - `order_builder`: BUY/SELL の `Side`/`DelivType`/`FundType` 分岐、MARKET/LIMIT の `FrontOrderType`/`Price`、Password がペイロードに乗ること
   - `order_parser`: 完全約定 / 部分約定 / 未約定 / 取消 / 想定外 State の reason マッピング、ExecutionDetail の Decimal 化
 - **統合 (Phase 2)**: Pub/Sub エミュレータ + ローカル Supabase + httpx MockTransport の kabu モックで end-to-end
-- **e2e (Phase 3)**: 検証環境 (18081) で実発注（市場時間内）
+- **e2e (Phase 3)**: 本番 (28080 / Caddy 経由) で実発注（市場時間内、SOR Exchange=9 必須）。検証 (18081) は sendorder 黙殺で round-trip 不可
 - カバレッジ 80%+ (ルート方針)
 
 ## 開発時の注意

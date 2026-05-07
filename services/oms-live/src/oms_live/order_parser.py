@@ -21,12 +21,20 @@ from .models import ExecutionDetail, FillResult, KabuOrderState
 _PRICE_QUANT = Decimal("1")
 _TOKYO = ZoneInfo("Asia/Tokyo")
 
-# kabu State コード (公式仕様準拠)
+# kabu State コード (本番 2026-05-07 実機検証で判明した実態に基づく定義)
+#
+# 公式ドキュメントは ``5=取消中`` と説明するが、本番実機の挙動では:
+# - State=5 は **終端ステータス** で、約定完了 / 取消完了 / 失効 を包括する
+# - State=3 は「処理済」だけでなく「取引所に流れた中間状態」(Details RecType=1/4)
+#   としても返り、その時点で ``CumQty=0`` のことがある (約定 Detail RecType=8 が
+#   まだ来ていない)
+# 詳細は memory ``oms_live_phase3_findings.md`` の section 3 と
+# ``services/oms-live/CLAUDE.md`` の「kabuステーション API の前提」節を参照。
 STATE_WAITING = 1
 STATE_PROCESSING = 2
 STATE_DONE = 3
 STATE_AMENDING = 4
-STATE_CANCELLING = 5
+STATE_TERMINATED = 5
 
 
 def parse_order_state(payload: dict[str, Any]) -> KabuOrderState:
@@ -62,24 +70,33 @@ def parse_order_state(payload: dict[str, Any]) -> KabuOrderState:
 def to_fill_result(state: KabuOrderState) -> FillResult:
     """``KabuOrderState`` から ``FillResult`` を導出する。
 
-    判定ルール:
-    - 取消中 / 取消確定 (state == 5): ``cancelled``
-    - 処理済 (state == 3) かつ cum_qty == order_qty: ``filled``
-    - 処理済 (state == 3) かつ 0 < cum_qty < order_qty: ``partial``
-    - 処理済 (state == 3) かつ cum_qty == 0: ``cancelled`` (拒否扱い)
-    - それ以外 (待機 / 処理中 / 訂正中): ``pending``
+    判定ルール (2026-05-07 本番実機検証で再定義):
+
+    - 終端 (state == 5):
+      - cum_qty == 0: ``cancelled`` (取消完了 / 失効、約定なし)
+      - cum_qty == order_qty: ``filled``
+      - 0 < cum_qty < order_qty: ``partial`` (部分約定で終端、残数量は失効)
+    - 処理済 (state == 3) — 完全約定が出揃っている場合と中間状態の両方がありうる:
+      - cum_qty == 0: ``pending`` — Details RecType=1/4 のみで約定 Detail (RecType=8)
+        がまだ来ていない中間状態。Runner はここで poll を抜けてはならない。
+      - cum_qty == order_qty: ``filled``
+      - 0 < cum_qty < order_qty: ``partial``
+    - 待機 / 処理中 / 訂正中 (state in {1, 2, 4}): ``pending``
 
     ``fill_price`` は ``Details`` から数量加重平均を ``ROUND_HALF_UP`` で 1 円単位
     に丸めて返す。``Details`` が空で cum_qty > 0 の場合は ``state.price`` を
     フォールバックとして使う (kabu の仕様上は Details が常に入るはずだが防御的)。
     """
 
-    if state.state == STATE_CANCELLING:
-        return FillResult(filled_quantity=0, fill_price=None, reason="cancelled")
-
-    if state.state == STATE_DONE:
+    if state.state == STATE_TERMINATED:
         if state.cum_qty == 0:
             return FillResult(filled_quantity=0, fill_price=None, reason="cancelled")
+        price = _vwap_from_details(state.details) or state.price
+        if state.cum_qty == state.order_qty:
+            return FillResult(filled_quantity=state.cum_qty, fill_price=price, reason="filled")
+        return FillResult(filled_quantity=state.cum_qty, fill_price=price, reason="partial")
+
+    if state.state == STATE_DONE and state.cum_qty > 0:
         price = _vwap_from_details(state.details) or state.price
         if state.cum_qty == state.order_qty:
             return FillResult(filled_quantity=state.cum_qty, fill_price=price, reason="filled")

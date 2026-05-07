@@ -456,6 +456,85 @@ async def test_run_once_poll_timeout_calls_cancel_and_acks_no_fill() -> None:
     assert len(cancel_calls) == 1
 
 
+async def test_run_once_poll_continues_through_state3_zero_cum_qty_then_filled_at_state5() -> None:
+    """State=3 + CumQty=0 (中間状態) で poll が継続し、State=5 + CumQty>0 で filled。
+
+    2026-05-07 本番実機で発生した実害ケース (kabu /orders 初回応答が State=3 + CumQty=0
+    の中間状態) の回帰テスト。修正前は 1 回目の応答で誤って cancelled 扱いされ
+    no_fill ack → kabu は実発注済 / Supabase 空 で乖離していた。
+    """
+
+    order = make_order_request(side=Side.BUY, quantity=100)
+    pubsub = _PubSubRouter(batches=[_pull_response([("a1", order.model_dump_json().encode())])])
+    supabase = _SupabaseRouter(live_position_rows=[[]])
+    kabu = _KabuRouter(
+        sendorder_responses=[{"Result": 0, "OrderId": "OID-INTERMEDIATE"}],
+        order_states={
+            "OID-INTERMEDIATE": [
+                # 1 回目: 取引所に流れた中間状態 (約定 Detail 未着)
+                _kabu_order_payload(order_id="OID-INTERMEDIATE", state=3, cum_qty=0, order_qty=100),
+                # 2 回目以降: 終端 + 完全約定 (本番実機の通常パターン)
+                _kabu_order_payload(
+                    order_id="OID-INTERMEDIATE",
+                    state=5,
+                    cum_qty=100,
+                    order_qty=100,
+                    detail_price=1500,
+                ),
+            ]
+        },
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, kabu=kabu, run_body=_body)
+    assert stats.filled == 1
+    assert stats.no_fills == 0
+    assert stats.acked == 1
+    # poll が 2 回以上呼ばれていること (1 回目で抜けていない証拠)
+    get_order_calls = [
+        r for r in kabu.requests if r.method == "GET" and r.url.path.endswith("/orders")
+    ]
+    assert len(get_order_calls) >= 2
+    # Supabase に trades_live INSERT が走っていること (Supabase 不整合が起きない)
+    methods = [(r.method, r.url.path) for r in supabase.requests]
+    assert ("POST", "/rest/v1/trades_live") in methods
+
+
+async def test_run_once_poll_continues_through_state3_zero_cum_qty_then_cancelled_at_state5() -> (
+    None
+):
+    """State=3 + CumQty=0 で poll 継続 → State=5 + CumQty=0 で cancelled として終端。"""
+
+    order = make_order_request(side=Side.BUY, quantity=100)
+    pubsub = _PubSubRouter(batches=[_pull_response([("a1", order.model_dump_json().encode())])])
+    supabase = _SupabaseRouter()
+    kabu = _KabuRouter(
+        sendorder_responses=[{"Result": 0, "OrderId": "OID-CXL"}],
+        order_states={
+            "OID-CXL": [
+                _kabu_order_payload(order_id="OID-CXL", state=3, cum_qty=0, order_qty=100),
+                _kabu_order_payload(order_id="OID-CXL", state=5, cum_qty=0, order_qty=100),
+            ]
+        },
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, kabu=kabu, run_body=_body)
+    assert stats.filled == 0
+    assert stats.no_fills == 1
+    assert stats.acked == 1
+    # cancel は呼ばない (約定確定状態で終端しているため)
+    cancel_calls = [r for r in kabu.requests if r.url.path.endswith("/cancelorder")]
+    assert cancel_calls == []
+    # Supabase の書込系は呼ばれない
+    write_methods = {"POST", "PATCH", "DELETE"}
+    assert [r for r in supabase.requests if r.method in write_methods] == []
+
+
 async def test_run_once_supabase_write_failure_does_not_ack() -> None:
     order = make_order_request(side=Side.BUY, quantity=100)
     pubsub = _PubSubRouter(batches=[_pull_response([("a1", order.model_dump_json().encode())])])

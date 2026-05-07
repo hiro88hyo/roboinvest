@@ -74,7 +74,14 @@ def test_to_fill_result_pending_when_state_processing() -> None:
     assert to_fill_result(state).reason == "pending"
 
 
-def test_to_fill_result_cancelled_when_state_cancelling() -> None:
+def test_to_fill_result_pending_when_state_amending() -> None:
+    payload = make_kabu_order_payload(state=4, cum_qty=0, details=[])
+    state = parse_order_state(payload)
+    assert to_fill_result(state).reason == "pending"
+
+
+def test_to_fill_result_cancelled_when_state_terminated_with_zero_cum_qty() -> None:
+    """State=5 + CumQty=0 は取消完了 / 失効 (約定なしで終端)。"""
     payload = make_kabu_order_payload(state=5, cum_qty=0, details=[])
     state = parse_order_state(payload)
     fill = to_fill_result(state)
@@ -83,11 +90,62 @@ def test_to_fill_result_cancelled_when_state_cancelling() -> None:
     assert fill.fill_price is None
 
 
-def test_to_fill_result_done_with_zero_cum_qty_is_treated_as_cancelled() -> None:
+def test_to_fill_result_filled_when_state_terminated_with_full_cum_qty() -> None:
+    """State=5 + CumQty==OrderQty は約定完了で終端 (本番実機の通常パターン)。"""
+    payload = make_kabu_order_payload(
+        state=5,
+        cum_qty=200,
+        order_qty=200,
+        details=[
+            {
+                "ExecutionID": "E-1",
+                "ExecutionTime": "2026-05-07T09:00:01+09:00",
+                "Price": 1500,
+                "Qty": 200,
+            }
+        ],
+    )
+    state = parse_order_state(payload)
+    fill = to_fill_result(state)
+    assert fill.reason == "filled"
+    assert fill.filled_quantity == 200
+    assert fill.fill_price == Decimal("1500")
+
+
+def test_to_fill_result_partial_when_state_terminated_with_partial_cum_qty() -> None:
+    """State=5 + 0<CumQty<OrderQty は部分約定で終端 (残数量は失効)。"""
+    payload = make_kabu_order_payload(
+        state=5,
+        cum_qty=100,
+        order_qty=300,
+        details=[
+            {
+                "ExecutionID": "E-1",
+                "ExecutionTime": "2026-05-07T09:00:01+09:00",
+                "Price": 1500,
+                "Qty": 100,
+            }
+        ],
+    )
+    state = parse_order_state(payload)
+    fill = to_fill_result(state)
+    assert fill.reason == "partial"
+    assert fill.filled_quantity == 100
+    assert fill.fill_price == Decimal("1500")
+
+
+def test_to_fill_result_pending_when_state_done_with_zero_cum_qty() -> None:
+    """State=3 + CumQty=0 は「取引所に流れた中間状態」(Details RecType=1/4 のみ、
+    約定 Detail RecType=8 未着)。Runner は poll を継続すべきなので pending を返す。
+
+    2026-05-07 本番実機で発生した実害ケースの回帰テスト。
+    """
     payload = make_kabu_order_payload(state=3, cum_qty=0, details=[])
     state = parse_order_state(payload)
     fill = to_fill_result(state)
-    assert fill.reason == "cancelled"
+    assert fill.reason == "pending"
+    assert fill.filled_quantity == 0
+    assert fill.fill_price is None
 
 
 def test_to_fill_result_uses_state_price_when_details_missing() -> None:
