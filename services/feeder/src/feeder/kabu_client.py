@@ -61,11 +61,15 @@ class KabuClient:
         ws_url: str,
         http_client: httpx.AsyncClient | None = None,
         timeout_seconds: float = 10.0,
+        ws_ping_interval: float | None = None,
+        ws_ping_timeout: float | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._ws_url = ws_url
         self._api_password = api_password
         self._timeout_seconds = timeout_seconds
+        self._ws_ping_interval = ws_ping_interval
+        self._ws_ping_timeout = ws_ping_timeout
         self._owns_client = http_client is None
         self._client: httpx.AsyncClient = http_client or httpx.AsyncClient(timeout=timeout_seconds)
         self._token: str | None = None
@@ -136,12 +140,19 @@ class KabuClient:
 
     @asynccontextmanager
     async def connect_websocket(self) -> AsyncIterator[ClientConnection]:
-        """WS 接続を開く。``X-API-KEY`` ヘッダ必須。"""
+        """WS 接続を開く。``X-API-KEY`` ヘッダ必須。
+
+        ``ws_ping_interval`` / ``ws_ping_timeout`` は ``websockets.connect`` の
+        keepalive 設定。``None`` を指定すると client 側の自動 ping を無効化する。
+        kabu/Caddy が client ping に pong を返さない場合のデフォルト挙動。
+        """
         token = await self.ensure_token()
         async with websockets.connect(
             self._ws_url,
             additional_headers=[("X-API-KEY", token)],
             open_timeout=10.0,
+            ping_interval=self._ws_ping_interval,
+            ping_timeout=self._ws_ping_timeout,
         ) as ws:
             yield ws
 

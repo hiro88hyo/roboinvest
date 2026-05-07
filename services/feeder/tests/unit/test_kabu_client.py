@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+from contextlib import asynccontextmanager
+from typing import Any
 
 import httpx
 import pytest
+import websockets
 from feeder.kabu_client import KabuApiError, KabuClient, SymbolRegistration
 
 
@@ -164,6 +167,72 @@ async def test_invalidate_token_forces_refetch() -> None:
         assert counter["token"] == 2
     finally:
         await client.aclose()
+
+
+async def test_connect_websocket_passes_ping_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``ws_ping_interval`` / ``ws_ping_timeout`` がそのまま ``websockets.connect``
+    に渡ること。kabu/Caddy が pong を返さない疑いがあるため、デフォルト
+    (``None`` = client-side ping 無効) も含めて検証する。"""
+    captured: dict[str, Any] = {}
+
+    class _DummyConn:
+        async def __aenter__(self) -> _DummyConn:
+            return self
+
+        async def __aexit__(self, *exc_info: object) -> None:
+            return None
+
+    @asynccontextmanager
+    async def fake_connect(url: str, **kwargs: Any) -> Any:
+        captured["url"] = url
+        captured["kwargs"] = kwargs
+        yield _DummyConn()
+
+    # websockets.connect そのものは async context manager を返す関数。
+    # kabu_client.py は `import websockets` 経由で参照しているので、
+    # トップレベルモジュール側を差し替えれば feeder からも fake が見える
+    monkeypatch.setattr(websockets, "connect", fake_connect)
+
+    def token_handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"Token": "tok-ws"})
+
+    # ケース1: デフォルト (両方 None) で client-side ping 無効
+    client = KabuClient(
+        base_url="http://localhost:18081/kabusapi",
+        api_password="pw",
+        ws_url="ws://localhost:18081/kabusapi/websocket",
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(token_handler)),
+    )
+    try:
+        async with client.connect_websocket():
+            pass
+        assert captured["url"] == "ws://localhost:18081/kabusapi/websocket"
+        assert captured["kwargs"]["ping_interval"] is None
+        assert captured["kwargs"]["ping_timeout"] is None
+        # X-API-KEY ヘッダも引き続き付与されている
+        headers = dict(captured["kwargs"]["additional_headers"])
+        assert headers["X-API-KEY"] == "tok-ws"
+    finally:
+        await client.aclose()
+
+    # ケース2: 明示値が渡されればそのまま websockets.connect に届く
+    client2 = KabuClient(
+        base_url="http://localhost:18081/kabusapi",
+        api_password="pw",
+        ws_url="ws://localhost:18081/kabusapi/websocket",
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(token_handler)),
+        ws_ping_interval=30.0,
+        ws_ping_timeout=15.0,
+    )
+    try:
+        async with client2.connect_websocket():
+            pass
+        assert captured["kwargs"]["ping_interval"] == 30.0
+        assert captured["kwargs"]["ping_timeout"] == 15.0
+    finally:
+        await client2.aclose()
 
 
 async def test_check_handles_non_json_body() -> None:
