@@ -397,14 +397,19 @@ async def test_run_once_sell_full_close_calls_add_realized_pnl_and_delete() -> N
     assert ("DELETE", "/rest/v1/positions") in methods
     # SELL → realized_pnl 加算で system_status 読み取り + PATCH
     assert ("PATCH", "/rest/v1/system_status") in methods
-    # PATCH ボディに +10000 (1100-1000)*100 が反映されていること
+    # PATCH ボディに +10000.00 (1100-1000)*100 が反映されていること
+    # (vwap 丸めが 0.01 円単位になったため文字列表現は "10000.00")
     patch_req = next(
         r
         for r in supabase.requests
         if r.method == "PATCH" and r.url.path == "/rest/v1/system_status"
     )
     body = json.loads(patch_req.content.decode())
-    assert body == {"daily_pnl": "10000", "weekly_pnl": "10000", "monthly_pnl": "10000"}
+    assert body == {
+        "daily_pnl": "10000.00",
+        "weekly_pnl": "10000.00",
+        "monthly_pnl": "10000.00",
+    }
 
 
 async def test_run_once_sendorder_rejected_records_no_fill_and_acks() -> None:
