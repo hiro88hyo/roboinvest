@@ -44,3 +44,6 @@ infra/supabase/.temp/
 
 # Claude Code session state
 .claude/
+
+# Private runbook (non-distributable; keep out of git)
+docs/runbook/private/
