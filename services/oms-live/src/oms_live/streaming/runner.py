@@ -46,7 +46,7 @@ from ..config import OmsLiveSettings
 from ..kabu_client import KabuApiError, KabuLiveClient
 from ..models import FillResult, LivePosition, PositionUpdate
 from ..order_builder import build_sendorder_payload
-from ..order_parser import STATE_DONE, parse_order_state, to_fill_result
+from ..order_parser import parse_order_state, to_fill_result
 from ..position_updater import apply_fill, build_fill_record
 
 logger = logging.getLogger(__name__)
@@ -302,7 +302,13 @@ class StreamRunner:
         return "filled"
 
     async def _poll_until_filled(self, kabu_order_id: str) -> FillResult | None:
-        """``State==3`` か取消確定までポーリング。タイムアウトで ``None`` を返す。"""
+        """終端 (filled / partial / cancelled) までポーリング。タイムアウトで ``None``。
+
+        kabu State の実態は ``order_parser.py`` の docstring 参照:
+        ``State=3`` は中間状態 (約定 Detail 未着、CumQty=0) でも出現するため、
+        ``state==3`` 単独で break してはならない。``to_fill_result`` の reason のみで
+        終端判定する。
+        """
         deadline = self.monotonic() + self.settings.order_fill_timeout_seconds
         interval = max(self.settings.order_fill_poll_interval_seconds, 0.0)
         while True:
@@ -317,7 +323,7 @@ class StreamRunner:
                 logger.exception("kabu order parse failed: order_id=%s", kabu_order_id)
                 return None
             fill = to_fill_result(state)
-            if fill.reason in {"filled", "partial", "cancelled"} or state.state == STATE_DONE:
+            if fill.reason in {"filled", "partial", "cancelled"}:
                 return fill
             if self.monotonic() >= deadline:
                 logger.warning(
