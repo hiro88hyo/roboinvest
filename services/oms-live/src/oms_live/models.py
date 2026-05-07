@@ -31,12 +31,17 @@ class ExecutionDetail(BaseModel):
 class KabuOrderState(BaseModel):
     """kabu ``/orders`` 応答 1 件分の正規化表現。
 
-    ``state`` / ``order_state`` は kabu の生値 (1〜5) を保持する:
+    ``state`` / ``order_state`` は kabu の生値 (1〜5) を保持する。
+    実機検証 (2026-05-07 本番) で判明した実態に基づく解釈:
+
     - 1: 待機 (発注待ち)
     - 2: 処理中
-    - 3: 処理済 (約定確定 / 取消確定)
+    - 3: 処理済 — **取引所に流れた中間状態としても出現**する (Details RecType=1/4)。
+      ``CumQty`` が 0 でも約定 Detail (RecType=8) がまだ来ていないだけのことがある。
     - 4: 訂正中
-    - 5: 取消中
+    - 5: **終端ステータス** (約定完了 / 取消完了 / 失効 を包括)。
+      公式ドキュメントは「取消中」と表記するが、実機の挙動はライフサイクル
+      の終端を表す。
     """
 
     order_id: str
@@ -55,10 +60,13 @@ class FillResult(BaseModel):
     """``to_fill_result`` の戻り値。Phase 2 Runner が Supabase 書込判定に使う。
 
     ``reason`` は機械可読コード:
-    - ``"filled"`` 全量約定
-    - ``"partial"`` 部分約定 (state==3 だが cum_qty < order_qty)
-    - ``"pending"`` 未約定 (cum_qty==0 で state in {1,2,4})
-    - ``"cancelled"`` 取消済 (state==5 or state==3 かつ cum_qty==0 で取消扱い)
+    - ``"filled"`` 全量約定 (state==5 or state==3 かつ cum_qty==order_qty)
+    - ``"partial"`` 部分約定 (0 < cum_qty < order_qty、state==5 は終端での部分約定、
+      state==3 は処理途中の部分約定)
+    - ``"pending"`` 未約定 / 中間状態 (cum_qty==0 かつ state != 5)。
+      state==3 + cum_qty==0 は「取引所に流れたが約定 Detail 未着」の中間状態
+      なので、Runner はここで poll を抜けてはならない。
+    - ``"cancelled"`` 取消完了 / 失効 (state==5 かつ cum_qty==0)
     - ``"rejected"`` sendorder の Result != 0 を Runner が組み立てる
     """
 
