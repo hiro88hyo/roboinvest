@@ -20,12 +20,24 @@ from trade_contracts.enums import Side, SignalSource, TradingStyle
 
 
 class ExecutionDetail(BaseModel):
-    """kabu ``/orders`` 応答の ``Details[i]`` をそのまま正規化したもの。"""
+    """kabu ``/orders`` 応答の ``Details[i]`` をそのまま正規化したもの。
+
+    ``rec_type`` は kabu の ``RecType`` 生値:
+
+    - 1: 受付 (発注受付、成行は ``Price=0``)
+    - 4: 発注 (取引所への発注、成行は ``Price=0``)
+    - 8: 約定 (実約定価格を ``Price`` に持つ。VWAP 計算はこの行のみ使う)
+
+    成行注文の場合 RecType=1/4 行は ``Price=0`` で記録されるため、
+    VWAP 計算で除外しないと実約定価格が大きく希釈される
+    (2026-05-07 本番実機検証で発覚した実害)。
+    """
 
     execution_id: str
     execution_time: datetime
     price: Decimal
     quantity: int = Field(ge=0)
+    rec_type: int = 0
 
 
 class KabuOrderState(BaseModel):
