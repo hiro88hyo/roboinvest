@@ -210,6 +210,72 @@ def test_parse_order_state_naive_recv_time_assumes_jst() -> None:
     assert state.recv_time.utcoffset() is not None
 
 
+def test_to_fill_result_excludes_non_fill_details_from_vwap() -> None:
+    """RecType=1 (受付) / 4 (発注) の Price=0 を VWAP 計算から除外することを保証する。
+
+    2026-05-07 本番 NTT 9432 成行 round_trip で発覚: kabu の Details に
+    [RecType=1 Price=0 Qty=100, RecType=4 Price=0 Qty=100, RecType=8 Price=151.70 Qty=100]
+    が入り、フィルタなしの VWAP は (0+0+15170)/300 = 50.57 と本来の 1/3 に
+    希釈された。RecType=8 のみで VWAP を取れば正しく 151.70 になる。
+    """
+    payload = make_kabu_order_payload(
+        state=5,
+        cum_qty=100,
+        order_qty=100,
+        details=[
+            {
+                "ExecutionID": "ID-1",
+                "ExecutionTime": "2026-05-07T14:04:29+09:00",
+                "Price": 0,
+                "Qty": 100,
+                "RecType": 1,
+            },
+            {
+                "ExecutionID": "ID-2",
+                "ExecutionTime": "2026-05-07T14:04:29+09:00",
+                "Price": 0,
+                "Qty": 100,
+                "RecType": 4,
+            },
+            {
+                "ExecutionID": "E-1",
+                "ExecutionTime": "2026-05-07T14:04:29+09:00",
+                "Price": 151.70,
+                "Qty": 100,
+                "RecType": 8,
+            },
+        ],
+    )
+    state = parse_order_state(payload)
+    fill = to_fill_result(state)
+    assert fill.reason == "filled"
+    assert fill.fill_price == Decimal("151.70")
+
+
+def test_to_fill_result_vwap_backward_compat_when_rec_type_missing() -> None:
+    """RecType を含まないレガシーな Details (rec_type=0) も VWAP に含めて壊さない。
+
+    既存テストや fixture がペイロードに ``RecType`` を渡さないケースを保護する。
+    """
+    payload = make_kabu_order_payload(
+        state=5,
+        cum_qty=100,
+        order_qty=100,
+        details=[
+            {
+                "ExecutionID": "E-1",
+                "ExecutionTime": "2026-05-07T14:04:29+09:00",
+                "Price": 1234.5,
+                "Qty": 100,
+            }
+        ],
+    )
+    state = parse_order_state(payload)
+    fill = to_fill_result(state)
+    assert fill.reason == "filled"
+    assert fill.fill_price == Decimal("1234.50")
+
+
 def test_parse_order_state_decimal_from_float_avoids_precision_loss() -> None:
     payload = make_kabu_order_payload(
         state=3,

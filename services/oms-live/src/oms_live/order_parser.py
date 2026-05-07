@@ -108,6 +108,9 @@ def to_fill_result(state: KabuOrderState) -> FillResult:
     return FillResult(filled_quantity=state.cum_qty, fill_price=None, reason="pending")
 
 
+_REC_TYPE_FILL = 8
+
+
 def _parse_detail(payload: dict[str, Any]) -> ExecutionDetail:
     return ExecutionDetail(
         execution_id=str(payload.get("ExecutionID") or payload.get("ID") or ""),
@@ -115,11 +118,27 @@ def _parse_detail(payload: dict[str, Any]) -> ExecutionDetail:
         or datetime.fromtimestamp(0, tz=UTC),
         price=_to_decimal(payload.get("Price", 0)),
         quantity=int(payload.get("Qty", 0)),
+        rec_type=int(payload.get("RecType", 0)),
     )
 
 
 def _vwap_from_details(details: list[ExecutionDetail]) -> Decimal | None:
-    consumed = [(d.price, d.quantity) for d in details if d.quantity > 0]
+    """約定 Detail (RecType=8) のみから数量加重平均を返す。
+
+    成行注文では受付 (RecType=1) / 発注 (RecType=4) の Details に ``Price=0``
+    が入る。これを VWAP に含めると実約定価格が著しく希釈される
+    (2026-05-07 本番 NTT 9432 round_trip で実 fill ¥151.70 が ¥50.57 に
+    歪み daily_pnl が -¥5 から -¥2 に変わった実害)。
+
+    後方互換: ``rec_type`` が 0 (デフォルト = 不明) の Detail も対象に含める。
+    既存テストや外部入力で rec_type を渡さないケース (例: モック) を
+    壊さないため。
+    """
+    consumed = [
+        (d.price, d.quantity)
+        for d in details
+        if d.quantity > 0 and d.rec_type in (0, _REC_TYPE_FILL)
+    ]
     if not consumed:
         return None
     total_qty = sum(qty for _, qty in consumed)
