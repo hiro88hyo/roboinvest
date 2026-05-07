@@ -71,6 +71,15 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--host", default="localhost", help="kabuステーションが動いているホスト")
     p.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help=(
+            "接続先ポート。未指定なら --env から決定 (prod=18080, test=18081)。"
+            "Caddy リバプロ経由なら 28080/28081 等を指定する"
+        ),
+    )
+    p.add_argument(
         "--host-header",
         default=None,
         help=(
@@ -357,10 +366,11 @@ async def main() -> int:
             fail("--send 指定時は環境変数 KABU_ORDER_PASSWORD も必要")
             return 2
 
-    ep = Endpoint(host=args.host, port=PORT_BY_ENV[args.env])
+    port = args.port if args.port is not None else PORT_BY_ENV[args.env]
+    ep = Endpoint(host=args.host, port=port)
     host_header = args.host_header
     print(
-        f"target: {ep.http_base}  (env={args.env}, host={args.host}"
+        f"target: {ep.http_base}  (env={args.env}, host={args.host}, port={port}"
         f"{', host_header=' + host_header if host_header else ''})"
     )
     if args.send:
