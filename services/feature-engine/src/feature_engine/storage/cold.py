@@ -112,12 +112,7 @@ def migrate_warm_to_cold(
 
 
 def enumerate_warm_symbols(warm_dir: Path, d: date) -> list[str]:
-    """``warm_dir`` 配下で指定 ``date`` の Parquet を持つ symbol 一覧を返す (sorted)。
-
-    `warm_dir/symbol=<S>/date=<D>/*.parquet` のレイアウト前提。warm_dir 不在 / 該当 date
-    が無い symbol しかない場合は空リスト。``scripts/warm-to-cold-migration.py`` の
-    ``--symbols`` 省略時に使う。
-    """
+    """``warm_dir/symbol=<S>/date=<D>/*.parquet`` を持つ symbol 一覧を返す (sorted)。"""
     if not warm_dir.exists():
         return []
     target_date = d.isoformat()
@@ -135,12 +130,10 @@ def enumerate_warm_symbols(warm_dir: Path, d: date) -> list[str]:
 
 
 def delete_warm_partition(warm_dir: Path, symbol: str, d: date) -> int:
-    """``warm_dir/symbol=<S>/date=<D>/`` 配下の Parquet を削除。
+    """``warm_dir/symbol=<S>/date=<D>/`` 配下の Parquet を削除し、削除件数を返す。
 
-    削除した Parquet ファイル数を返す。区画自体が無ければ 0。区画ディレクトリが
-    Parquet 削除後に空なら ``date=`` ディレクトリも削除する (``symbol=`` 直下は
-    別 date が残る可能性があるので触らない)。``scripts/warm-to-cold-migration.py``
-    の ``--delete-warm`` で書き出し成功 symbol/date のみに対して呼ばれる。
+    区画自体が無ければ 0。Parquet 削除後に区画が空なら ``date=`` ディレクトリも
+    rmdir する (``symbol=`` 直下は別 date が残り得るので触らない)。
     """
     part_dir = warm_dir / f"symbol={symbol}" / f"date={d.isoformat()}"
     if not part_dir.is_dir():
