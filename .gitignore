@@ -11,6 +11,7 @@ dist/
 .pytest_cache/
 htmlcov/
 .coverage
+coverage.xml
 
 # Parquet / data
 *.parquet
