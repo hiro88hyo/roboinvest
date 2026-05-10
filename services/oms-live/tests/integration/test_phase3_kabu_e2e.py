@@ -10,7 +10,7 @@ ENV (全部揃って初めて走る):
   KABU_ORDER_PASSWORD                   — kabu 注文パスワード (発注時必須)
   OMS_LIVE_PHASE3_SYMBOL                — 例: ``7203`` (default)
   OMS_LIVE_PHASE3_QUANTITY              — 株数 (default: ``100``)
-  OMS_LIVE_PHASE3_EXCHANGE              — 市場コード (default: ``1`` 東証)
+  OMS_LIVE_PHASE3_EXCHANGE              — 市場コード (default: ``9`` SOR、au カブコム証券で必須)
   PUBSUB_EMULATOR_HOST                  — 例: ``localhost:8085``
   PUBSUB_PROJECT_ID                     — 例: ``trade-ai-dev``
   SUPABASE_URL                          — 例: ``http://127.0.0.1:54321``
@@ -178,7 +178,7 @@ def phase3_quantity() -> int:
 
 @pytest.fixture(scope="session")
 def phase3_exchange() -> int:
-    return int(os.environ.get("OMS_LIVE_PHASE3_EXCHANGE", "1"))
+    return int(os.environ.get("OMS_LIVE_PHASE3_EXCHANGE", "9"))
 
 
 @pytest.fixture

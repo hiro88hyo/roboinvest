@@ -47,7 +47,7 @@
 ### 発注 (現物株)
 - `POST /kabusapi/sendorder`
   - `Symbol` (str): 銘柄コード
-  - `Exchange` (int): **本番では `9` (SOR) 必須**。au カブコム証券は個別株を SOR (PTS / 東証から best price 選択) でルーティングしており、`1` (東証直) を指定すると `Code: 100378 "指定された市場でのお取引はお受けできません。"` で reject される (2026-05-07 本番実機検証)。`KABU_DEFAULT_EXCHANGE` のデフォルトは現状 `1` のままだが、本番接続時は env で `9` に上書きすること。`3=名証` 等は今回未検証
+  - `Exchange` (int): **本番 (au カブコム証券) は `9` (SOR) 必須**で、`KABU_DEFAULT_EXCHANGE` のデフォルトは `9`。`1` (東証直) を指定すると `Code: 100378 "指定された市場でのお取引はお受けできません。"` で reject される (2026-05-07 本番実機検証)。東証直接ルーティングや `3=名証` 等を試したい場合のみ env で上書きする (現状 ETF / 立会外取引銘柄での `9` の可否は未検証で、本番常用前に individual override 経路を要検討)
   - `SecurityType` (int): 1=株式
   - `Side` (str): "1"=売, "2"=買
   - `CashMargin` (int): 1=現物
@@ -249,7 +249,7 @@ services/oms-live/
 - `KABU_API_BASE_URL`: 例 `http://192.168.x.y:28080/kabusapi` (本番、Caddy 経由)。SSH トンネル経由なら `http://localhost:18081/kabusapi` (検証) など
 - `KABU_API_PASSWORD`: API パスワード（**Feeder と別パスワード推奨**）
 - `KABU_ORDER_PASSWORD`: 注文パスワード（API パスワードとは別）
-- `KABU_DEFAULT_EXCHANGE`: `1` (東証直、デフォルト)。**本番 (au カブコム証券) では `9` (SOR) 必須**。Phase 3 e2e は `OMS_LIVE_PHASE3_EXCHANGE=9` で env 上書きされる
+- `KABU_DEFAULT_EXCHANGE`: `9` (SOR、デフォルト)。**au カブコム証券では SOR 必須**で、`1` (東証直) は `Code: 100378` で reject されるため本番常用に対応してデフォルトを `9` にしている。東証直 / 名証等を試す場合のみ env で上書き
 - `KABU_ACCOUNT_TYPE`: `4` (特定)
 - `KABU_HTTP_TIMEOUT_SECONDS`: `10.0`
 - `SUPABASE_URL` / `SUPABASE_SECRET_KEY`
