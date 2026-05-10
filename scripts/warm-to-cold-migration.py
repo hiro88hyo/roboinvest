@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
-"""scripts/warm-to-cold-migration.py — Warm Parquet → Cold OHLCV (1m / 5m) 日次バッチ。
+"""Warm Parquet → Cold OHLCV (1m / 5m) 日次バッチ。
 
 `feature_engine.storage.cold.migrate_warm_to_cold` を CLI でラップする薄い
-ワークスペース内スクリプト。コア純関数とテストは
-`services/feature-engine/src/feature_engine/storage/cold.py` および
-`services/feature-engine/tests/unit/test_cold_storage.py` 参照。
+ワークスペース内スクリプト。
 
 使い方 (workspace ルートから):
   uv run python scripts/warm-to-cold-migration.py --date 2026-04-20 --resolution 1m
@@ -13,19 +11,7 @@
   uv run python scripts/warm-to-cold-migration.py --date 2026-04-20 --resolution 1m \\
       --delete-warm   # 書き出し成功した symbol/date のみ Warm 側を削除
 
-引数:
-  --date YYYY-MM-DD     対象日 (必須)
-  --resolution 1m|5m    Cold OHLCV の粒度 (必須)
-  --symbols A,B,...     対象銘柄。省略時は warm-dir/symbol=*/date=<date> を glob
-  --warm-dir PATH       入力 Warm Parquet 配置先。省略時は env STORAGE_WARM_DIR
-  --cold-dir PATH       出力 Cold Parquet 配置先。省略時は env STORAGE_COLD_DIR
-  --delete-warm         書き出し成功した symbol/date の Warm Parquet を削除
-                        (デフォルト無効。運用安全のため明示 opt-in)
-  --log-level           DEBUG | INFO | WARNING | ERROR (default: INFO)
-
-exit code:
-  0 — 正常終了 (書き出し件数 0 でも 0)
-  2 — 引数不正 / warm-dir 不在 / env 未設定
+exit code: 0 = 正常終了 (件数 0 でも 0) / 2 = 引数不正 or warm-dir 不在 or env 未設定。
 """
 
 from __future__ import annotations
@@ -44,8 +30,6 @@ from feature_engine.storage.cold import (
     enumerate_warm_symbols,
     migrate_warm_to_cold,
 )
-
-logger = logging.getLogger("warm-to-cold-migration")
 
 _RESOLUTIONS: tuple[str, ...] = get_args(ColdResolution)
 

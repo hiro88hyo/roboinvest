@@ -6,30 +6,13 @@
 at-least-once 規約:
 
 * 実発注 + Supabase 書込が完了した時点で ack。
-* 冪等性: ``OrderRequest.order_id`` を ``trades_live.order_id`` (partial unique
-  index) に carry。Runner は sendorder の前に ``live_trade_exists_for_order_id``
-  で重複検知し、True なら sendorder せず ack して "skipped_duplicate" を計上する。
-  これで「前回 sendorder + Supabase 書込が完全に成功した後に redeliver」のケースは
-  二重発注を完全に防ぐ。
-* **fail-fast: sendorder 成功 + Supabase 書込失敗 → Runner プロセス停止**。
-  以前は SupabaseError を握って ack せず再配信に任せていたが、再配信時に
-  trades_live に行が無いため idempotency check は通り、sendorder が再走 = 二重発注
-  になる穴があった。現状は ``SupabaseError`` を ``run_once`` から伝播させてプロセスを
-  止める。supervisor で **自動再起動はせず**、運用者が kabu 側 (``/orders``) と
-  Supabase ``trades_live`` の状態を突合し、必要なら手動で ``trades_live`` /
-  ``positions`` / ``system_status`` を整合させてから Runner を再起動する。
-  再起動後の再配信は ``live_trade_exists_for_order_id`` で skip される
-  (手動回復が完了している前提)。
-  raise 前にバッチ内で既に成功したメッセージの ack を flush する (再起動後の
-  二度処理を避けるため; flush 自体が失敗しても元の SupabaseError は __context__
-  に残る)。
-* sendorder の Result != 0 (受付拒否) は業務上の no_fill として ack。
-* 約定タイムアウト時は cancel_order を投げて ack (再配信は冪等性問題のため避ける)。
-* スキーマ不正・JSON パース失敗の poison message は ack。
-
-純関数 (build_sendorder_payload / parse_order_state / to_fill_result /
-apply_fill / build_fill_record / build_closeout_orders) は Phase 1/2b のものを
-そのまま呼び出す。
+* 冪等性: sendorder 前に ``trades_live.order_id`` (partial unique index) を
+  ``live_trade_exists_for_order_id`` で確認し、重複なら ack して "skipped_duplicate"。
+* **Supabase 書込失敗は ``SupabaseError`` を伝播してプロセスを fail-fast で停止**。
+  自動再起動はせず、運用者が kabu ``/orders`` と ``trades_live`` を手動整合してから
+  再起動する (再配信時は idempotency check で skip される前提)。
+* sendorder の Result != 0、約定タイムアウト (cancel_order を best-effort)、
+  poison message (parse 失敗) はいずれも ack。
 """
 
 from __future__ import annotations
@@ -110,11 +93,7 @@ class StreamRunner:
         return results
 
     async def run_once(self) -> BatchStats:
-        """1 バッチ分の pull + 処理 + ack。
-
-        ``_process_order`` から ``SupabaseError`` が伝播してきた場合は、その時点までに
-        成功した分の ack を flush してから例外を re-raise する (fail-fast)。
-        """
+        """1 バッチ分の pull + 処理 + ack。``SupabaseError`` は ack flush 後に再 raise。"""
         order_msgs = await self.subscriber.pull(
             self.settings.pubsub_subscription_live_orders,
             max_messages=self.settings.pubsub_pull_max_messages,
@@ -171,11 +150,7 @@ class StreamRunner:
         )
 
     async def _flush_acks_on_shutdown(self, acks: list[str]) -> None:
-        """fail-fast 時に既に成功したメッセージの ack を best-effort で flush。
-
-        flush 自体が失敗しても呼び出し側の元例外は ``__context__`` に残るので、
-        プロセス停止という意図は変わらない。
-        """
+        """fail-fast raise 直前の best-effort ack flush。失敗してもログのみで握り潰す。"""
         if not acks:
             return
         try:
@@ -188,12 +163,7 @@ class StreamRunner:
     async def _process_order(self, order: OrderRequest) -> str:
         """``"filled" | "no_fill" | "skipped_duplicate" | "safety_rejected" | "dry_run_skipped"``。
 
-        Supabase 書込失敗時は ``SupabaseError`` を上位 (``run_once``) に伝播し、
-        Runner 全体を fail-fast で停止させる。``run_once`` がプロセス停止前に既処理
-        分の ack を flush する。
-        重複検知時は sendorder せず即 ack する (idempotency hardening)。
-        Phase 3 安全装備 (allowed_symbols / max_qty / dry_run) は existence check の
-        後・sendorder の前に評価する。
+        Supabase 書込失敗時は ``SupabaseError`` を伝播する (``run_once`` で fail-fast)。
         """
 
         # 0) idempotency check: redeliver された (前回完全成功済) 注文は弾く
