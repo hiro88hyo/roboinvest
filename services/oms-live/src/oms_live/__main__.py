@@ -16,7 +16,7 @@ import sys
 from collections.abc import Sequence
 
 from .clients.pubsub import PubSubSubscriber
-from .clients.supabase import SupabaseClient
+from .clients.supabase import SupabaseClient, SupabaseError
 from .config import OmsLiveSettings
 from .kabu_client import KabuLiveClient
 from .scheduler import parse_hhmm, run_closeout_scheduler
@@ -108,6 +108,15 @@ async def _run_stream_cmd(*, iterations: int | None, no_closeout: bool) -> int:
             for t in tasks:
                 t.cancel()
             raise
+        except SupabaseError:
+            logger.critical(
+                "oms-live aborted by fail-fast: supabase write failure. "
+                "do NOT auto-restart. reconcile kabu /orders vs trades_live manually, "
+                "then start the stream again."
+            )
+            for t in tasks:
+                t.cancel()
+            return 3
     return 0
 
 
