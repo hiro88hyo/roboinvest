@@ -23,7 +23,7 @@ class OmsLiveSettings(BaseSettings):
     kabu_api_base_url: str = "http://localhost:18081/kabusapi"
     kabu_api_password: str = ""
     kabu_order_password: str = ""
-    kabu_default_exchange: int = 1
+    kabu_default_exchange: int = 9
     kabu_account_type: int = 4
     kabu_http_timeout_seconds: float = 10.0
 
