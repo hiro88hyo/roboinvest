@@ -14,14 +14,14 @@
   },
   "dependencies": {
     "next": "^15.1.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "@supabase/ssr": "^0.5.0",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "@supabase/ssr": "^0.10.3",
     "@supabase/supabase-js": "^2.46.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.0",
-    "@tailwindcss/postcss": "^4.0.0",
+    "@tailwindcss/postcss": "^4.3.0",
     "@testing-library/jest-dom": "^6.5.0",
     "@testing-library/react": "^16.0.0",
     "@types/node": "^22.0.0",
