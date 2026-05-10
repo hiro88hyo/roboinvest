@@ -1,5 +1,5 @@
-import { TradeTypeTabs, parseTradeType } from "@/components/TradeTypeTabs";
 import { PositionsTable } from "@/components/positions/PositionsTable";
+import { parseTradeType, TradeTypeTabs } from "@/components/TradeTypeTabs";
 import { getReadClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";

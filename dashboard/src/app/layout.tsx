@@ -1,6 +1,6 @@
-import { Nav } from "@/components/Nav";
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
+import { Nav } from "@/components/Nav";
 import { Providers } from "./providers";
 import "./globals.css";
 

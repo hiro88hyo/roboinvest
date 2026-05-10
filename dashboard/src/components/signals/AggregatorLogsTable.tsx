@@ -1,8 +1,8 @@
 "use client";
 
+import type { Database } from "@contracts/generated/database.types";
 import { formatDateTime, formatDecimal } from "@/lib/format";
 import { useRealtimeRows } from "@/lib/realtime/useRealtimeRows";
-import type { Database } from "@contracts/generated/database.types";
 import { ActionBadge } from "./ActionBadge";
 
 type AggregatorLog = Database["public"]["Tables"]["aggregator_logs"]["Row"];

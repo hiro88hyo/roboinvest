@@ -49,7 +49,7 @@ export function applyRowEvent<T>(
  * - INSERT/UPDATE: replace with the new row
  * - DELETE: clear to null
  */
-export function applySingletonEvent<T>(current: T | null, event: RowEvent<T>): T | null {
+export function applySingletonEvent<T>(_current: T | null, event: RowEvent<T>): T | null {
   if (event.eventType === "DELETE") return null;
   return event.new;
 }

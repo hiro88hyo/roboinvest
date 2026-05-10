@@ -1,4 +1,4 @@
-import { TradeTypeTabs, parseTradeType } from "@/components/TradeTypeTabs";
+import { parseTradeType, TradeTypeTabs } from "@/components/TradeTypeTabs";
 import { TradesTable } from "@/components/trades/TradesTable";
 import { getReadClient } from "@/lib/supabase/server";
 

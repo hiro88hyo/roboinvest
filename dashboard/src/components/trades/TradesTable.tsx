@@ -1,8 +1,8 @@
 "use client";
 
+import type { Database } from "@contracts/generated/database.types";
 import { formatDateTime, formatDecimal, formatInteger } from "@/lib/format";
 import { useRealtimeRows } from "@/lib/realtime/useRealtimeRows";
-import type { Database } from "@contracts/generated/database.types";
 
 type TradeLive = Database["public"]["Tables"]["trades_live"]["Row"];
 type TradePaper = Database["public"]["Tables"]["trades_paper"]["Row"];

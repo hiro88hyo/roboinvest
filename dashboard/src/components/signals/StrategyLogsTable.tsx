@@ -1,8 +1,8 @@
 "use client";
 
+import type { Database } from "@contracts/generated/database.types";
 import { formatDateTime, formatDecimal } from "@/lib/format";
 import { useRealtimeRows } from "@/lib/realtime/useRealtimeRows";
-import type { Database } from "@contracts/generated/database.types";
 import { ActionBadge } from "./ActionBadge";
 
 type StrategyLog = Database["public"]["Tables"]["strategy_logs"]["Row"];
@@ -10,13 +10,7 @@ type StrategyLog = Database["public"]["Tables"]["strategy_logs"]["Row"];
 const byCreatedDesc = (a: StrategyLog, b: StrategyLog) =>
   a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0;
 
-export function StrategyLogsTable({
-  initial,
-  limit,
-}: {
-  initial: StrategyLog[];
-  limit: number;
-}) {
+export function StrategyLogsTable({ initial, limit }: { initial: StrategyLog[]; limit: number }) {
   const { rows } = useRealtimeRows<StrategyLog>({
     channelName: "realtime:strategy_logs",
     table: "strategy_logs",

@@ -6,13 +6,7 @@ export function parseTradeType(value: string | string[] | undefined): TradeType 
   return value === "paper" ? "paper" : "live";
 }
 
-export function TradeTypeTabs({
-  basePath,
-  current,
-}: {
-  basePath: string;
-  current: TradeType;
-}) {
+export function TradeTypeTabs({ basePath, current }: { basePath: string; current: TradeType }) {
   const tabs: { type: TradeType; label: string }[] = [
     { type: "live", label: "Live" },
     { type: "paper", label: "Paper" },

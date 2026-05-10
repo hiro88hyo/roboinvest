@@ -1,10 +1,10 @@
 "use client";
 
+import type { Database } from "@contracts/generated/database.types";
+import { useState, useTransition } from "react";
 import { setKillSwitchAction, setTradeModeAction } from "@/app/system/actions";
 import { useRealtimeRow } from "@/lib/realtime/useRealtimeRow";
 import { TRADE_MODES, type TradeMode } from "@/lib/system/update";
-import type { Database } from "@contracts/generated/database.types";
-import { useState, useTransition } from "react";
 
 type SystemStatus = Database["public"]["Tables"]["system_status"]["Row"];
 

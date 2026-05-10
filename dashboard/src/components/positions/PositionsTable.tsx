@@ -1,5 +1,6 @@
 "use client";
 
+import type { Database } from "@contracts/generated/database.types";
 import {
   formatDateTime,
   formatDecimal,
@@ -8,7 +9,6 @@ import {
   pnlColor,
 } from "@/lib/format";
 import { useRealtimeRows } from "@/lib/realtime/useRealtimeRows";
-import type { Database } from "@contracts/generated/database.types";
 
 type Position = Database["public"]["Tables"]["positions"]["Row"];
 
