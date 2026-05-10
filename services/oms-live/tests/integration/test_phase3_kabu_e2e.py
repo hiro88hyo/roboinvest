@@ -17,8 +17,8 @@ ENV (全部揃って初めて走る):
   SUPABASE_SECRET_KEY                   — sb_secret_*
 
 時間ガード:
-  Asia/Tokyo タイムゾーンで weekday < 5 (月-金) かつ 9 <= hour < 15。
-  祝日カレンダーは未実装 (将来 jpholiday 等を導入する場合は本判定を差し替え)。
+  Asia/Tokyo タイムゾーンで weekday < 5 (月-金) かつ 9 <= hour < 15、かつ
+  ``jpholiday.is_holiday()`` が False、かつ年末年始 (12/31, 1/1-1/3) でないこと。
 
 実行手順 (Thu 9:00-15:00 JST に流す想定):
   1. SSH トンネル: ``ssh -N -L 18081:127.0.0.1:18081 user@<win-ip>``
@@ -54,6 +54,7 @@ from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 import httpx
+import jpholiday
 import pytest
 from oms_live.clients.pubsub import PubSubSubscriber
 from oms_live.clients.supabase import SupabaseClient
@@ -69,9 +70,16 @@ _REQUIRED_KABU_ENV = ("KABU_API_BASE_URL", "KABU_API_PASSWORD", "KABU_ORDER_PASS
 
 
 def _is_market_hours_jst() -> bool:
-    """平日 9:00-15:00 JST かを判定。祝日カレンダーは未実装。"""
+    """平日 9:00-15:00 JST かつ東証営業日 (祝日・年末年始を除く) を判定。"""
     now = datetime.now(ZoneInfo("Asia/Tokyo"))
     if now.weekday() >= 5:  # 土日
+        return False
+    today = now.date()
+    if jpholiday.is_holiday(today):
+        return False
+    if today.month == 12 and today.day == 31:
+        return False
+    if today.month == 1 and today.day <= 3:
         return False
     return 9 <= now.hour < 15
 

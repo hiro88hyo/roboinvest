@@ -194,4 +194,4 @@ psql "$SUPABASE_DB_URL" -f scripts/oms-live-phase3/kill-switch-off.sql
 - 検証環境 (18081) では `wallet/symbol` が null を返し、`sendorder` も黙殺される。本番 (28080) のみ運用想定でよいか、検証で何ができるかの整理は Phase 4 で
 - `KABU_DEFAULT_EXCHANGE` のデフォルトは `1` (東証) のままで、本番では env (`OMS_LIVE_PHASE3_EXCHANGE=9`) で上書きしている。本番常用前提なら設定値そのものを `9` に変えるか、`config.py` で env 駆動の挙動を強化する
 - 1 トレードリスク (2% ルール) のロット数自動切詰めは Gateway 責務だが、Phase 4 でフィードバックループの動作確認が必要
-- jpholiday カレンダーは未導入。Phase 3 e2e の skip ガードは「平日 + 9:00-15:00」のみで、祝日は env を立てた人の責任で skip する
+- Phase 3 e2e の skip ガードは「平日 + 9:00-15:00 + 東証営業日 (jpholiday + 12/31, 1/1-1/3)」で発火する。祝日でも自動 skip されるが、半休 (大納会等で短縮立会) には未対応 — 該当日の手動運用は env を解除する側の責任
