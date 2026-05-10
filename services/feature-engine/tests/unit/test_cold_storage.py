@@ -8,6 +8,8 @@ import polars as pl
 import pytest
 from feature_engine.storage.cold import (
     aggregate_to_ohlcv,
+    delete_warm_partition,
+    enumerate_warm_symbols,
     load_warm_partition,
     migrate_warm_to_cold,
     write_cold_partition,
@@ -152,3 +154,50 @@ def test_migrate_returns_none_for_missing_partition(tmp_path: Path) -> None:
         tmp_path / "warm", tmp_path / "cold", "7203", date(2026, 4, 20), "1m"
     )
     assert out is None
+
+
+def test_enumerate_warm_symbols_lists_only_target_date(tmp_path: Path) -> None:
+    warm_dir = tmp_path / "warm"
+    writer = WarmWriter(base_dir=warm_dir, resolution="raw")
+    base_target = datetime(2026, 4, 20, 0, 0, 0, tzinfo=UTC)
+    base_other = datetime(2026, 4, 21, 0, 0, 0, tzinfo=UTC)
+    writer.record_tick(_tick("9432", base_target, "100"))
+    writer.record_tick(_tick("7203", base_target, "100"))
+    writer.record_tick(_tick("8001", base_other, "100"))  # 違う date
+    writer.flush()
+
+    found = enumerate_warm_symbols(warm_dir, date(2026, 4, 20))
+    assert found == ["7203", "9432"]  # 8001 は別 date なので含まれない
+
+
+def test_enumerate_warm_symbols_returns_empty_for_missing_dir(tmp_path: Path) -> None:
+    assert enumerate_warm_symbols(tmp_path / "no-such-warm", date(2026, 4, 20)) == []
+
+
+def test_enumerate_warm_symbols_skips_empty_partition(tmp_path: Path) -> None:
+    # symbol=*/date=* dir はあるが parquet は無い
+    empty_dir = tmp_path / "warm" / "symbol=7203" / "date=2026-04-20"
+    empty_dir.mkdir(parents=True)
+    assert enumerate_warm_symbols(tmp_path / "warm", date(2026, 4, 20)) == []
+
+
+def test_delete_warm_partition_removes_files_and_dir(tmp_path: Path) -> None:
+    warm_dir = tmp_path / "warm"
+    writer = WarmWriter(base_dir=warm_dir, resolution="raw")
+    base = datetime(2026, 4, 20, 0, 0, 0, tzinfo=UTC)
+    writer.record_tick(_tick("7203", base, "100"))
+    writer.flush()
+    writer.record_tick(_tick("7203", base + timedelta(seconds=1), "101"))
+    writer.flush()
+    part_dir = warm_dir / "symbol=7203" / "date=2026-04-20"
+    assert len(list(part_dir.glob("*.parquet"))) == 2
+
+    removed = delete_warm_partition(warm_dir, "7203", date(2026, 4, 20))
+    assert removed == 2
+    assert not part_dir.exists()  # date= dir も消える
+    # symbol= ディレクトリ自体は残す (別 date が将来生まれる可能性)
+    assert (warm_dir / "symbol=7203").exists()
+
+
+def test_delete_warm_partition_returns_zero_for_missing(tmp_path: Path) -> None:
+    assert delete_warm_partition(tmp_path / "warm", "7203", date(2026, 4, 20)) == 0
