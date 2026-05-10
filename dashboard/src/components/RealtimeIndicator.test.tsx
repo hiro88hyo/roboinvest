@@ -1,7 +1,7 @@
-import { RealtimeStatusProvider, useRegisterChannelStatus } from "@/lib/realtime/statusContext";
-import type { ChannelStatus } from "@/lib/realtime/types";
 import { act, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import { RealtimeStatusProvider, useRegisterChannelStatus } from "@/lib/realtime/statusContext";
+import type { ChannelStatus } from "@/lib/realtime/types";
 import { RealtimeIndicator } from "./RealtimeIndicator";
 
 function Stub({ name, status }: { name: string; status: ChannelStatus }) {

@@ -1,8 +1,8 @@
 "use client";
 
+import type { Database } from "@contracts/generated/database.types";
 import { formatDateTime, formatSignedDecimal, pnlColor } from "@/lib/format";
 import { useRealtimeRow } from "@/lib/realtime/useRealtimeRow";
-import type { Database } from "@contracts/generated/database.types";
 
 type SystemStatus = Database["public"]["Tables"]["system_status"]["Row"];
 

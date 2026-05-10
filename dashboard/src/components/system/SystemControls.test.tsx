@@ -1,6 +1,6 @@
 import type { Database } from "@contracts/generated/database.types";
 import { act, render, screen } from "@testing-library/react";
-import { type MockInstance, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
 type SystemStatus = Database["public"]["Tables"]["system_status"]["Row"];
 

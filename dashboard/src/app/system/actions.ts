@@ -1,5 +1,6 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { getServiceClient } from "@/lib/supabase/server";
 import {
   type TradeMode,
@@ -7,7 +8,6 @@ import {
   updateKillSwitch,
   updateTradeMode,
 } from "@/lib/system/update";
-import { revalidatePath } from "next/cache";
 
 export async function setKillSwitchAction(isTradingAllowed: boolean): Promise<UpdateResult> {
   const result = await updateKillSwitch(getServiceClient(), isTradingAllowed);

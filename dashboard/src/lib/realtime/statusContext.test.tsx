@@ -1,8 +1,8 @@
 import { act, render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import {
-  RealtimeStatusProvider,
   aggregateStatus,
+  RealtimeStatusProvider,
   useAggregatedRealtimeStatus,
   useRegisterChannelStatus,
 } from "./statusContext";
