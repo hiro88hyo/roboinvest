@@ -71,3 +71,84 @@ jobs:
 
       - name: vitest
         run: npm test
+
+  e2e:
+    name: Integration tests (Pub/Sub + Supabase)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PUBSUB_EMULATOR_HOST: localhost:8085
+      PUBSUB_PROJECT_ID: trade-ai-dev
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          version: "0.5.x"
+          enable-cache: true
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Sync workspace
+        run: uv sync --all-packages
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Start Pub/Sub emulator + init topics
+        run: docker compose -f infra/docker-compose.dev.yml up -d pubsub pubsub-init
+
+      - name: Wait for Pub/Sub topics initialised
+        run: |
+          for _ in $(seq 1 60); do
+            status=$(docker inspect -f '{{.State.Status}}' trade-ai-pubsub-init 2>/dev/null || echo "")
+            if [ "$status" = "exited" ]; then
+              code=$(docker inspect -f '{{.State.ExitCode}}' trade-ai-pubsub-init)
+              if [ "$code" = "0" ]; then
+                echo "Pub/Sub topics ready"
+                exit 0
+              fi
+              echo "init-topics failed (exit=$code)"
+              docker logs trade-ai-pubsub-init || true
+              exit 1
+            fi
+            sleep 2
+          done
+          echo "init-topics did not finish within 120s"
+          docker logs trade-ai-pubsub-init || true
+          exit 1
+
+      - name: Start Supabase local stack
+        working-directory: infra
+        run: supabase start
+
+      - name: Export Supabase env
+        working-directory: infra
+        run: |
+          api_url=$(supabase status -o env | sed -n 's/^API_URL=//p' | tr -d '"')
+          service_key=$(supabase status -o env | sed -n 's/^SERVICE_ROLE_KEY=//p' | tr -d '"')
+          if [ -z "$api_url" ] || [ -z "$service_key" ]; then
+            echo "failed to extract supabase env"
+            supabase status -o env
+            exit 1
+          fi
+          echo "SUPABASE_URL=$api_url" >> "$GITHUB_ENV"
+          echo "SUPABASE_SECRET_KEY=$service_key" >> "$GITHUB_ENV"
+
+      - name: pytest -m integration
+        run: uv run pytest -m integration -v
+
+      - name: Dump Pub/Sub emulator logs on failure
+        if: failure()
+        run: docker logs trade-ai-pubsub || true
+
+      - name: Dump Supabase services on failure
+        if: failure()
+        working-directory: infra
+        run: |
+          supabase status || true
+          docker ps -a --filter "name=supabase" || true
