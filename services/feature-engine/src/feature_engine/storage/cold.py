@@ -109,3 +109,51 @@ def migrate_warm_to_cold(
         return None
     aggregated = aggregate_to_ohlcv(warm, resolution)
     return write_cold_partition(aggregated, cold_dir, symbol, d, resolution)
+
+
+def enumerate_warm_symbols(warm_dir: Path, d: date) -> list[str]:
+    """``warm_dir`` 配下で指定 ``date`` の Parquet を持つ symbol 一覧を返す (sorted)。
+
+    `warm_dir/symbol=<S>/date=<D>/*.parquet` のレイアウト前提。warm_dir 不在 / 該当 date
+    が無い symbol しかない場合は空リスト。``scripts/warm-to-cold-migration.py`` の
+    ``--symbols`` 省略時に使う。
+    """
+    if not warm_dir.exists():
+        return []
+    target_date = d.isoformat()
+    symbols: list[str] = []
+    for sym_dir in warm_dir.glob("symbol=*"):
+        if not sym_dir.is_dir():
+            continue
+        date_dir = sym_dir / f"date={target_date}"
+        if not date_dir.is_dir():
+            continue
+        if not any(date_dir.glob("*.parquet")):
+            continue
+        symbols.append(sym_dir.name.removeprefix("symbol="))
+    return sorted(symbols)
+
+
+def delete_warm_partition(warm_dir: Path, symbol: str, d: date) -> int:
+    """``warm_dir/symbol=<S>/date=<D>/`` 配下の Parquet を削除。
+
+    削除した Parquet ファイル数を返す。区画自体が無ければ 0。区画ディレクトリが
+    Parquet 削除後に空なら ``date=`` ディレクトリも削除する (``symbol=`` 直下は
+    別 date が残る可能性があるので触らない)。``scripts/warm-to-cold-migration.py``
+    の ``--delete-warm`` で書き出し成功 symbol/date のみに対して呼ばれる。
+    """
+    part_dir = warm_dir / f"symbol={symbol}" / f"date={d.isoformat()}"
+    if not part_dir.is_dir():
+        return 0
+    files = list(part_dir.glob("*.parquet"))
+    for f in files:
+        f.unlink()
+    if not any(part_dir.iterdir()):
+        part_dir.rmdir()
+    logger.info(
+        "warm partition deleted: symbol=%s date=%s removed=%d",
+        symbol,
+        d.isoformat(),
+        len(files),
+    )
+    return len(files)
