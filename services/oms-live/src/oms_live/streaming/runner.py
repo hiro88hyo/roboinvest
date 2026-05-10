@@ -3,18 +3,26 @@
 ``live-orders`` を pull し、kabu API へ実発注 → 約定確定までポーリング → Supabase
 に書き込み → ack するループ。
 
-at-least-once 規約 (oms-paper と同じ思想):
+at-least-once 規約:
 
 * 実発注 + Supabase 書込が完了した時点で ack。
-* Supabase 書込失敗は **ack 列に積まず** Pub/Sub の再配信に委ねる (fail-closed)。
 * 冪等性: ``OrderRequest.order_id`` を ``trades_live.order_id`` (partial unique
   index) に carry。Runner は sendorder の前に ``live_trade_exists_for_order_id``
   で重複検知し、True なら sendorder せず ack して "skipped_duplicate" を計上する。
   これで「前回 sendorder + Supabase 書込が完全に成功した後に redeliver」のケースは
-  二重発注を完全に防ぐ。なお「sendorder 成功 + Supabase 書込失敗で再配信」では
-  trades_live に行が無いため check は通り、sendorder が再走する (kabu 側で同一
-  銘柄・同一秒の二重発注になる) — これは別途 Runner 側で fail-closed の見直しが
-  必要だが、本フェーズでは扱わない。
+  二重発注を完全に防ぐ。
+* **fail-fast: sendorder 成功 + Supabase 書込失敗 → Runner プロセス停止**。
+  以前は SupabaseError を握って ack せず再配信に任せていたが、再配信時に
+  trades_live に行が無いため idempotency check は通り、sendorder が再走 = 二重発注
+  になる穴があった。現状は ``SupabaseError`` を ``run_once`` から伝播させてプロセスを
+  止める。supervisor で **自動再起動はせず**、運用者が kabu 側 (``/orders``) と
+  Supabase ``trades_live`` の状態を突合し、必要なら手動で ``trades_live`` /
+  ``positions`` / ``system_status`` を整合させてから Runner を再起動する。
+  再起動後の再配信は ``live_trade_exists_for_order_id`` で skip される
+  (手動回復が完了している前提)。
+  raise 前にバッチ内で既に成功したメッセージの ack を flush する (再起動後の
+  二度処理を避けるため; flush 自体が失敗しても元の SupabaseError は __context__
+  に残る)。
 * sendorder の Result != 0 (受付拒否) は業務上の no_fill として ack。
 * 約定タイムアウト時は cancel_order を投げて ack (再配信は冪等性問題のため避ける)。
 * スキーマ不正・JSON パース失敗の poison message は ack。
@@ -62,7 +70,6 @@ class BatchStats:
     parse_errors: int
     filled: int
     no_fills: int
-    write_errors: int
     acked: int
     skipped_duplicate: int = 0
     safety_rejected: int = 0
@@ -103,7 +110,11 @@ class StreamRunner:
         return results
 
     async def run_once(self) -> BatchStats:
-        """1 バッチ分の pull + 処理 + ack。"""
+        """1 バッチ分の pull + 処理 + ack。
+
+        ``_process_order`` から ``SupabaseError`` が伝播してきた場合は、その時点までに
+        成功した分の ack を flush してから例外を re-raise する (fail-fast)。
+        """
         order_msgs = await self.subscriber.pull(
             self.settings.pubsub_subscription_live_orders,
             max_messages=self.settings.pubsub_pull_max_messages,
@@ -112,39 +123,38 @@ class StreamRunner:
         parse_errors = 0
         filled = 0
         no_fills = 0
-        write_errors = 0
         skipped_duplicate = 0
         safety_rejected = 0
         dry_run_skipped = 0
         acks: list[str] = []
 
-        for msg in order_msgs:
-            order = _parse_order(msg)
-            if order is None:
-                parse_errors += 1
-                acks.append(msg.ack_id)
-                continue
-            try:
+        try:
+            for msg in order_msgs:
+                order = _parse_order(msg)
+                if order is None:
+                    parse_errors += 1
+                    acks.append(msg.ack_id)
+                    continue
                 outcome = await self._process_order(order)
-            except SupabaseError:
-                logger.exception(
-                    "supabase write failed: leaving message unacked symbol=%s signal_id=%s",
-                    order.symbol,
-                    order.unified_signal_id,
-                )
-                write_errors += 1
-                continue
-            if outcome == "filled":
-                filled += 1
-            elif outcome == "skipped_duplicate":
-                skipped_duplicate += 1
-            elif outcome == "safety_rejected":
-                safety_rejected += 1
-            elif outcome == "dry_run_skipped":
-                dry_run_skipped += 1
-            else:
-                no_fills += 1
-            acks.append(msg.ack_id)
+                if outcome == "filled":
+                    filled += 1
+                elif outcome == "skipped_duplicate":
+                    skipped_duplicate += 1
+                elif outcome == "safety_rejected":
+                    safety_rejected += 1
+                elif outcome == "dry_run_skipped":
+                    dry_run_skipped += 1
+                else:
+                    no_fills += 1
+                acks.append(msg.ack_id)
+        except SupabaseError:
+            logger.critical(
+                "supabase write failure detected: aborting runner (fail-fast). "
+                "manual reconciliation required before restart "
+                "(check kabu /orders and trades_live consistency)."
+            )
+            await self._flush_acks_on_shutdown(acks)
+            raise
 
         if acks:
             await self.subscriber.acknowledge(self.settings.pubsub_subscription_live_orders, acks)
@@ -154,17 +164,33 @@ class StreamRunner:
             parse_errors=parse_errors,
             filled=filled,
             no_fills=no_fills,
-            write_errors=write_errors,
             acked=len(acks),
             skipped_duplicate=skipped_duplicate,
             safety_rejected=safety_rejected,
             dry_run_skipped=dry_run_skipped,
         )
 
+    async def _flush_acks_on_shutdown(self, acks: list[str]) -> None:
+        """fail-fast 時に既に成功したメッセージの ack を best-effort で flush。
+
+        flush 自体が失敗しても呼び出し側の元例外は ``__context__`` に残るので、
+        プロセス停止という意図は変わらない。
+        """
+        if not acks:
+            return
+        try:
+            await self.subscriber.acknowledge(self.settings.pubsub_subscription_live_orders, acks)
+        except Exception:
+            logger.exception(
+                "ack flush failed during fail-fast shutdown (acks=%d will redeliver)", len(acks)
+            )
+
     async def _process_order(self, order: OrderRequest) -> str:
         """``"filled" | "no_fill" | "skipped_duplicate" | "safety_rejected" | "dry_run_skipped"``。
 
-        Supabase 書込失敗時のみ ``SupabaseError`` を伝播する。
+        Supabase 書込失敗時は ``SupabaseError`` を上位 (``run_once``) に伝播し、
+        Runner 全体を fail-fast で停止させる。``run_once`` がプロセス停止前に既処理
+        分の ack を flush する。
         重複検知時は sendorder せず即 ack する (idempotency hardening)。
         Phase 3 安全装備 (allowed_symbols / max_qty / dry_run) は existence check の
         後・sendorder の前に評価する。

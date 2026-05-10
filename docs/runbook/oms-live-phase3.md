@@ -188,9 +188,37 @@ psql "$SUPABASE_DB_URL" -f scripts/oms-live-phase3/kill-switch-off.sql
 - [ ] `system_status.daily_pnl` の値を記録 (Phase 3 結果として残す)
 - [ ] テスト走行で対象 symbol にゴミ行が残った場合は `psql "$SUPABASE_DB_URL" -v symbol=<code> -f scripts/oms-live-phase3/cleanup-symbol.sql` で掃除
 
+## fail-fast 時の手動回復手順
+
+OMS Live Runner は sendorder 成功後の Supabase 書込で例外が出たら fail-fast で停止する (exit code 3 + critical log)。**自動再起動せず**、運用者が以下の手順で kabu と Supabase の整合を取ってから Runner を再起動する。
+
+```bash
+# 1. critical log から失敗時の order_id を特定
+journalctl -u oms-live | grep -B2 "supabase write failure"
+# 例: "live order filled: ... signal_id=..." の前の "order_id=<UUID>" を控える
+
+# 2. kabu /orders で実約定状態を確認 (約定済か取消済か)
+uv run python scripts/probe-kabu-oms.py orders --port 28080
+# OrderId / State / CumQty / Price / Details を控える (PR #11 で --port 対応)
+
+# 3. Supabase trades_live に該当 order_id の行があるか確認
+psql "$SUPABASE_DB_URL" -c "select trade_id, symbol, side, quantity, price, executed_at from trades_live where order_id = '<UUID>';"
+
+# 4a. trades_live に行が無い & kabu で約定確定 → 手動 INSERT
+#     positions も整合させる (新規 BUY なら INSERT、SELL なら quantity 更新 or DELETE)
+#     SELL の場合は system_status.daily_pnl / weekly_pnl / monthly_pnl も加算
+# 4b. trades_live に行が有る → そのまま再起動して OK (再配信は live_trade_exists_for_order_id で skip される)
+# 4c. kabu で取消済 → 何もせず再起動 (sendorder 成功後の取消は kabu 側で確定)
+
+# 5. 整合確認後に Runner 再起動
+systemctl restart oms-live
+```
+
+整合手順の詳細は `services/oms-live/CLAUDE.md` の「Supabase 連携の規約」を参照。
+
 ## 残課題 / Phase 4 候補
 
-- 「sendorder 成功 + Supabase 書込失敗で再配信」のケースは現状再走する。Runner を fail-fast にする方向で別フェーズ要 (`PR #5` のコミットメッセージに記載)
 - 検証環境 (18081) では `wallet/symbol` が null を返し、`sendorder` も黙殺される。本番 (28080) のみ運用想定でよいか、検証で何ができるかの整理は Phase 4 で
 - 1 トレードリスク (2% ルール) のロット数自動切詰めは Gateway 責務だが、Phase 4 でフィードバックループの動作確認が必要
 - Phase 3 e2e の skip ガードは「平日 + 9:00-15:00 + 東証営業日 (jpholiday + 12/31, 1/1-1/3)」で発火する。祝日でも自動 skip されるが、半休 (大納会等で短縮立会) には未対応 — 該当日の手動運用は env を解除する側の責任
+- closeout (14:50 cron) の Supabase 書込失敗は `write_errors` 計上で続行する設計 (再配信無し + 複数 symbol 持ち越し決済の機会損失回避)。複数 symbol で部分的な不整合が起きうるため、終了後 `check-state.sql` で必ず突合すること

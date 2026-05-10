@@ -15,12 +15,13 @@ from decimal import Decimal
 from typing import Any
 
 import httpx
+import pytest
 from oms_live._testing import (
     DEFAULT_TS,
     make_order_request,
 )
 from oms_live.clients.pubsub import PubSubSubscriber
-from oms_live.clients.supabase import SupabaseClient
+from oms_live.clients.supabase import SupabaseClient, SupabaseError
 from oms_live.config import OmsLiveSettings
 from oms_live.kabu_client import KabuLiveClient
 from oms_live.streaming.runner import StreamRunner
@@ -310,7 +311,6 @@ async def test_run_once_buy_new_position_writes_trade_and_position_and_acks() ->
     assert stats.orders_pulled == 1
     assert stats.filled == 1
     assert stats.no_fills == 0
-    assert stats.write_errors == 0
     assert stats.acked == 1
 
     # Supabase に trades_live INSERT と positions INSERT が起きていること
@@ -350,7 +350,6 @@ async def test_run_once_skips_when_order_id_already_in_trades_live() -> None:
     assert stats.filled == 0
     assert stats.no_fills == 0
     assert stats.skipped_duplicate == 1
-    assert stats.write_errors == 0
     assert stats.acked == 1
 
     # kabu には一切リクエストを投げていないこと (token も含めて 0)
@@ -424,7 +423,6 @@ async def test_run_once_sendorder_rejected_records_no_fill_and_acks() -> None:
     stats = await _with_runner(pubsub=pubsub, supabase=supabase, kabu=kabu, run_body=_body)
     assert stats.filled == 0
     assert stats.no_fills == 1
-    assert stats.write_errors == 0
     assert stats.acked == 1
     # Supabase の書込系 (POST/PATCH/DELETE) は呼ばない (existence check の GET は走る)
     write_methods = {"POST", "PATCH", "DELETE"}
@@ -540,7 +538,13 @@ async def test_run_once_poll_continues_through_state3_zero_cum_qty_then_cancelle
     assert [r for r in supabase.requests if r.method in write_methods] == []
 
 
-async def test_run_once_supabase_write_failure_does_not_ack() -> None:
+async def test_run_once_supabase_write_failure_aborts_runner_without_ack() -> None:
+    """fail-fast: sendorder 成功後に Supabase 書込が失敗すると ``SupabaseError`` を伝播させる。
+
+    バッチ内で 1 件しか処理していないので flush 対象の ack は無く、現メッセージは
+    未 ack のまま残る。プロセスが手動回復後に再起動されると、再配信が来るが
+    ``live_trade_exists_for_order_id`` で skip される (運用前提)。
+    """
     order = make_order_request(side=Side.BUY, quantity=100)
     pubsub = _PubSubRouter(batches=[_pull_response([("a1", order.model_dump_json().encode())])])
     supabase = _SupabaseRouter(
@@ -559,11 +563,53 @@ async def test_run_once_supabase_write_failure_does_not_ack() -> None:
     async def _body(runner: StreamRunner) -> Any:
         return await runner.run_once()
 
-    stats = await _with_runner(pubsub=pubsub, supabase=supabase, kabu=kabu, run_body=_body)
-    assert stats.write_errors == 1
-    assert stats.filled == 0
-    assert stats.acked == 0  # no ack -> Pub/Sub redelivers
+    with pytest.raises(SupabaseError):
+        await _with_runner(pubsub=pubsub, supabase=supabase, kabu=kabu, run_body=_body)
+    # 失敗したメッセージは ack されないので Pub/Sub の再配信に残る
     assert pubsub.acked == []
+
+
+async def test_run_once_flushes_prior_acks_before_fail_fast() -> None:
+    """fail-fast 時、バッチ内で既に成功した分は ack を flush してから raise する。
+
+    1 件目: parse 失敗 (即 ack)
+    2 件目: sendorder 成功 + Supabase 書込失敗 → 致命例外
+    expected: 1 件目の ack だけが flush される (再起動時に二度処理しないため)。
+    """
+    bad_payload = b"not-json"
+    good = make_order_request(side=Side.BUY, quantity=100)
+    pubsub = _PubSubRouter(
+        batches=[
+            _pull_response(
+                [
+                    ("a-bad", bad_payload),
+                    ("a-good", good.model_dump_json().encode()),
+                ]
+            )
+        ]
+    )
+    supabase = _SupabaseRouter(
+        live_position_rows=[[]],
+        insert_trade_status=500,
+    )
+    kabu = _KabuRouter(
+        sendorder_responses=[{"Result": 0, "OrderId": "OID-FF"}],
+        order_states={
+            "OID-FF": [
+                _kabu_order_payload(order_id="OID-FF", state=3, cum_qty=100, detail_price=1000)
+            ]
+        },
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    with pytest.raises(SupabaseError):
+        await _with_runner(pubsub=pubsub, supabase=supabase, kabu=kabu, run_body=_body)
+    # 1 件目 (parse error → 即 ack) だけが flush されている
+    assert len(pubsub.acked) == 1
+    body = json.loads(pubsub.acked[0].content.decode())
+    assert body == {"ackIds": ["a-bad"]}
 
 
 async def test_run_once_poison_message_is_acked() -> None:
