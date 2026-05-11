@@ -51,7 +51,8 @@ Feeder のコードは「`KABU_API_BASE_URL` / `KABU_WS_URL` を env で受け�
 - メッセージは JSON 1 つ = 1 イベント
 - イベント種別の判別はトップレベルフィールドで:
   - 約定 Tick: `CurrentPrice`, `CurrentPriceTime`, `TradingVolume` などが入る → `TickData`
-  - 板スナップショット: `Bid1` / `Ask1` ... `Bid10` / `Ask10` 構造、`AskSign` / `BidSign` 等 → `OrderBookSnapshot`
+  - 板スナップショット: `Buy1`...`Buy10` / `Sell1`...`Sell10` 構造（各レベル `{Price, Qty, Sign}`）→ `OrderBookSnapshot`
+    差分配信のためレベル変化がなければ省略される。`BidPrice`/`BidQty` / `AskPrice`/`AskQty` はベスト気配の単一値で、常に含まれることが多い（parser が fallback として 1-level book を生成）
   - 同じメッセージに両方含まれることがある（kabu の WS は「銘柄状態の差分通知」スタイル）→ 1 メッセージから複数の contracts レコードが派生し得る
 - 配信は **ザラ場時間（9:00-11:30, 12:30-15:00 JST）のみ**。それ以外は接続維持はできるが PUSH は来ない
 - ハートビート / keepalive 仕様は kabuステーション側で定義あり。`websockets` ライブラリの `ping_interval` デフォルトで概ね問題なし、要観測
