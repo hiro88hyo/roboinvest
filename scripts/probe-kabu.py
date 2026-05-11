@@ -12,9 +12,11 @@
   1. トークン取得 (POST /kabusapi/token)
   2. 口座残高取得 (GET /kabusapi/wallet/cash)
   3. 銘柄情報取得 (GET /kabusapi/symbol/{code}@{exchange})
-  4. WebSocket ハンドシェイク (ws://.../kabusapi/websocket)
+  4. 銘柄登録 (PUT /kabusapi/register) — PUSH を流すために必須
+  5. WebSocket PUSH 受信 (ws://.../kabusapi/websocket)
 
-PUSH 配信本体の確認は平日 9:00 以降 (市場時間) に別途必要。
+平日 9:00〜15:00 (JST) に走らせれば PUSH 実流まで確認できる。
+それ以外の時間帯は WS は「ハンドシェイク成立」までしか確認できない。
 
 使い方:
   KABU_API_PASSWORD=xxx uv run scripts/probe-kabu.py --env test
@@ -64,12 +66,19 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--host", default="localhost", help="kabuステーションが動いているホスト")
     p.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="ポート上書き (default: --env から決定)。リバプロ経由で 18080/18081 以外を使う場合に指定。",
+    )
+    p.add_argument(
         "--host-header",
         default=None,
         help=(
-            "HTTP/WS の Host ヘッダを上書き (既定は --host と同じ)。"
+            "HTTP の Host ヘッダを上書き (既定は --host と同じ)。"
             "LAN 越しに繋ぐと Windows http.sys が Host: localhost しか受け付けず "
             "400 'Invalid Hostname' を返すため、その場合は `--host-header localhost` を指定する。"
+            "WS には適用しない (websockets が URL から Host を自動生成し二重化するため)。"
         ),
     )
     p.add_argument(
@@ -81,7 +90,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--skip",
         nargs="*",
-        choices=["wallet", "symbol", "ws"],
+        choices=["wallet", "symbol", "register", "ws"],
         default=[],
         help="スキップしたいチェック",
     )
@@ -143,11 +152,33 @@ async def fetch_symbol(
     return _check(r)
 
 
+async def register_symbols(
+    client: httpx.AsyncClient, ep: Endpoint, token: str, symbol: str, exchange: str
+) -> dict:
+    r = await client.put(
+        f"{ep.http_base}/register",
+        json={"Symbols": [{"Symbol": symbol, "Exchange": int(exchange)}]},
+        headers={"X-API-KEY": token, "Content-Type": "application/json"},
+    )
+    return _check(r)
+
+
+async def unregister_all(client: httpx.AsyncClient, ep: Endpoint, token: str) -> dict:
+    r = await client.put(
+        f"{ep.http_base}/unregister/all",
+        headers={"X-API-KEY": token},
+    )
+    return _check(r)
+
+
 async def probe_websocket(ep: Endpoint, timeout: float, host_header: str | None) -> str | None:
-    extra_headers = [("Host", host_header)] if host_header else None
-    async with websockets.connect(
-        ep.ws_url, open_timeout=5, additional_headers=extra_headers
-    ) as ws:
+    # NOTE: --host-header は WS には適用しない。
+    # websockets ライブラリは URL から Host ヘッダを自動生成するため、
+    # additional_headers で Host を渡すと二重化して Caddy 等が 400 を返す。
+    # 想定経路 (SSH トンネル / Caddy リバプロ) はいずれも上流で Host が解決されるため、
+    # クライアント側での明示的な Host 上書きは不要。
+    del host_header
+    async with websockets.connect(ep.ws_url, open_timeout=5) as ws:
         try:
             msg = await asyncio.wait_for(ws.recv(), timeout=timeout)
             return str(msg)[:200]
@@ -162,7 +193,7 @@ async def main() -> int:
         fail("環境変数 KABU_API_PASSWORD が未設定")
         return 2
 
-    ep = Endpoint(host=args.host, port=PORT_BY_ENV[args.env])
+    ep = Endpoint(host=args.host, port=args.port if args.port is not None else PORT_BY_ENV[args.env])
     host_header = args.host_header
     print(
         f"target: {ep.http_base}  (env={args.env}, host={args.host}"
@@ -200,17 +231,51 @@ async def main() -> int:
                 fail(f"symbol 取得失敗: {e!r}")
                 return 1
 
-        if "ws" not in args.skip:
-            step("4. WebSocket 疎通")
+        registered = False
+        if "register" not in args.skip:
+            step(f"4. 銘柄登録 ({args.symbol}@{args.exchange})")
             try:
-                msg = await probe_websocket(ep, args.ws_timeout, host_header)
-                if msg is None:
-                    ok(f"接続成立 ({args.ws_timeout}s 内に push なし。市場時間外のため正常)")
-                else:
-                    ok(f"push 受信: {msg}")
+                reg = await register_symbols(client, ep, token, args.symbol, args.exchange)
+                ok(json.dumps(reg, ensure_ascii=False))
+                registered = True
             except Exception as e:
-                fail(f"ws 接続失敗: {e!r}")
+                fail(f"register 失敗: {e!r}")
                 return 1
+
+        ws_failed = False
+        try:
+            if "ws" not in args.skip:
+                step("5. WebSocket 疎通")
+                try:
+                    msg = await probe_websocket(ep, args.ws_timeout, host_header)
+                    if msg is None:
+                        if registered:
+                            ws_failed = True
+                            fail(
+                                f"接続成立したが {args.ws_timeout}s 内に push なし "
+                                "(銘柄登録済みなので市場時間内ならば異常)"
+                            )
+                        else:
+                            ok(
+                                f"接続成立 ({args.ws_timeout}s 内に push なし。"
+                                "銘柄未登録のため流れないのが正常)"
+                            )
+                    else:
+                        ok(f"push 受信: {msg}")
+                except Exception as e:
+                    fail(f"ws 接続失敗: {e!r}")
+                    ws_failed = True
+        finally:
+            if registered:
+                step("6. 後片付け (unregister/all)")
+                try:
+                    await unregister_all(client, ep, token)
+                    ok("完了")
+                except Exception as e:
+                    fail(f"unregister/all 失敗 (要手動確認): {e!r}")
+
+        if ws_failed:
+            return 1
 
     print("\nALL OK")
     return 0
