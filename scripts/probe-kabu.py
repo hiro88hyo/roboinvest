@@ -69,7 +69,10 @@ def parse_args() -> argparse.Namespace:
         "--port",
         type=int,
         default=None,
-        help="ポート上書き (default: --env から決定)。リバプロ経由で 18080/18081 以外を使う場合に指定。",
+        help=(
+            "ポート上書き (default: --env から決定)。"
+            "リバプロ経由で 18080/18081 以外を使う場合に指定。"
+        ),
     )
     p.add_argument(
         "--host-header",
@@ -193,7 +196,9 @@ async def main() -> int:
         fail("環境変数 KABU_API_PASSWORD が未設定")
         return 2
 
-    ep = Endpoint(host=args.host, port=args.port if args.port is not None else PORT_BY_ENV[args.env])
+    ep = Endpoint(
+        host=args.host, port=args.port if args.port is not None else PORT_BY_ENV[args.env]
+    )
     host_header = args.host_header
     print(
         f"target: {ep.http_base}  (env={args.env}, host={args.host}"
