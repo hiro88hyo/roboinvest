@@ -43,8 +43,8 @@ def test_parse_book_only() -> None:
 def test_parse_combined_message_returns_both() -> None:
     payload = {
         **make_tick_payload(symbol="7203", current_price=1000.0, trading_volume=200),
-        **{f"Bid{i}": {"Price": 1000 - i, "Qty": 100} for i in range(1, 4)},
-        **{f"Ask{i}": {"Price": 1000 + i, "Qty": 150} for i in range(1, 4)},
+        **{f"Buy{i}": {"Price": 1000 - i, "Qty": 100} for i in range(1, 4)},
+        **{f"Sell{i}": {"Price": 1000 + i, "Qty": 150} for i in range(1, 4)},
     }
 
     results = parse_push_message(payload)
@@ -63,7 +63,7 @@ def test_parse_book_skips_zero_quantity_levels() -> None:
     )
     payload.pop("CurrentPrice", None)
     # 特別気配などで Price 欠落のレベルもスキップされること
-    payload["Ask3"] = {"Price": None, "Qty": 100}
+    payload["Sell3"] = {"Price": None, "Qty": 100}
 
     results = parse_push_message(payload)
     book = next(r for r in results if isinstance(r, OrderBookSnapshot))
@@ -114,3 +114,58 @@ def test_parse_integer_symbol_is_normalized_to_string() -> None:
 
     results = parse_push_message(payload)
     assert results[0].symbol == "7203"
+
+
+def test_parse_book_from_top_level_bid_ask_fallback() -> None:
+    """BidPrice/AskPrice/BidQty/AskQty → 1-level OrderBookSnapshot (PUSH differential)."""
+    payload = {
+        "Symbol": "7203",
+        "CurrentPriceTime": "2026-04-25T09:00:00+09:00",
+        "BidPrice": 999.0,
+        "BidQty": 200,
+        "AskPrice": 1000.0,
+        "AskQty": 150,
+    }
+    results = parse_push_message(payload)
+
+    assert len(results) == 1
+    book = results[0]
+    assert isinstance(book, OrderBookSnapshot)
+    assert book.symbol == "7203"
+    assert len(book.bids) == 1
+    assert book.bids[0].price == Decimal("999.0")
+    assert book.bids[0].quantity == 200
+    assert len(book.asks) == 1
+    assert book.asks[0].price == Decimal("1000.0")
+    assert book.asks[0].quantity == 150
+
+
+def test_parse_book_fallback_ignores_zero_bid_price() -> None:
+    """BidPrice=0 は気配なし扱いで book を生成しない。"""
+    payload = {
+        "Symbol": "7203",
+        "CurrentPriceTime": "2026-04-25T09:00:00+09:00",
+        "BidPrice": 0,
+        "BidQty": 0,
+        "AskPrice": 0,
+        "AskQty": 0,
+    }
+    results = parse_push_message(payload)
+    assert results == []
+
+
+def test_parse_book_fallback_partial_bid_only() -> None:
+    """BidPrice のみ存在し AskPrice がない場合は bids のみの OrderBookSnapshot。"""
+    payload = {
+        "Symbol": "7203",
+        "CurrentPriceTime": "2026-04-25T09:00:00+09:00",
+        "BidPrice": 999.0,
+        "BidQty": 100,
+    }
+    results = parse_push_message(payload)
+
+    assert len(results) == 1
+    book = results[0]
+    assert isinstance(book, OrderBookSnapshot)
+    assert len(book.bids) == 1
+    assert book.asks == []

@@ -82,8 +82,21 @@ def _try_build_tick(symbol: str, payload: dict[str, Any]) -> TickData | None:
 
 
 def _try_build_book(symbol: str, payload: dict[str, Any]) -> OrderBookSnapshot | None:
-    bids = _collect_levels(payload, prefix="Bid")
-    asks = _collect_levels(payload, prefix="Ask")
+    # kabu PUSH/REST uses Buy1-Buy10 for bids and Sell1-Sell10 for asks
+    bids = _collect_levels(payload, prefix="Buy")
+    asks = _collect_levels(payload, prefix="Sell")
+
+    # fallback to top-level single best bid/ask (present in differential PUSH)
+    if not bids:
+        bid_price = _to_decimal(payload.get("BidPrice"))
+        bid_qty = _to_int(payload.get("BidQty"), default=0)
+        if bid_price is not None and bid_price > 0 and bid_qty > 0:
+            bids = [PriceLevel(price=bid_price, quantity=bid_qty)]
+    if not asks:
+        ask_price = _to_decimal(payload.get("AskPrice"))
+        ask_qty = _to_int(payload.get("AskQty"), default=0)
+        if ask_price is not None and ask_price > 0 and ask_qty > 0:
+            asks = [PriceLevel(price=ask_price, quantity=ask_qty)]
 
     if not bids and not asks:
         return None

@@ -42,9 +42,9 @@ def make_book_payload(
         "CurrentPriceTime": current_price_time,
     }
     for i, (price, qty) in enumerate(bids_list, start=1):
-        payload[f"Bid{i}"] = {"Price": price, "Qty": qty}
+        payload[f"Buy{i}"] = {"Price": price, "Qty": qty}  # kabu: Buy1-Buy10
     for i, (price, qty) in enumerate(asks_list, start=1):
-        payload[f"Ask{i}"] = {"Price": price, "Qty": qty}
+        payload[f"Sell{i}"] = {"Price": price, "Qty": qty}  # kabu: Sell1-Sell10
     if extra:
         payload.update(extra)
     return payload
