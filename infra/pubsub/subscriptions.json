@@ -1,0 +1,11 @@
+{
+  "subscriptions": [
+    {"name": "feature-engine-raw-market-data",    "topic": "raw-market-data"},
+    {"name": "strategy-rule-processed-features",  "topic": "processed-features"},
+    {"name": "aggregator-strategy-signals-a",     "topic": "strategy-signals-a"},
+    {"name": "aggregator-strategy-signals-b",     "topic": "strategy-signals-b"},
+    {"name": "gateway-trade-signals",             "topic": "trade-signals"},
+    {"name": "oms-paper-paper-orders",            "topic": "paper-orders"},
+    {"name": "oms-paper-raw-market-data",         "topic": "raw-market-data"}
+  ]
+}
