@@ -38,38 +38,55 @@ STATUS=$(curl -sf "${SUPA_URL}/rest/v1/system_status?id=eq.1&select=trade_mode,i
 echo "  system_status: $STATUS"
 
 # --- 3. daily_ohlcv 確認 -----------------------------------------------------
-echo "[3/5] daily_ohlcv 確認 (今日のデータ有無)..."
+echo "[3/5] daily_ohlcv 確認..."
 TODAY=$(TZ=Asia/Tokyo date '+%Y-%m-%d')
-OHLCV_COUNT=$(curl -sf "${SUPA_URL}/rest/v1/daily_ohlcv?date=eq.${TODAY}&select=symbol" \
+LATEST_OHLCV_DATE=$(curl -sf "${SUPA_URL}/rest/v1/daily_ohlcv?select=date&order=date.desc&limit=1" \
     -H "apikey: ${SUPA_KEY}" -H "Authorization: Bearer ${SUPA_KEY}" \
-    -H "Prefer: count=exact" -I 2>/dev/null | grep -i "content-range" | grep -oP '\d+(?=/)' || echo "0")
+    2>/dev/null | grep -oP '"date":"\K[^"]+' | head -1 || echo "")
 
-if [ "${OHLCV_COUNT:-0}" -eq 0 ]; then
-  echo "  WARNING: daily_ohlcv に今日(${TODAY})のデータがありません。"
-  echo "  Universe Scanner が設定済みなら実行してください:"
-  echo "    cd services/universe-scanner && uv run python -m universe_scanner"
-  echo "  または手動で INSERT してください (gateway の entry_price フォールバック用)。"
+if [ -z "${LATEST_OHLCV_DATE}" ]; then
+  echo "  WARNING: daily_ohlcv にデータがありません (gateway の entry_price fallback が効きません)。"
   echo "  続行しますか？ [y/N]"
   read -r ans
   [ "${ans:-N}" = "y" ] || exit 1
 else
-  echo "  daily_ohlcv: ${TODAY} に ${OHLCV_COUNT} 件あり"
+  DAYS_OLD=$(( ( $(TZ=Asia/Tokyo date +%s) - $(date -d "${LATEST_OHLCV_DATE}" +%s) ) / 86400 ))
+  if [ "${DAYS_OLD}" -gt 7 ]; then
+    echo "  WARNING: daily_ohlcv 最新データが ${LATEST_OHLCV_DATE} (${DAYS_OLD}日前) と古すぎます。"
+    echo "  続行しますか？ [y/N]"
+    read -r ans
+    [ "${ans:-N}" = "y" ] || exit 1
+  else
+    echo "  daily_ohlcv: 最新 ${LATEST_OHLCV_DATE} (${DAYS_OLD}日前) — OK"
+  fi
 fi
 
-# --- 4. watchlist 確認 -------------------------------------------------------
+# --- 4. watchlist 確認・自動コピー -------------------------------------------
 echo "[4/5] watchlist 確認 (今日のデータ有無)..."
 WL_COUNT=$(curl -sf "${SUPA_URL}/rest/v1/watchlist?valid_date=eq.${TODAY}&select=symbol" \
     -H "apikey: ${SUPA_KEY}" -H "Authorization: Bearer ${SUPA_KEY}" \
     -H "Prefer: count=exact" -I 2>/dev/null | grep -i "content-range" | grep -oP '\d+(?=/)' || echo "0")
 
 if [ "${WL_COUNT:-0}" -eq 0 ]; then
-  echo "  WARNING: watchlist に今日(${TODAY})のデータがありません。"
-  echo "  手動 seed 例 (7203のみ):"
-  echo "    psql postgresql://postgres:postgres@127.0.0.1:54322/postgres -c \\"
-  echo "      \"INSERT INTO watchlist (symbol, valid_date, symbol_name, score) VALUES ('7203', '${TODAY}', 'トヨタ自動車', 1.0) ON CONFLICT DO NOTHING;\""
-  echo "  続行しますか？ [y/N]"
-  read -r ans
-  [ "${ans:-N}" = "y" ] || exit 1
+  echo "  今日(${TODAY})の watchlist がありません。直近日付からコピーします..."
+  COPIED=$(psql postgresql://postgres:postgres@127.0.0.1:54322/postgres -tAc \
+    "WITH inserted AS (
+       INSERT INTO watchlist (symbol, valid_date, symbol_name, score, selected_reasons)
+       SELECT symbol, '${TODAY}'::date, symbol_name, score, selected_reasons
+       FROM watchlist
+       WHERE valid_date = (SELECT MAX(valid_date) FROM watchlist WHERE valid_date < '${TODAY}'::date)
+       ON CONFLICT DO NOTHING
+       RETURNING symbol
+     )
+     SELECT COUNT(*) FROM inserted;" 2>/dev/null | tr -d '[:space:]' || echo "0")
+  if [ "${COPIED:-0}" -gt 0 ]; then
+    echo "  watchlist: 前日分から ${COPIED} 件コピーしました"
+  else
+    echo "  WARNING: コピー元の watchlist もありません。手動で seed してください。"
+    echo "  続行しますか？ [y/N]"
+    read -r ans
+    [ "${ans:-N}" = "y" ] || exit 1
+  fi
 else
   echo "  watchlist: ${TODAY} に ${WL_COUNT} 件あり"
 fi
