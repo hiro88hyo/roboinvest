@@ -9,7 +9,8 @@
 
 3 つのセクションを env 駆動で実行し、開発スタックの状態を一括確認する。
 
-  1. Pub/Sub: ``infra/pubsub/topics.json`` に列挙された全トピックが
+  1. Pub/Sub: ``infra/pubsub/topics.json`` に列挙された全トピックと
+     ``infra/pubsub/subscriptions.json`` に列挙された全サブスクリプションが
      エミュレータ上に存在するか
   2. Supabase: ``contracts/sql/`` 由来の主要 9 テーブルが PostgREST 経由で
      可読か (``select=...&limit=0`` で空 200 を期待)
@@ -45,6 +46,7 @@ import httpx
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TOPICS_JSON = REPO_ROOT / "infra" / "pubsub" / "topics.json"
+SUBSCRIPTIONS_JSON = REPO_ROOT / "infra" / "pubsub" / "subscriptions.json"
 
 SUPABASE_TABLES: tuple[str, ...] = (
     "system_status",
@@ -132,8 +134,16 @@ def _load_topics() -> list[str]:
     return [str(t) for t in topics]
 
 
+def _load_subscriptions() -> list[dict[str, str]]:
+    payload = json.loads(SUBSCRIPTIONS_JSON.read_text(encoding="utf-8"))
+    subs = payload.get("subscriptions", [])
+    if not isinstance(subs, list):
+        raise RuntimeError(f"unexpected subscriptions.json shape: {type(subs).__name__}")
+    return [{"name": str(s["name"]), "topic": str(s["topic"])} for s in subs]
+
+
 async def check_pubsub(timeout: float, *, quiet: bool) -> CheckResult:
-    step("Pub/Sub topics")
+    step("Pub/Sub topics + subscriptions")
     result = CheckResult(name="pubsub")
     host = os.environ.get("PUBSUB_EMULATOR_HOST", "").strip()
     project = os.environ.get("PUBSUB_PROJECT_ID", "").strip()
@@ -151,12 +161,19 @@ async def check_pubsub(timeout: float, *, quiet: bool) -> CheckResult:
         result.items.append(("NG", "section", detail))
         return result
 
-    base = f"http://{host}/v1/projects/{project}/topics"
+    try:
+        subscriptions = _load_subscriptions()
+    except (OSError, ValueError, RuntimeError) as exc:
+        detail = f"subscriptions.json 読込失敗: {exc!r}"
+        _emit("NG", "section", detail, quiet=quiet)
+        result.items.append(("NG", "section", detail))
+        return result
+
     async with httpx.AsyncClient(timeout=timeout) as client:
+        base_topics = f"http://{host}/v1/projects/{project}/topics"
         for topic in topics:
-            url = f"{base}/{topic}"
             try:
-                r = await client.get(url)
+                r = await client.get(f"{base_topics}/{topic}")
             except httpx.HTTPError as exc:
                 _emit("NG", topic, repr(exc), quiet=quiet)
                 result.items.append(("NG", topic, repr(exc)))
@@ -171,6 +188,28 @@ async def check_pubsub(timeout: float, *, quiet: bool) -> CheckResult:
                 detail = f"HTTP {r.status_code} body={r.text[:120]}"
                 _emit("NG", topic, detail, quiet=quiet)
                 result.items.append(("NG", topic, detail))
+
+        base_subs = f"http://{host}/v1/projects/{project}/subscriptions"
+        for sub in subscriptions:
+            name, topic = sub["name"], sub["topic"]
+            label = f"sub:{name}"
+            try:
+                r = await client.get(f"{base_subs}/{name}")
+            except httpx.HTTPError as exc:
+                _emit("NG", label, repr(exc), quiet=quiet)
+                result.items.append(("NG", label, repr(exc)))
+                continue
+            if r.status_code == 200:
+                _emit("OK", label, f"-> {topic}", quiet=quiet)
+                result.items.append(("OK", label, f"-> {topic}"))
+            elif r.status_code == 404:
+                _emit("NG", label, f"存在しない (topic={topic})", quiet=quiet)
+                result.items.append(("NG", label, f"存在しない (topic={topic})"))
+            else:
+                detail = f"HTTP {r.status_code} body={r.text[:120]}"
+                _emit("NG", label, detail, quiet=quiet)
+                result.items.append(("NG", label, detail))
+
     return result
 
 
