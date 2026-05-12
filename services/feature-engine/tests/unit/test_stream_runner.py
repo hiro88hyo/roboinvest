@@ -117,10 +117,10 @@ class _SupabaseRouter:
         self,
         *,
         positions: list[dict[str, object]] | None = None,
-        upsert_status: int = 201,
+        patch_status: int = 204,
     ) -> None:
         self.positions = positions or []
-        self.upsert_status = upsert_status
+        self.patch_status = patch_status
         self.requests: list[httpx.Request] = []
 
     async def __call__(self, request: httpx.Request) -> httpx.Response:
@@ -129,8 +129,8 @@ class _SupabaseRouter:
             n = len(self.positions)
             headers = {"Content-Range": f"0-{max(n - 1, 0)}/{n}"}
             return httpx.Response(200, content=json.dumps(self.positions), headers=headers)
-        if request.method == "POST" and request.url.path == "/rest/v1/positions":
-            return httpx.Response(self.upsert_status)
+        if request.method == "PATCH" and request.url.path == "/rest/v1/positions":
+            return httpx.Response(self.patch_status)
         return httpx.Response(404)
 
 
@@ -220,13 +220,13 @@ async def test_tick_message_is_published_acked_and_positions_updated() -> None:
     # ack と positions 更新が行われた
     assert len(pubsub.acked) == 1
     assert json.loads(pubsub.acked[0].content.decode()) == {"ackIds": ["a1"]}
-    upserts = [
-        r for r in supabase.requests if r.method == "POST" and r.url.path == "/rest/v1/positions"
+    patches = [
+        r for r in supabase.requests if r.method == "PATCH" and r.url.path == "/rest/v1/positions"
     ]
-    assert len(upserts) == 1
-    upsert_rows = json.loads(upserts[0].content.decode())
-    assert upsert_rows[0]["symbol"] == "7203"
-    assert upsert_rows[0]["current_price"] == "2500"
+    assert len(patches) == 1
+    patch_body = json.loads(patches[0].content.decode())
+    assert patch_body["current_price"] == "2500"
+    assert patches[0].url.params["trade_type"] == "eq.live"
 
 
 async def test_order_book_message_is_recorded_without_publish() -> None:
@@ -255,7 +255,7 @@ async def test_duplicate_tick_is_dropped_but_acked() -> None:
             _make_pull_response([("a1", _tick_payload()), ("a2", _tick_payload(price="2501"))])
         ]
     )
-    supabase = _SupabaseRouter(positions=[])  # positions は空 → upsert なし
+    supabase = _SupabaseRouter(positions=[])  # positions は空 → patch なし
 
     async def _body(runner: StreamRunner) -> Any:
         return await runner.run_once()
@@ -304,7 +304,7 @@ async def test_supabase_upsert_failure_prevents_ack() -> None:
                 "entry_price": "2400",
             }
         ],
-        upsert_status=500,  # Supabase upsert が 5xx で失敗
+        patch_status=500,  # Supabase patch が 5xx で失敗
     )
 
     async def _body(runner: StreamRunner) -> Any:
