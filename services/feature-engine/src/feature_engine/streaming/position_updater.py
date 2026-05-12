@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any
 
 from trade_contracts.market import TickData
 
@@ -62,20 +61,16 @@ async def update_positions_for_tick(
     updates = apply_tick(tick, positions)
     if not updates:
         return 0
-    rows: list[dict[str, Any]] = [
-        {
-            "symbol": u.symbol,
-            "trade_type": u.trade_type,
-            "current_price": str(u.current_price),
-            "unrealized_pnl": str(u.unrealized_pnl),
-        }
-        for u in updates
-    ]
-    await writer.upsert("positions", rows, on_conflict="symbol,trade_type")
+    for u in updates:
+        await writer.patch(
+            "positions",
+            filters={"symbol": f"eq.{u.symbol}", "trade_type": f"eq.{u.trade_type}"},
+            values={"current_price": str(u.current_price), "unrealized_pnl": str(u.unrealized_pnl)},
+        )
     logger.info(
         "positions updated: symbol=%s rows=%d price=%s",
         tick.symbol,
-        len(rows),
+        len(updates),
         tick.price,
     )
-    return len(rows)
+    return len(updates)

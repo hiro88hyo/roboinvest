@@ -90,14 +90,14 @@ def _split_handler(captured: list[httpx.Request], positions: list[dict[str, obje
         if request.method == "GET" and request.url.path == "/rest/v1/positions":
             headers = {"Content-Range": f"0-{max(len(positions) - 1, 0)}/{len(positions)}"}
             return httpx.Response(200, content=json.dumps(positions), headers=headers)
-        if request.method == "POST" and request.url.path == "/rest/v1/positions":
-            return httpx.Response(201)
+        if request.method == "PATCH" and request.url.path == "/rest/v1/positions":
+            return httpx.Response(204)
         return httpx.Response(500)
 
     return _impl
 
 
-async def test_update_positions_for_tick_upserts_rows() -> None:
+async def test_update_positions_for_tick_patches_rows() -> None:
     captured: list[httpx.Request] = []
     rows = [
         {
@@ -126,12 +126,15 @@ async def test_update_positions_for_tick_upserts_rows() -> None:
             _tick("7203", Decimal("2600")), reader=reader, writer=writer
         )
     assert n == 2
-    posts = [r for r in captured if r.method == "POST"]
-    assert len(posts) == 1
-    body = json.loads(posts[0].content.decode())
-    assert {row["trade_type"] for row in body} == {"live", "paper"}
-    assert all(row["current_price"] == "2600" for row in body)
-    assert posts[0].url.params["on_conflict"] == "symbol,trade_type"
+    patches = [r for r in captured if r.method == "PATCH"]
+    assert len(patches) == 2
+    trade_types = {r.url.params["trade_type"].removeprefix("eq.") for r in patches}
+    assert trade_types == {"live", "paper"}
+    for req in patches:
+        body = json.loads(req.content.decode())
+        assert body["current_price"] == "2600"
+        assert "symbol" not in body
+        assert "quantity" not in body
 
 
 async def test_update_positions_for_tick_skips_when_no_positions() -> None:
