@@ -42,8 +42,3 @@ class ScannerSettings(BaseSettings):
     scan_weight_momentum: float = 1.0
 
     log_level: str = "INFO"
-
-    @classmethod
-    def parse_segments(cls, raw: str) -> tuple[str, ...]:
-        """env 由来のカンマ区切り文字列を tuple に整形するヘルパ。"""
-        return tuple(s.strip() for s in raw.split(",") if s.strip())
