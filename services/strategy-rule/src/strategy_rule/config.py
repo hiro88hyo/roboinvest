@@ -33,11 +33,11 @@ class StrategyRuleSettings(BaseSettings):
         default_factory=lambda: list(DEFAULT_STRATEGIES),
     )
 
-    sma_min_gap_ratio: Decimal = Decimal("0.0")
+    sma_min_gap_ratio: Decimal = Decimal("0.005")
     sma_full_confidence_gap_ratio: Decimal = Decimal("0.02")
-    rsi_buy_threshold: Decimal = Decimal("30")
-    rsi_sell_threshold: Decimal = Decimal("70")
-    bollinger_breakout_tolerance: Decimal = Decimal("0.0")
+    rsi_buy_threshold: Decimal = Decimal("25")
+    rsi_sell_threshold: Decimal = Decimal("75")
+    bollinger_breakout_tolerance: Decimal = Decimal("0.15")
 
     backtest_output_dir: Path = Path("./out/strategy-rule")
 
