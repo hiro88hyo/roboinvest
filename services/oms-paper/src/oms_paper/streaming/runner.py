@@ -61,6 +61,7 @@ class BatchStats:
     no_fills: int
     write_errors: int
     acked: int
+    skipped_duplicate: int = 0
     swing_exits: int = 0
     swing_trails: int = 0
     swing_no_fills: int = 0
@@ -137,6 +138,7 @@ class StreamRunner:
         filled = 0
         no_fills = 0
         write_errors = 0
+        skipped_duplicate = 0
         order_acks: list[str] = []
 
         for msg in order_msgs:
@@ -159,6 +161,8 @@ class StreamRunner:
 
             if outcome == "filled":
                 filled += 1
+            elif outcome == "skipped_duplicate":
+                skipped_duplicate += 1
             else:
                 no_fills += 1
             order_acks.append(msg.ack_id)
@@ -177,6 +181,7 @@ class StreamRunner:
             no_fills=no_fills,
             write_errors=write_errors,
             acked=len(book_acks) + len(order_acks),
+            skipped_duplicate=skipped_duplicate,
             swing_exits=swing_exits,
             swing_trails=swing_trails,
             swing_no_fills=swing_no_fills,
@@ -474,7 +479,22 @@ class StreamRunner:
         logger.info("swing trail: symbol=%s new_stop=%s", symbol, new_stop_loss_price)
 
     async def _process_order(self, order: OrderRequest) -> str:
-        """Returns 'filled' or 'no_fill'. Raises SupabaseError on write failure."""
+        """Returns 'filled', 'no_fill', or 'skipped_duplicate'.
+
+        Raises SupabaseError on write failure.
+        """
+        # 0) idempotency: 同一 signal_id が再配信された場合は skip して ack
+        if (
+            order.unified_signal_id is not None
+            and await self.supabase.paper_trade_exists_for_signal(order.unified_signal_id)
+        ):
+            logger.info(
+                "order skipped_duplicate: symbol=%s signal_id=%s",
+                order.symbol,
+                order.unified_signal_id,
+            )
+            return "skipped_duplicate"
+
         book = self.book_cache.get(order.symbol)
         if book is None:
             logger.info(

@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from typing import Any, Self
+from uuid import UUID
 
 import httpx
 from pydantic import ValidationError
@@ -234,6 +235,27 @@ class SupabaseClient:
         )
         self._raise_for_status(resp, table="positions", op="delete")
         logger.info("supabase delete: positions symbol=%s", symbol)
+
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((httpx.HTTPError, SupabaseError)),
+    )
+    async def paper_trade_exists_for_signal(self, signal_id: UUID) -> bool:
+        """unified_signal_id が既に trades_paper に存在するか確認する (冪等性チェック)。"""
+        assert self._client is not None
+        resp = await self._client.get(
+            "/rest/v1/trades_paper",
+            params={
+                "select": "trade_id",
+                "unified_signal_id": f"eq.{signal_id}",
+                "limit": "1",
+            },
+        )
+        self._raise_for_status(resp, table="trades_paper", op="exists_check")
+        rows = resp.json()
+        return isinstance(rows, list) and len(rows) > 0
 
     @retry(
         reraise=True,

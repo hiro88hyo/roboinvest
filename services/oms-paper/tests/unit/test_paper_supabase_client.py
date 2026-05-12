@@ -4,6 +4,7 @@ import json
 from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
 from decimal import Decimal
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -415,3 +416,34 @@ async def test_insert_trade_paper_raises_on_4xx() -> None:
     async with _build_client(_handler) as client:
         with pytest.raises(SupabaseError, match="insert failed"):
             await client.insert_trade_paper(_build_fill_record())
+
+
+# --- paper_trade_exists_for_signal -------------------------------------------
+
+
+async def test_paper_trade_exists_returns_true_when_row_found() -> None:
+    signal_id = uuid4()
+
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["unified_signal_id"] == f"eq.{signal_id}"
+        return httpx.Response(200, json=[{"trade_id": str(uuid4())}])
+
+    async with _build_client(_handler) as client:
+        assert await client.paper_trade_exists_for_signal(signal_id) is True
+
+
+async def test_paper_trade_exists_returns_false_when_no_row() -> None:
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[])
+
+    async with _build_client(_handler) as client:
+        assert await client.paper_trade_exists_for_signal(uuid4()) is False
+
+
+async def test_paper_trade_exists_raises_on_5xx() -> None:
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="err")
+
+    async with _build_client(_handler) as client:
+        with pytest.raises(SupabaseError, match="transient error"):
+            await client.paper_trade_exists_for_signal(uuid4())

@@ -90,6 +90,8 @@ class _SupabaseRouter:
     paper_position_rows: list[list[dict[str, Any]]] = field(default_factory=list)
     list_position_rows: list[list[dict[str, Any]]] = field(default_factory=list)
     system_status_rows: list[dict[str, Any]] = field(default_factory=list)
+    # True → 冪等性チェックで「既存あり」を返す (重複とみなす)
+    signal_exists_responses: list[bool] = field(default_factory=list)
     insert_trade_status: int = 204
     insert_position_status: int = 204
     update_position_status: int = 204
@@ -110,6 +112,10 @@ class _SupabaseRouter:
                 return httpx.Response(200, json=rows)
             rows = self.paper_position_rows.pop(0) if self.paper_position_rows else []
             return httpx.Response(200, json=rows)
+        if method == "GET" and path == "/rest/v1/trades_paper":
+            # 冪等性チェック: signal_exists_responses が空なら「重複なし」(デフォルト)
+            exists = self.signal_exists_responses.pop(0) if self.signal_exists_responses else False
+            return httpx.Response(200, json=[{"trade_id": "x"}] if exists else [])
         if method == "POST" and path == "/rest/v1/positions":
             return httpx.Response(self.insert_position_status, content=b"")
         if method == "PATCH" and path == "/rest/v1/positions":
@@ -255,7 +261,9 @@ async def test_order_with_no_book_in_cache_is_no_fill_and_acked() -> None:
 
     assert stats.no_fills == 1
     assert stats.filled == 0
-    assert supabase.requests == []  # no Supabase calls
+    # 冪等性チェック (GET trades_paper) は走るが、書き込みは発生しない
+    write_reqs = [r for r in supabase.requests if r.method in {"POST", "PATCH", "DELETE"}]
+    assert write_reqs == []
     ack_paths = [r.url.path for r in pubsub.acked]
     assert any(PAPER_ORDERS_SUB in p for p in ack_paths)
 
@@ -880,6 +888,69 @@ async def test_swing_cache_ttl_reuses_within_window() -> None:
         and r.url.params.get("symbol") is None
     ]
     assert len(list_gets) == 1
+
+
+# --- idempotency ---------------------------------------------------------
+
+
+async def test_duplicate_buy_is_skipped_and_acked() -> None:
+    """同一 signal_id の BUY が再配信されたとき skipped_duplicate になり ack される。"""
+    book = make_order_book(symbol="7203", asks=(("1000", 200),))
+    order = make_order_request(symbol="7203", side=Side.BUY, quantity=100)
+    pubsub = _PubSubRouter(
+        order_batches=[_pull_response([("ord-1", order.model_dump_json().encode("utf-8"))])],
+        book_batches=[_pull_response([("bk-1", book.model_dump_json().encode("utf-8"))])],
+    )
+    # 冪等性チェックで「既存あり」を返す → 重複
+    supabase = _SupabaseRouter(signal_exists_responses=[True])
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+
+    assert stats.skipped_duplicate == 1
+    assert stats.filled == 0
+    assert stats.no_fills == 0
+    # trades_paper INSERT も positions 書き込みも発生しない
+    write_reqs = [r for r in supabase.requests if r.method in {"POST", "PATCH", "DELETE"}]
+    assert write_reqs == []
+    # ack はされる
+    ack_paths = [r.url.path for r in pubsub.acked]
+    assert any(PAPER_ORDERS_SUB in p for p in ack_paths)
+
+
+async def test_first_delivery_fills_second_delivery_skipped() -> None:
+    """1 通目は約定、2 通目 (再配信) は skipped_duplicate。"""
+    book = make_order_book(symbol="7203", asks=(("1000", 200),))
+    order = make_order_request(symbol="7203", side=Side.BUY, quantity=100)
+    data = order.model_dump_json().encode("utf-8")
+    pubsub = _PubSubRouter(
+        order_batches=[
+            _pull_response([("ord-1", data)]),
+            _pull_response([("ord-2", data)]),
+        ],
+        book_batches=[
+            _pull_response([("bk-1", book.model_dump_json().encode("utf-8"))]),
+            {},
+        ],
+    )
+    # 1 通目: 重複なし → 約定。2 通目: 重複あり → skip
+    supabase = _SupabaseRouter(
+        paper_position_rows=[[]],  # 1 通目の read_paper_position
+        signal_exists_responses=[False, True],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        s1 = await runner.run_once()
+        s2 = await runner.run_once()
+        return s1, s2
+
+    s1, s2 = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+    assert s1.filled == 1
+    assert s1.skipped_duplicate == 0
+    assert s2.filled == 0
+    assert s2.skipped_duplicate == 1
 
 
 # --- helpers --------------------------------------------------------------
