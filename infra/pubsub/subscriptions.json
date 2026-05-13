@@ -9,6 +9,10 @@
       "topic": "processed-features"
     },
     {
+      "name": "strategy-ai-processed-features",
+      "topic": "processed-features"
+    },
+    {
       "name": "aggregator-strategy-signals-a",
       "topic": "strategy-signals-a"
     },
