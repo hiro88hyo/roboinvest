@@ -419,6 +419,7 @@ def _build_settings(
         order_fill_timeout_seconds=30.0,
         oms_live_max_qty_per_order=oms_live_max_qty_per_order,
         oms_live_allowed_symbols=oms_live_allowed_symbols,
+        oms_live_dry_run=False,
     )
 
 
