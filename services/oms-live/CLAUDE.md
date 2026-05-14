@@ -38,11 +38,13 @@
 
 ### 認証
 - `POST /kabusapi/token` body `{"APIPassword": "..."}` → `{"Token": "<32 文字>"}`
-  - **Feeder と OMS Live が同じ API パスワードを使うとトークンが奪い合いになる**。
-    - 別の API パスワードを発行して別アカウント扱いにするか、Phase 3 で「トークン共有層」を立てるかは Phase 2 着手時に判断
-    - 暫定は **Feeder と別パスワードを使う**前提でドキュメント化
+  - kabuステーションは API パスワード 1 本につきトークン 1 本の仕様で、POST /token を叩くと先発トークンが無効化される。
+  - **Feeder と OMS Live はファイルキャッシュ (`KABU_TOKEN_CACHE_FILE`) でトークンを共有する**:
+    - 先に起動したサービスが `fetch_token` し、キャッシュファイルに書き込む
+    - 後発のサービスは `ensure_token` 時にキャッシュを読んで POST /token を呼ばない
+    - 401/403 が出たら `invalidate_token()` でメモリとキャッシュを両方クリア → 次の `ensure_token` でキャッシュ再読み or 再発行
+  - 両サービスの `KABU_TOKEN_CACHE_FILE` は同じパスに揃えること（デフォルト `/tmp/kabu_token_cache.json`）
   - 全 REST リクエストは `X-API-KEY: <token>` ヘッダ必須
-  - 401/403 を踏んだら即 `invalidate_token()` → `fetch_token()` で再発行
 
 ### 発注 (現物株)
 - `POST /kabusapi/sendorder`
@@ -260,6 +262,8 @@ services/oms-live/
 - `DAY_CLOSEOUT_TIMEZONE`: `Asia/Tokyo`
 - `ORDER_FILL_POLL_INTERVAL_SECONDS`: `1.0`
 - `ORDER_FILL_TIMEOUT_SECONDS`: `30.0`
+
+- `KABU_TOKEN_CACHE_FILE`: `/tmp/kabu_token_cache.json`（デフォルト）。**feeder と同じパスを設定すること**。空文字でキャッシュ無効
 
 **Phase 3 安全装備 (本番投入前のセーフティネット)**:
 - `OMS_LIVE_MAX_QTY_PER_ORDER`: 1 注文あたり最大株数。空欄で無制限。Runner の `_process_order` で existence check の後に評価。違反は `safety_rejected` で ack。**closeout には適用しない** (持ち越し決済を阻害しないため)

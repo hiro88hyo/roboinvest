@@ -22,7 +22,9 @@ import json
 import logging
 from collections.abc import Iterable
 from dataclasses import dataclass
+from pathlib import Path
 
+from trade_contracts.kabu_token import KabuTokenCache
 from trade_contracts.market import OrderBookSnapshot, TickData
 
 from ..clients.pubsub import PubSubError, PubSubPublisher
@@ -97,6 +99,11 @@ async def run_stream(
         max_seconds=settings.reconnect_max_backoff_sec,
     )
 
+    token_cache = (
+        KabuTokenCache(Path(settings.kabu_token_cache_file))
+        if settings.kabu_token_cache_file
+        else None
+    )
     async with (
         KabuClient(
             base_url=settings.kabu_api_base_url,
@@ -105,6 +112,7 @@ async def run_stream(
             timeout_seconds=settings.kabu_http_timeout_seconds,
             ws_ping_interval=settings.kabu_ws_ping_interval_seconds,
             ws_ping_timeout=settings.kabu_ws_ping_timeout_seconds,
+            token_cache=token_cache,
         ) as kabu,
         SupabaseWatchlistReader(
             url=settings.supabase_url,

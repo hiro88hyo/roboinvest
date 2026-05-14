@@ -43,3 +43,6 @@ class FeederSettings(BaseSettings):
 
     reconnect_initial_backoff_sec: float = 1.0
     reconnect_max_backoff_sec: float = 60.0
+
+    # 空文字を指定するとキャッシュ無効 (feeder と oms-live で同じパスを設定する)
+    kabu_token_cache_file: str = "/tmp/kabu_token_cache.json"
