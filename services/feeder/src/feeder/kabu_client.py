@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 import websockets
+from trade_contracts.kabu_token import KabuTokenCache
 
 if TYPE_CHECKING:
     from websockets.asyncio.client import ClientConnection
@@ -63,6 +64,7 @@ class KabuClient:
         timeout_seconds: float = 10.0,
         ws_ping_interval: float | None = None,
         ws_ping_timeout: float | None = None,
+        token_cache: KabuTokenCache | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._ws_url = ws_url
@@ -73,6 +75,7 @@ class KabuClient:
         self._owns_client = http_client is None
         self._client: httpx.AsyncClient = http_client or httpx.AsyncClient(timeout=timeout_seconds)
         self._token: str | None = None
+        self._token_cache = token_cache
 
     @property
     def token(self) -> str | None:
@@ -100,16 +103,25 @@ class KabuClient:
         if not isinstance(token, str) or not token:
             raise KabuApiError(r.status_code, body)
         self._token = token
+        if self._token_cache is not None:
+            self._token_cache.save(token)
         return token
 
     async def ensure_token(self) -> str:
-        if self._token is None:
-            return await self.fetch_token()
-        return self._token
+        if self._token is not None:
+            return self._token
+        if self._token_cache is not None:
+            cached = self._token_cache.load()
+            if cached is not None:
+                self._token = cached
+                return cached
+        return await self.fetch_token()
 
     def invalidate_token(self) -> None:
         """401/403 を踏んだ場合に外部から呼んでクリアする用。"""
         self._token = None
+        if self._token_cache is not None:
+            self._token_cache.invalidate()
 
     async def register(self, symbols: Sequence[SymbolRegistration]) -> dict[str, Any]:
         """``PUT /register`` で銘柄を購読対象に追加する。"""

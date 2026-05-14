@@ -58,6 +58,9 @@ class OmsLiveSettings(BaseSettings):
     """True なら kabu に sendorder せず log だけ出して ack する。Supabase 書込も
     一切行わない。closeout でも同様に no-op になる。Phase 3 検証時のセーフティ。"""
 
+    # 空文字を指定するとキャッシュ無効 (feeder と oms-live で同じパスを設定する)
+    kabu_token_cache_file: str = "/tmp/kabu_token_cache.json"
+
     @property
     def allowed_symbol_set(self) -> frozenset[str]:
         """``oms_live_allowed_symbols`` をパースした集合。空集合なら全銘柄許可。"""

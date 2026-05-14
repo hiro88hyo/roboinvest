@@ -4,20 +4,26 @@ from __future__ import annotations
 
 import json
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
 import websockets
 from feeder.kabu_client import KabuApiError, KabuClient, SymbolRegistration
+from trade_contracts.kabu_token import KabuTokenCache
 
 
-def _make_client(handler: httpx.MockTransport) -> KabuClient:
+def _make_client(
+    handler: httpx.MockTransport,
+    token_cache: KabuTokenCache | None = None,
+) -> KabuClient:
     return KabuClient(
         base_url="http://localhost:18081/kabusapi",
         api_password="dummy-pw",
         ws_url="ws://localhost:18081/kabusapi/websocket",
         http_client=httpx.AsyncClient(transport=handler),
+        token_cache=token_cache,
     )
 
 
@@ -246,5 +252,77 @@ async def test_check_handles_non_json_body() -> None:
         assert exc.value.status_code == 500
         assert isinstance(exc.value.body, dict)
         assert exc.value.body.get("_raw", "").startswith("<html>")
+    finally:
+        await client.aclose()
+
+
+# --- token cache 統合テスト ---
+
+
+async def test_ensure_token_reads_from_cache_without_fetch(tmp_path: Path) -> None:
+    cache = KabuTokenCache(tmp_path / "tok.json")
+    cache.save("cached-token")
+    fetch_called = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/token"):
+            fetch_called["n"] += 1
+        return httpx.Response(200, json={"Token": "new-token"})
+
+    client = _make_client(httpx.MockTransport(handler), token_cache=cache)
+    try:
+        token = await client.ensure_token()
+        assert token == "cached-token"
+        assert fetch_called["n"] == 0
+    finally:
+        await client.aclose()
+
+
+async def test_fetch_token_writes_to_cache(tmp_path: Path) -> None:
+    cache = KabuTokenCache(tmp_path / "tok.json")
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"Token": "fresh-token"})
+
+    client = _make_client(httpx.MockTransport(handler), token_cache=cache)
+    try:
+        await client.fetch_token()
+        assert cache.load() == "fresh-token"
+    finally:
+        await client.aclose()
+
+
+async def test_invalidate_token_clears_cache(tmp_path: Path) -> None:
+    cache = KabuTokenCache(tmp_path / "tok.json")
+    cache.save("some-token")
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"Token": "tok"})
+
+    client = _make_client(httpx.MockTransport(handler), token_cache=cache)
+    try:
+        await client.ensure_token()
+        client.invalidate_token()
+        assert cache.load() is None
+    finally:
+        await client.aclose()
+
+
+async def test_ensure_token_fetches_when_cache_is_empty(tmp_path: Path) -> None:
+    cache = KabuTokenCache(tmp_path / "tok.json")
+    fetch_called = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/token"):
+            fetch_called["n"] += 1
+            return httpx.Response(200, json={"Token": "fresh-token"})
+        return httpx.Response(200, json={})
+
+    client = _make_client(httpx.MockTransport(handler), token_cache=cache)
+    try:
+        token = await client.ensure_token()
+        assert token == "fresh-token"
+        assert fetch_called["n"] == 1
+        assert cache.load() == "fresh-token"
     finally:
         await client.aclose()

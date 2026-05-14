@@ -63,7 +63,8 @@ Feeder のコードは「`KABU_API_BASE_URL` / `KABU_WS_URL` を env で受け�
 
 ### トークンライフサイクル
 - 公式仕様上は当日有効。日付跨ぎ・kabuステーション再起動・API パスワード変更で無効化
-- Feeder は 401/403 を検知したら即トークン再発行 → 再 register → WS 再接続
+- Feeder は 401/403 を検知したら即 `invalidate_token()` → トークン再発行 → 再 register → WS 再接続
+- **Feeder と OMS Live のトークン共有**: `KABU_TOKEN_CACHE_FILE`（デフォルト `/tmp/kabu_token_cache.json`）に同じパスを設定する。先に起動したサービスがキャッシュに書き込み、後発のサービスは POST /token を叩かずにキャッシュから読む。両サービスの env を揃えること
 
 ## 実装フェーズ
 

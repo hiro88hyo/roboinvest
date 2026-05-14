@@ -14,6 +14,9 @@ import asyncio
 import logging
 import sys
 from collections.abc import Sequence
+from pathlib import Path
+
+from trade_contracts.kabu_token import KabuTokenCache
 
 from .clients.pubsub import PubSubSubscriber
 from .clients.supabase import SupabaseClient, SupabaseError
@@ -83,6 +86,9 @@ async def _run_stream_cmd(*, iterations: int | None, no_closeout: bool) -> int:
             base_url=settings.kabu_api_base_url,
             api_password=settings.kabu_api_password,
             timeout_seconds=settings.kabu_http_timeout_seconds,
+            token_cache=KabuTokenCache(Path(settings.kabu_token_cache_file))
+            if settings.kabu_token_cache_file
+            else None,
         ) as kabu,
     ):
         runner = StreamRunner(
