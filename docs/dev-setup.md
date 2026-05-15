@@ -45,7 +45,8 @@ npx supabase start
    ```bash
    cp infra/.env.example .env
    ```
-   `SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY` は次ステップの出力で埋める。
+   `SUPABASE_PUBLISHABLE_KEY` / `SUPABASE_SECRET_KEY` は次ステップの出力で埋める。
+   各サービスを直接起動する場合は `services/<name>/.env.example` も `.env` にコピーして、同じ Supabase / Pub/Sub 値を転記する。
 
 3. **Supabase ローカル起動（初回はイメージ pull で数分かかる）**
    ```bash
@@ -63,7 +64,7 @@ npx supabase start
    ```bash
    docker compose -f infra/docker-compose.dev.yml up -d
    ```
-   `pubsub-init` が 7 トピックを作成して終了する。
+   `pubsub-init` が `infra/pubsub/topics.json` / `infra/pubsub/subscriptions.json` を元に、7 トピック + 9 サブスクリプションを作成して終了する。
 
 ## 日常運用コマンド
 
@@ -85,6 +86,15 @@ docker compose -f infra/docker-compose.test.yml down -v
 # 全サービスの lint / test（実装が揃ってから）
 make lint-all
 make test-all
+
+# Supabase 型再生成
+./scripts/gen-supabase-types.sh
+
+# 開発スタックのヘルスチェック
+uv run scripts/health-check.py
+
+# Paper trading 起動前チェック + サービス起動
+bash scripts/start-paper-trading.sh
 ```
 
 ## 動作確認（スモークテスト）
@@ -97,6 +107,10 @@ psql postgresql://postgres:postgres@127.0.0.1:54322/postgres -c '\dt'
 # Pub/Sub のトピック一覧（REST API を直接叩く、gcloud 不要）
 curl -s http://localhost:8085/v1/projects/trade-ai-dev/topics | python3 -m json.tool
 # → { "topics": [ { "name": "projects/trade-ai-dev/topics/raw-market-data" }, ... ] } 計 7 件
+
+# Pub/Sub のサブスクリプション一覧
+curl -s http://localhost:8085/v1/projects/trade-ai-dev/subscriptions | python3 -m json.tool
+# → subscriptions.json と同じ 9 件
 
 # アドホックに gcloud コマンドを使いたい場合（host にインストール不要、docker 経由）
 docker run --rm --network host \
@@ -114,13 +128,13 @@ psql postgresql://postgres:postgres@127.0.0.1:54322/postgres \
 
 実装を進める上でまだ手が回っていない箇所。次フェーズで順次解決する。
 
-- [ ] `scripts/gen-supabase-types.sh` 未作成。`contracts/typescript/src/generated/database.types.ts` を再生成する手段がない
-- [ ] `services/` 配下のサービスが 1 本も未実装。`docker-compose.dev.yml` はインフラのみで、アプリケーションサービスのエントリが空
-- [ ] サービス追加時は root の `pyproject.toml` の `[tool.uv.workspace] members` と `[tool.mypy] files` を更新する運用
+- [ ] `infra/docker-compose.dev.yml` は Pub/Sub emulator 用で、アプリケーションサービスは `bash scripts/start-paper-trading.sh` または各サービスの `uv run python -m <pkg> stream` で起動する運用
+- [ ] 本番向け `infra/docker-compose.prod.yml` は未作成。詳細は `docs/adr/0001-implementation-checklist.md`
 - [ ] `.env.example` の `SUPABASE_*` キーはプレースホルダ。`supabase start` 実行後に各開発者が手動で埋める運用
+- [ ] サービス別 `.env` は共通 `.env` から自動生成されない。必要なサービスの `.env.example` をコピーして手動で同期する
 - [ ] Supabase CLI 無しで動かす代替フロー（生 Postgres + psql でマイグレーション適用）は未整備。インストール不要の軽量ルートが欲しければ別途 compose 定義を追加する
 - [ ] Pub/Sub エミュレータは永続化していない。再起動でトピックは再作成されるがメッセージは消える（開発用途なので許容）
-- [ ] 本番向けのオーケストレーション（Cloud Run / Kubernetes）定義は未着手。`infra/` の対象外だが、将来的にどこに置くかを決める必要あり
+- [ ] Paper 起動スクリプトは `/tmp/feeder-prod.env` がある場合だけ feeder を自動起動する。kabu 接続情報は手元の private env で管理する
 
 ## トラブルシューティング
 
