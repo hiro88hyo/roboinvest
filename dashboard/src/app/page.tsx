@@ -1,10 +1,10 @@
 import { SystemStatusOverview } from "@/components/system/SystemStatusOverview";
-import { getReadClient } from "@/lib/supabase/server";
+import { getServiceClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
-  const supabase = getReadClient();
+  const supabase = getServiceClient();
 
   const [{ data: status }, { count: positionsLive }, { count: positionsPaper }] = await Promise.all(
     [
