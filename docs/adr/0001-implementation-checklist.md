@@ -135,13 +135,13 @@ ADR-0001「本番デプロイアーキテクチャ」を実装に落とすため
 - [ ] LAN host に repo-scoped self-hosted runner をインストールする
 - [ ] repository は private のまま運用する
 - [ ] runner user の権限を Docker 操作に必要な範囲へ絞る
-- [ ] deploy workflow を追加する
-- [ ] deploy workflow は `main` push 後に手動承認または `workflow_dispatch` で動かす
-- [ ] workflow 内で `git pull` / `docker compose pull` / `docker compose up -d --build` 相当を実行する
-- [ ] deploy 前に `make test-all` の成功を require する
-- [ ] deploy 前に `docker compose -f infra/docker-compose.prod.yml config` を実行する
+- [x] deploy workflow を追加する（`.github/workflows/deploy-production.yml`）
+- [x] deploy workflow は `workflow_dispatch` で動かす（`dry_run=true` がデフォルト、`production` environment 承認前提）
+- [x] workflow 内で `git pull` / `docker compose up -d --build` 相当を実行する（persistent checkout `/home/hiroyuki/workspaces/roboinvest` 前提）
+- [x] deploy 前に `make test-all` の成功を require する（対象 ref の `ci.yml` successful run を確認）
+- [x] deploy 前に `docker compose -f infra/docker-compose.prod.yml config` を実行する
 - [ ] runner logs に secrets が出ないことを確認する
-- [ ] rollback 手順を runbook 化する
+- [x] rollback 手順を runbook 化する（`docs/runbook/adr-0001-github-actions-deploy.md`）
 
 ## 8. Paper Production Trial
 
