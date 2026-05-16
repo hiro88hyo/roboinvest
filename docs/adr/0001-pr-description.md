@@ -44,7 +44,7 @@ This PR keeps live trading gated. The production compose defaults to `TRADE_MODE
 - `uv run ruff format --check contracts/python/trade_contracts/pubsub_client.py scripts/gcp-pubsub-admin.py`
 - `uv run ruff check contracts/python/trade_contracts/pubsub_client.py scripts/gcp-pubsub-admin.py services/*/src/*/clients/pubsub.py`
 - `uv run mypy contracts/python/trade_contracts/pubsub_client.py`
-- `git diff --check`
+- `git diff main...HEAD --check`
 - Production compose config:
   - normal profile OK
   - batch profile OK
@@ -130,3 +130,4 @@ This PR keeps live trading gated. The production compose defaults to `TRADE_MODE
 - `8d24d01 ci: add production deploy workflow`
 - `244a3b2 docs: add 1password token rotation runbook`
 - `77c8093 docs: document production runner security`
+- `df72f36 docs: add pr readiness handoff`
