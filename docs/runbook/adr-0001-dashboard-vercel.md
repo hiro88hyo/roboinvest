@@ -126,6 +126,15 @@ Vercel Preview URL と Production URL で次を確認する。
 
 kill switch 操作を試す場合は必ず `true/paper` に戻す。
 
+2026-05-16 Preview check:
+
+- Preview URL: `https://roboinvest-git-adr-0001-production-compose-hiro88hyos-projects.vercel.app`
+- `/api/env-check`: env 実値 materialize 後に `supabaseHost=cqexdwufmanuqccerdvo.supabase.co` を確認（一時 endpoint は確認後に削除）。
+- `/`, `/positions?type=paper`, `/trades?type=paper`, `/signals`, `/system`: すべて 200。
+- `/positions?type=paper`: 7203 paper position 表示 OK。
+- `/trades?type=paper`: 7203 BUY paper trade 表示 OK。
+- `/system`: `is_trading_allowed=true` / `trade_mode=paper` 表示 OK。
+
 ## 7. Rollback
 
 Dashboard deploy に問題がある場合:
