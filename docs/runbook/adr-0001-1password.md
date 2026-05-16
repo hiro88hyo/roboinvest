@@ -185,7 +185,96 @@ GOOGLE_APPLICATION_CREDENTIALS=infra/secrets/gcp-pubsub-sa.json \
     --cleanup-smoke
 ```
 
-## 8. Cleanup
+## 8. Service Account Token Rotation
+
+`infra/.op.service-account.env` には 1Password service account token を置く。
+token が terminal / log / screen recording に出た疑いがある場合は、次の手順で rotate する。
+
+前提:
+
+- 古い token を削除する前に、新 token で `op run` が通ることを確認する。
+- `infra/.op.service-account.env` は `.gitignore` 対象で、commit しない。
+- token 値を terminal に表示しない。`printenv OP_SERVICE_ACCOUNT_TOKEN` は使わない。
+
+### 8.1 Create New Token
+
+1Password 管理画面で ADR-0001 用 service account を開く。
+新しい token を作成し、必要な vault access が `Trade AI` に限定されていることを確認する。
+
+権限は読み取りだけから始める。
+本 runbook の用途では `op run --env-file infra/env.production -- ...` と `op read` が使えればよい。
+
+### 8.2 Replace Local Env File
+
+LAN host の deploy checkout で `infra/.op.service-account.env` を更新する。
+
+```bash
+umask 077
+tmp="$(mktemp /tmp/op-service-account.XXXXXX)"
+printf 'OP_SERVICE_ACCOUNT_TOKEN=' > "$tmp"
+# Paste the new token after the equals sign, then save the file.
+${EDITOR:-vi} "$tmp"
+mv "$tmp" infra/.op.service-account.env
+chmod 600 infra/.op.service-account.env
+```
+
+形式だけを確認する。値は表示しない。
+
+```bash
+test -f infra/.op.service-account.env
+test "$(wc -l < infra/.op.service-account.env)" -eq 1
+rg -n '^OP_SERVICE_ACCOUNT_TOKEN=.+$' infra/.op.service-account.env >/dev/null
+git check-ignore infra/.op.service-account.env
+```
+
+### 8.3 Validate New Token
+
+新 token で 1Password 参照を解決できることを確認する。
+
+```bash
+set -a
+. infra/.op.service-account.env
+set +a
+
+op run --env-file infra/env.production -- \
+  docker compose -f infra/docker-compose.prod.yml config >/tmp/roboinvest-compose-config.yml
+
+if rg 'PUBSUB_EMULATOR_HOST|op://' /tmp/roboinvest-compose-config.yml; then
+  echo "NG: unresolved or forbidden production value"
+  exit 1
+fi
+```
+
+Cloud Supabase / service CLI の軽量 health check も通す。
+
+```bash
+op run --env-file infra/env.production -- \
+  uv run python scripts/health-check.py --check supabase services --timeout 30
+```
+
+### 8.4 Revoke Old Token
+
+新 token の検証が通った後、1Password 管理画面で古い token を revoke / delete する。
+revoke 後、runner や手元 shell が古い token を保持していないように、必要なら runner service を再起動する。
+
+```bash
+sudo systemctl restart actions.runner.* || true
+```
+
+再起動後に `op run` の compose config validation をもう一度実行する。
+
+### 8.5 Log Hygiene
+
+token 値を表示してしまった terminal scrollback / screen recording / shared logs がある場合は削除する。
+GitHub Actions log に token が出ていないことも確認する。
+
+```bash
+rg -n 'OP_SERVICE_ACCOUNT_TOKEN=' docs .github infra --glob '!infra/.op.service-account.env'
+```
+
+この検索は variable name のみを検出してもよいが、実 token 値が repo に存在してはいけない。
+
+## 9. Cleanup
 
 - `infra/env.production` は `.gitignore` 対象。commit しない。
 - `infra/secrets/gcp-pubsub-sa.json` は `.gitignore` 対象。必要時だけ置く。

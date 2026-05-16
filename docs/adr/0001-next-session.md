@@ -173,7 +173,7 @@ Vercel 側で完了済み:
 - Vercel Preview 主要 route は 200: `/`, `/positions?type=paper`, `/trades?type=paper`, `/signals`, `/system`。
 - Preview で 7203 paper position、7203 BUY paper trade、`is_trading_allowed=true` / `trade_mode=paper` 表示 OK。
 - 一時 diagnostics endpoint `/api/env-check` は確認後に削除済み (`582bc53`)。
-- 注意: 作業中に `infra/.op.service-account.env` の token 値を terminal 出力してしまったため、後で 1Password service account token を rotate する。
+- 注意: 作業中に `infra/.op.service-account.env` の token 値を terminal 出力してしまったため、1Password service account token を rotate する。手順は `docs/runbook/adr-0001-1password.md` の "Service Account Token Rotation" に追加済み。
 - service-role key 実値の local build artifact 混入なし (`SECRET_LEAK:no`)。
 - Dashboard SSR 初期読み込みは `getServiceClient()` に切り替え済み。Client Components は anon key で Realtime。
 - `dashboard/.env.local` はローカル Supabase を指していたため `/tmp/dashboard.env.local.20260516T062446Z` に退避済み。
