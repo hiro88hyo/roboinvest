@@ -31,9 +31,9 @@ Vercel の 1Password Integration を使っていない場合、Vercel には `op
 
 | Vercel env | Source | Scope |
 | --- | --- | --- |
-| `NEXT_PUBLIC_SUPABASE_URL` | `op://roboinvest/production/SUPABASE_URL` を解決した実値 | Browser + Server |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | `op://roboinvest/production/SUPABASE_ANON_KEY` を解決した実値 | Browser + Server |
-| `SUPABASE_SECRET_KEY` | `op://roboinvest/production/SUPABASE_SECRET_KEY` を解決した実値 | Server only |
+| `NEXT_PUBLIC_SUPABASE_URL` | `op://Trade AI/production/SUPABASE_URL` を解決した実値 | Browser + Server |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | `op://Trade AI/production/SUPABASE_ANON_KEY` を解決した実値 | Browser + Server |
+| `SUPABASE_SECRET_KEY` | `op://Trade AI/production/SUPABASE_SECRET_KEY` を解決した実値 | Server only |
 | `NEXT_PUBLIC_APP_TIMEZONE` | `Asia/Tokyo` | Browser + Server |
 
 `SUPABASE_SECRET_KEY` は絶対に `NEXT_PUBLIC_` prefix にしない。
@@ -46,21 +46,21 @@ Vercel 設定前に local で本番相当 env を注入して確認する。
 ```bash
 cd dashboard
 
-NEXT_PUBLIC_SUPABASE_URL="$(op read op://roboinvest/production/SUPABASE_URL)" \
-NEXT_PUBLIC_SUPABASE_ANON_KEY="$(op read op://roboinvest/production/SUPABASE_ANON_KEY)" \
-SUPABASE_SECRET_KEY="$(op read op://roboinvest/production/SUPABASE_SECRET_KEY)" \
+NEXT_PUBLIC_SUPABASE_URL="$(op read "op://Trade AI/production/SUPABASE_URL")" \
+NEXT_PUBLIC_SUPABASE_ANON_KEY="$(op read "op://Trade AI/production/SUPABASE_ANON_KEY")" \
+SUPABASE_SECRET_KEY="$(op read "op://Trade AI/production/SUPABASE_SECRET_KEY")" \
 NEXT_PUBLIC_APP_TIMEZONE=Asia/Tokyo \
   npm run lint
 
-NEXT_PUBLIC_SUPABASE_URL="$(op read op://roboinvest/production/SUPABASE_URL)" \
-NEXT_PUBLIC_SUPABASE_ANON_KEY="$(op read op://roboinvest/production/SUPABASE_ANON_KEY)" \
-SUPABASE_SECRET_KEY="$(op read op://roboinvest/production/SUPABASE_SECRET_KEY)" \
+NEXT_PUBLIC_SUPABASE_URL="$(op read "op://Trade AI/production/SUPABASE_URL")" \
+NEXT_PUBLIC_SUPABASE_ANON_KEY="$(op read "op://Trade AI/production/SUPABASE_ANON_KEY")" \
+SUPABASE_SECRET_KEY="$(op read "op://Trade AI/production/SUPABASE_SECRET_KEY")" \
 NEXT_PUBLIC_APP_TIMEZONE=Asia/Tokyo \
   npm test
 
-NEXT_PUBLIC_SUPABASE_URL="$(op read op://roboinvest/production/SUPABASE_URL)" \
-NEXT_PUBLIC_SUPABASE_ANON_KEY="$(op read op://roboinvest/production/SUPABASE_ANON_KEY)" \
-SUPABASE_SECRET_KEY="$(op read op://roboinvest/production/SUPABASE_SECRET_KEY)" \
+NEXT_PUBLIC_SUPABASE_URL="$(op read "op://Trade AI/production/SUPABASE_URL")" \
+NEXT_PUBLIC_SUPABASE_ANON_KEY="$(op read "op://Trade AI/production/SUPABASE_ANON_KEY")" \
+SUPABASE_SECRET_KEY="$(op read "op://Trade AI/production/SUPABASE_SECRET_KEY")" \
 NEXT_PUBLIC_APP_TIMEZONE=Asia/Tokyo \
   npm run build
 ```
@@ -78,7 +78,7 @@ local build 後、service-role key 実値が build artifact に混入してい�
 
 ```bash
 cd dashboard
-SUPABASE_SECRET_KEY="$(op read op://roboinvest/production/SUPABASE_SECRET_KEY)"
+SUPABASE_SECRET_KEY="$(op read "op://Trade AI/production/SUPABASE_SECRET_KEY")"
 
 if rg -F "$SUPABASE_SECRET_KEY" .next >/dev/null; then
   echo "SECRET_LEAK:yes"
