@@ -68,7 +68,47 @@ Settings > Environments で `production` を作る。
 - Deployment branches は `main` に限定する。
 - Environment secrets は使わない。secret は LAN host の 1Password CLI / `infra/.op.service-account.env` から読む。
 
-## 5. Deploy Workflow
+## 5. Runner Security
+
+self-hosted runner は repository の workflow を LAN host 上で実行する。
+`docker` group へ入れた runner user は host root 相当として扱う。
+
+必須方針:
+
+- Repository は private のままにする。
+- public fork / untrusted PR から self-hosted runner を使わない。
+- production deploy は `workflow_dispatch` + `production` environment approval だけにする。
+- runner label `roboinvest-prod` は deploy workflow 専用にする。
+- runner host には production に必要な checkout / env / materialized secret だけを置く。
+- `infra/.op.service-account.env` と `infra/secrets/gcp-pubsub-sa.json` は `chmod 600` にする。
+- deploy workflow に `pull_request` trigger を追加しない。
+
+推奨確認:
+
+```bash
+cd /home/hiroyuki/workspaces/roboinvest
+git check-ignore infra/.op.service-account.env infra/secrets/gcp-pubsub-sa.json
+stat -c '%a %n' infra/.op.service-account.env infra/secrets/gcp-pubsub-sa.json
+```
+
+期待値:
+
+```text
+600 infra/.op.service-account.env
+600 infra/secrets/gcp-pubsub-sa.json
+```
+
+runner service の実行ユーザーを確認する。
+
+```bash
+systemctl list-units 'actions.runner.*'
+systemctl show <runner-service-name> -p User -p Group
+id <runner-user>
+```
+
+`docker` group への所属は deploy に必要だが、広い権限であることを運用上の前提にする。
+
+## 6. Deploy Workflow
 
 workflow:
 
@@ -90,7 +130,7 @@ deploy 前に workflow が確認すること:
 - `docker` / `op` が使えること。
 - `docker compose config` に `PUBSUB_EMULATOR_HOST` / raw `op://` が残らないこと。
 
-## 6. Dry Run
+## 7. Dry Run
 
 最初は必ず `dry_run=true` で実行する。
 
@@ -106,7 +146,7 @@ Actions > Deploy Production > Run workflow:
 - Build production images: success
 - `docker compose up` は実行されない
 
-## 7. Production Restart
+## 8. Production Restart
 
 dry run が通り、paper mode の再起動を許可できる場合だけ `dry_run=false` で実行する。
 
@@ -136,7 +176,42 @@ op run --env-file infra/env.production -- docker compose -f infra/docker-compose
 op run --env-file infra/env.production -- uv run python scripts/health-check.py --check supabase services --timeout 30
 ```
 
-## 8. Rollback
+## 9. Log Hygiene
+
+dry run 後、GitHub Actions log に secret 実値が出ていないことを確認する。
+
+確認対象:
+
+- `OP_SERVICE_ACCOUNT_TOKEN`
+- `SUPABASE_SECRET_KEY`
+- `GEMINI_API_KEY`
+- `KABU_API_PASSWORD`
+- `KABU_ORDER_PASSWORD`
+- `GOOGLE_APPLICATION_CREDENTIALS_JSON`
+- service account JSON の `private_key`
+
+workflow は `op run` の concealed output と file existence checks だけを使う。
+`printenv`, `cat infra/.op.service-account.env`, `cat infra/secrets/gcp-pubsub-sa.json` は deploy workflow に追加しない。
+
+local repo 側の確認:
+
+```bash
+rg -n 'OP_SERVICE_ACCOUNT_TOKEN=|BEGIN PRIVATE KEY|private_key|SUPABASE_SECRET_KEY=.*ey' \
+  .github docs infra \
+  --glob '!infra/.op.service-account.env' \
+  --glob '!infra/secrets/**'
+```
+
+この検索で実 secret 値が出ないこと。
+placeholder や env var 名だけの検出は問題ない。
+
+runner host の一時 compose config は secret 値が concealed される前提だが、不要になったら削除する。
+
+```bash
+rm -f /tmp/roboinvest-compose-config.yml
+```
+
+## 10. Rollback
 
 直前の commit に戻す場合:
 
