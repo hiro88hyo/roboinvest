@@ -194,3 +194,61 @@ sed -n '1,220p' docs/runbook/adr-0001-dashboard-vercel.md
 curl -I <vercel-preview-or-production-url>
 curl -sS <vercel-url>/system | rg 'true|paper|system_status'
 ```
+
+
+## 2026-05-16 PR Readiness Handoff
+
+セッション切替前の状態:
+
+- ブランチ: `adr-0001-production-compose`
+- 作業ツリー: clean
+- 直近の休日作業コミット:
+  - `8d24d01 ci: add production deploy workflow`
+  - `244a3b2 docs: add 1password token rotation runbook`
+  - `77c8093 docs: document production runner security`
+  - `4938a15 docs: draft adr 0001 pr description`
+- PR body 草案: `docs/adr/0001-pr-description.md`
+
+次にやること:
+
+1. PR 直前の最終ローカル確認を実行する。
+2. `docs/adr/0001-pr-description.md` を最新コミットに合わせて微修正する。
+3. 問題なければ PR 作成へ進む。push / `gh pr create` はユーザー確認後に実行する。
+
+推奨コマンド:
+
+```bash
+git status --short --branch
+git log --oneline --decorate -8
+git diff main...HEAD --check
+uv run ruff check contracts/python/trade_contracts/pubsub_client.py scripts/gcp-pubsub-admin.py services/*/src/*/clients/pubsub.py
+uv run mypy contracts/python/trade_contracts/pubsub_client.py
+uv run pytest services/feeder/tests/unit/test_pubsub.py services/feature-engine/tests/unit/test_pubsub_client.py services/strategy-rule/tests/unit/test_pubsub_client.py services/strategy-ai/tests/unit/test_ai_pubsub_client.py services/aggregator/tests/unit/test_pubsub_client.py services/gateway/tests/unit/test_pubsub_client.py services/oms-paper/tests/unit/test_paper_pubsub_client.py services/oms-live/tests/unit/test_live_pubsub_client.py
+```
+
+production env を使える場合の追加確認:
+
+```bash
+set -a
+. infra/.op.service-account.env
+set +a
+op run --env-file infra/env.production -- docker compose -f infra/docker-compose.prod.yml config >/tmp/roboinvest-compose-config.yml
+rg 'PUBSUB_EMULATOR_HOST|op://' /tmp/roboinvest-compose-config.yml
+op run --env-file infra/env.production -- uv run python scripts/health-check.py --check supabase services --timeout 30
+GOOGLE_APPLICATION_CREDENTIALS=infra/secrets/gcp-pubsub-sa.json uv run scripts/gcp-pubsub-admin.py --project-id roboinvest-445500
+```
+
+期待:
+
+- `rg 'PUBSUB_EMULATOR_HOST|op://' ...` は何も出ない。
+- Pub/Sub client unit tests は 79 passed。
+- Supabase 9 tables / services 9 CLI は OK。
+- GCP Pub/Sub は 7 topics / 9 subscriptions OK。
+
+PR 前に残すべき未完了事項:
+
+- 1Password service account token の実 rotate。
+- repo-scoped self-hosted runner の実 install。
+- Deploy Production workflow の `dry_run=true` 実行。
+- 14:50 JST paper day closeout の実観測。
+- live readiness gate / first live cutover。
