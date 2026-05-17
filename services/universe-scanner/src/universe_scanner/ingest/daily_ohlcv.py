@@ -47,9 +47,8 @@ def daily_quotes_to_frame(rows: list[dict[str, Any]]) -> pl.DataFrame:
                 "low": r.get("Low") if "Low" in r else r.get("L"),
                 "close": close,
                 "volume": (r.get("Volume") if "Volume" in r else r.get("Vo")) or 0,
-                "turnover": (
-                    r.get("TurnoverValue") if "TurnoverValue" in r else r.get("Va")
-                ) or 0.0,
+                "turnover": (r.get("TurnoverValue") if "TurnoverValue" in r else r.get("Va"))
+                or 0.0,
             }
         )
     if not records:
