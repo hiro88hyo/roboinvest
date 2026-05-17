@@ -34,7 +34,7 @@ jobs:
         uses: actions/github-script@v8
         with:
           script: |
-            const ref = core.getInput('ref');
+            const ref = context.payload.inputs.ref;
             const {owner, repo} = context.repo;
             const response = await github.rest.git.getRef({
               owner,
