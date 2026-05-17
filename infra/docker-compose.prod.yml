@@ -35,9 +35,11 @@ services:
     command: []
     environment:
       <<: *common-env
-      JQUANTS_REFRESH_TOKEN: ${JQUANTS_REFRESH_TOKEN:?JQUANTS_REFRESH_TOKEN is required}
+      JQUANTS_API_VERSION: ${JQUANTS_API_VERSION:-v2}
+      JQUANTS_API_KEY: ${JQUANTS_API_KEY:-}
+      JQUANTS_REFRESH_TOKEN: ${JQUANTS_REFRESH_TOKEN:-}
       JQUANTS_PLAN: ${JQUANTS_PLAN:-standard}
-      JQUANTS_API_BASE: ${JQUANTS_API_BASE:-https://api.jquants.com/v1}
+      JQUANTS_API_BASE: ${JQUANTS_API_BASE:-https://api.jquants.com/v2}
 
   feeder:
     <<: *stream-service

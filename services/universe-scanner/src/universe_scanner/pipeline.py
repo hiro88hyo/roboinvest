@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import date
 
 from .calendar import is_tse_business_day
+from .clients.jquants import JQuantsApiVersion as ClientApiVersion
 from .clients.jquants import JQuantsClient
 from .clients.supabase import SupabaseWriter
 from .config import ScannerSettings
@@ -60,6 +61,8 @@ async def run_pipeline(
     async with (
         JQuantsClient(
             refresh_token=settings.jquants_refresh_token,
+            api_key=settings.jquants_api_key,
+            api_version=ClientApiVersion(settings.jquants_api_version),
             base_url=settings.jquants_api_base,
         ) as jquants,
         SupabaseWriter(

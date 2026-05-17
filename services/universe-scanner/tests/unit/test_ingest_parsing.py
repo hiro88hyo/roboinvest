@@ -32,6 +32,21 @@ def test_listed_info_to_frame_empty():
     assert set(df.columns) == {"symbol", "symbol_name", "market_segment", "sector", "is_active"}
 
 
+def test_listed_info_to_frame_accepts_v2_master_columns():
+    rows = [
+        {
+            "Code": "7203",
+            "CoName": "トヨタ自動車",
+            "MktNm": "プライム",
+            "S17Nm": "自動車・輸送機",
+        }
+    ]
+    df = listed_info_to_frame(rows)
+    assert df.get_column("symbol_name").to_list() == ["トヨタ自動車"]
+    assert df.get_column("market_segment").to_list() == ["プライム"]
+    assert df.get_column("sector").to_list() == ["自動車・輸送機"]
+
+
 def test_daily_quotes_skips_null_close():
     rows: list[dict[str, Any]] = [
         {
@@ -65,3 +80,24 @@ def test_daily_quotes_empty():
     assert df.is_empty()
     assert "symbol" in df.columns
     assert "date" in df.columns
+
+
+def test_daily_quotes_to_frame_accepts_v2_bar_columns():
+    rows: list[dict[str, Any]] = [
+        {
+            "Code": "7203",
+            "Date": "2026-04-20",
+            "O": 1000.0,
+            "H": 1010.0,
+            "L": 990.0,
+            "C": 1005.0,
+            "Vo": 100000,
+            "Va": 100500000.0,
+        }
+    ]
+    df = daily_quotes_to_frame(rows)
+    assert df.height == 1
+    assert df.get_column("open").to_list() == [1000.0]
+    assert df.get_column("close").to_list() == [1005.0]
+    assert df.get_column("volume").to_list() == [100000]
+    assert df.get_column("turnover").to_list() == [100500000.0]

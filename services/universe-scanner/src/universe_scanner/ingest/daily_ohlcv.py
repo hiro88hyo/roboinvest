@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 def daily_quotes_to_frame(rows: list[dict[str, Any]]) -> pl.DataFrame:
-    """J-Quants `/prices/daily_quotes` のレスポンスを DataFrame に正規化する。
+    """J-Quants daily quotes / equities bars daily のレスポンスを DataFrame に正規化する。
 
     出力カラム: symbol, date, open, high, low, close, volume, turnover
     欠損 (null) は除外する。
@@ -34,7 +34,7 @@ def daily_quotes_to_frame(rows: list[dict[str, Any]]) -> pl.DataFrame:
 
     records: list[dict[str, Any]] = []
     for r in rows:
-        close = r.get("Close")
+        close = r.get("Close") if "Close" in r else r.get("C")
         if close is None:
             # 売買停止などで値が付かなかった日は Close が null。スキップ。
             continue
@@ -42,12 +42,13 @@ def daily_quotes_to_frame(rows: list[dict[str, Any]]) -> pl.DataFrame:
             {
                 "symbol": str(r.get("Code", "")).strip(),
                 "date": r.get("Date"),
-                "open": r.get("Open"),
-                "high": r.get("High"),
-                "low": r.get("Low"),
+                "open": r.get("Open") if "Open" in r else r.get("O"),
+                "high": r.get("High") if "High" in r else r.get("H"),
+                "low": r.get("Low") if "Low" in r else r.get("L"),
                 "close": close,
-                "volume": r.get("Volume") or 0,
-                "turnover": r.get("TurnoverValue") or 0.0,
+                "volume": (r.get("Volume") if "Volume" in r else r.get("Vo")) or 0,
+                "turnover": (r.get("TurnoverValue") if "TurnoverValue" in r else r.get("Va"))
+                or 0.0,
             }
         )
     if not records:

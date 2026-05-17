@@ -17,9 +17,11 @@ SUPABASE_URL=op://Trade AI/production/SUPABASE_URL
 SUPABASE_SECRET_KEY=op://Trade AI/production/SUPABASE_SECRET_KEY
 
 # Universe Scanner batch. Paid-plan production automation is a later ADR-0001 step.
+JQUANTS_API_KEY=op://Trade AI/jquants/JQUANTS_API_KEY
 JQUANTS_REFRESH_TOKEN=op://Trade AI/jquants/JQUANTS_REFRESH_TOKEN
 JQUANTS_PLAN=standard
-JQUANTS_API_BASE=https://api.jquants.com/v1
+JQUANTS_API_VERSION=v2
+JQUANTS_API_BASE=https://api.jquants.com/v2
 
 # kabu Station via LAN Caddy reverse proxy
 KABU_API_BASE_URL=http://<windows-host-ip>:28080/kabusapi
