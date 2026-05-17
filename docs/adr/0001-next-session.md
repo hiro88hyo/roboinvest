@@ -252,3 +252,30 @@ PR 前に残すべき未完了事項:
 - Deploy Production workflow の `dry_run=true` 実行。
 - 14:50 JST paper day closeout の実観測。
 - live readiness gate / first live cutover。
+
+## 2026-05-17 Live Readiness Handoff
+
+現在の状態:
+
+- PR #43 / #44 は main に merge 済み。
+- GitHub Actions self-hosted runner `roboinvest-prod-lan` は repo-scoped / label `roboinvest-prod` / service 起動済み。
+- Deploy Production `dry_run=true` は service runner で成功済み (`25977298286`)。
+- Deploy Production `dry_run=false` による paper mode restart 成功済み (`25977361191`)。
+- `OMS_LIVE_ALLOWED_SYMBOLS` を `9432` に変更し、paper/dry-run のまま production restart 成功済み (`25981863922`)。
+- `infra/env.production` の安全ノブ: `TRADE_MODE=paper`, `OMS_LIVE_DRY_RUN=true`, `OMS_LIVE_MAX_QTY_PER_ORDER=100`, `OMS_LIVE_ALLOWED_SYMBOLS=9432`, `KABU_DEFAULT_EXCHANGE=9`。
+- service health check は Supabase 9/9, services 9/9 OK。
+- workflow log の secret 露出パターン検索はヒットなし。
+
+9432 方針:
+
+- 9432 を live e2e 検証銘柄にする。
+- kabu read-only probe は 9432 で `ALL OK`。買付余力 `197489`, 9432 current `151.8`, 100 株は概算 `15180` で余力内。
+- kabu 実保有に 9432 LONG 2000 株があるが、今回の e2e 対象外とする。
+- Supabase `positions(live)` には import しない。e2e は新規 BUY 100 -> SELL 100 の round-trip だけを対象にする。
+- `scripts/reconcile-positions.py` は dry-run で `9432 qty=2000 avg=152.0` を to_import として検出するが、これは既知で意図通り。
+
+次のアクション:
+
+1. 市場オープン後、まず `OMS_LIVE_DRY_RUN=true` のまま 9432 / 100 株で live-orders 経路 smoke を確認する。
+2. 実 live e2e は人間が監視できる状態でのみ実施する。`trade_mode=live` / `OMS_LIVE_DRY_RUN=false` はまだ触らない。
+3. 7203 paper position の 14:50 JST day closeout 実観測は未完了。

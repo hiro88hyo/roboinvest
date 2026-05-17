@@ -25,6 +25,7 @@ OMS Live を **本番環境** (kabu 28080 / Caddy リバプロ経由) に対し�
 - [ ] Pub/Sub topic `live-orders` 作成済み (`infra/pubsub/init-topics.sh`)
 - [ ] **対象銘柄を 1 つ決めて**、最低株数 (100 株 等) と現在価格を把握。`scripts/probe-kabu-oms.py --symbol <code> --host <win-ip> --port 28080` の `board` ステップで現在値・最良気配が確認できる
 - [ ] 対象銘柄の買付余力が十分にあること (`probe-kabu-oms.py` で `wallet/cash` 確認、現物買付は T+2 で余力反映)
+- [ ] 既存保有を今回の e2e 対象に含めるかを決める。含めない場合、Supabase `positions(live)` に import せず、e2e の BUY/SELL 100 株だけを対象にする。
 - [ ] **Dashboard を開いて kill switch 操作の場所を把握** (`http://localhost:3001/system`)
 
 ## 接続経路
