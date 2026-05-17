@@ -158,15 +158,15 @@ ADR-0001「本番デプロイアーキテクチャ」を実装に落とすため
 
 ## 9. Live Readiness Gate
 
-- [ ] `scripts/reconcile-positions.py --dry-run` で kabu 実保有と Supabase positions の差分を確認する
-- [ ] `system_status.is_trading_allowed=false` で live 注文が拒否されることを確認する
-- [ ] `daily_pnl <= -daily_loss_limit` の kill switch 経路を paper または dry-run で確認する
-- [ ] `OMS_LIVE_DRY_RUN=true` で live-orders 消費経路が ack まで進むことを確認する
-- [ ] `OMS_LIVE_ALLOWED_SYMBOLS` を検証銘柄だけに絞る
-- [ ] `OMS_LIVE_MAX_QTY_PER_ORDER` を最小単元に絞る
-- [ ] `KABU_ORDER_PASSWORD` が API password と別値で設定されていることを確認する
-- [ ] `KABU_DEFAULT_EXCHANGE=9` であることを確認する
-- [ ] `docs/runbook/oms-live-phase3.md` の手動回復手順を手元で開ける状態にする
+- [x] `scripts/reconcile-positions.py --dry-run` で kabu 実保有と Supabase positions の差分を確認する（2026-05-17: dry-run, kabu only 9432 qty=2000 avg=152.0, Supabase live empty）
+- [x] `system_status.is_trading_allowed=false` で live 注文が拒否されることを確認する（2026-05-17: Gateway unit）
+- [x] `daily_pnl <= -daily_loss_limit` の kill switch 経路を paper または dry-run で確認する（2026-05-17: Gateway unit + local integration）
+- [x] `OMS_LIVE_DRY_RUN=true` で live-orders 消費経路が ack まで進むことを確認する（2026-05-17: 9432/100 BUY dry-run, acked=1, dry_run_skipped=1）
+- [x] `OMS_LIVE_ALLOWED_SYMBOLS` を検証銘柄だけに絞る（2026-05-17: 9432）
+- [x] `OMS_LIVE_MAX_QTY_PER_ORDER` を最小単元に絞る（2026-05-17: 100）
+- [x] `KABU_ORDER_PASSWORD` が API password と別値で設定されていることを確認する（2026-05-17: values present and distinct）
+- [x] `KABU_DEFAULT_EXCHANGE=9` であることを確認する（2026-05-17）
+- [x] `docs/runbook/oms-live-phase3.md` の手動回復手順を手元で開ける状態にする（2026-05-17）
 - [ ] live 初回は市場時間中に人間が監視して実行する
 
 ## 10. First Live Cutover

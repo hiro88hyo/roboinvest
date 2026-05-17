@@ -12,6 +12,21 @@ OMS Live を **本番環境** (kabu 28080 / Caddy リバプロ経由) に対し�
 - 1 round-trip = 5〜10 分程度を見込む
 - 実発注は本番資金に直結する。安全装備 (`OMS_LIVE_MAX_QTY_PER_ORDER` / `OMS_LIVE_ALLOWED_SYMBOLS`) を必ず効かせること
 
+## 2026-05-17 市場外 readiness メモ
+
+市場外・日曜のため、実発注を伴う Step 2 / Step 4 は未実施。実注文なしで確認できる範囲は完了。
+
+- kabu 本番 28080 (Caddy 経由) の read-only probe は `ALL OK`。token / wallet / symbol / board / positions / orders まで確認。
+- 対象銘柄は `9432`、最小数量は `100`。`KABU_DEFAULT_EXCHANGE=9`、`OMS_LIVE_MAX_QTY_PER_ORDER=100`、`OMS_LIVE_ALLOWED_SYMBOLS=9432` を確認。
+- 買付余力 `StockAccountWallet=197489.0` を確認。9432 / 100 株の最小 e2e には余力あり。
+- kabu 実保有は `9432 qty=2000 avg=152.0`。Supabase `positions(live)` は空。今回の e2e では既存保有を import せず、BUY/SELL 100 株だけを対象にする方針。
+- Pub/Sub emulator / Supabase local は起動済み。`live-orders` topic と `oms-live-live-orders` subscription あり。
+- `OMS_LIVE_DRY_RUN=true` で `live-orders` publish → OMS Live Runner pull → ack を確認。`BatchStats(orders_pulled=1, acked=1, dry_run_skipped=1)`。sendorder / Supabase 書込なし。
+- dry-run 後も `positions(live)` / `trades_live` は空。
+- `KABU_API_PASSWORD` と `KABU_ORDER_PASSWORD` は存在し、別値であることを確認 (値は記録しない)。
+- Gateway kill switch 経路は unit + local integration で確認済み。`is_trading_allowed=false` reject、`daily_pnl <= -daily_loss_limit` で kill switch 更新。
+- 次に進むのは通常市場時間中 (次回は 2026-05-18 09:00 JST 以降)。人間監視ありで Step 2 → Step 4 の順に実施する。
+
 ## 前提条件チェックリスト
 
 走らせる前に **必ず** 全項目確認:
