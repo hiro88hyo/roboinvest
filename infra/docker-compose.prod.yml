@@ -1,0 +1,208 @@
+name: trade-ai-prod
+
+x-common-env: &common-env
+  TZ: ${TZ:-Asia/Tokyo}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  SUPABASE_URL: ${SUPABASE_URL:?SUPABASE_URL is required}
+  SUPABASE_SECRET_KEY: ${SUPABASE_SECRET_KEY:?SUPABASE_SECRET_KEY is required}
+  PUBSUB_PROJECT_ID: ${PUBSUB_PROJECT_ID:?PUBSUB_PROJECT_ID is required}
+  GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-/run/secrets/gcp-pubsub-sa.json}
+
+x-python-service: &python-service
+  restart: unless-stopped
+  environment:
+    <<: *common-env
+  volumes:
+    - trade-ai-logs:/app/logs
+    - ./secrets/gcp-pubsub-sa.json:/run/secrets/gcp-pubsub-sa.json:ro
+
+x-stream-service: &stream-service
+  <<: *python-service
+  command: ["stream"]
+
+services:
+  universe-scanner:
+    <<: *python-service
+    profiles: ["batch"]
+    restart: "no"
+    build:
+      context: ..
+      dockerfile: services/Dockerfile
+      args:
+        SERVICE_PATH: services/universe-scanner
+        PACKAGE_NAME: universe-scanner
+        MODULE_NAME: universe_scanner
+    command: []
+    environment:
+      <<: *common-env
+      JQUANTS_REFRESH_TOKEN: ${JQUANTS_REFRESH_TOKEN:?JQUANTS_REFRESH_TOKEN is required}
+      JQUANTS_PLAN: ${JQUANTS_PLAN:-standard}
+      JQUANTS_API_BASE: ${JQUANTS_API_BASE:-https://api.jquants.com/v1}
+
+  feeder:
+    <<: *stream-service
+    build:
+      context: ..
+      dockerfile: services/Dockerfile
+      args:
+        SERVICE_PATH: services/feeder
+        PACKAGE_NAME: feeder
+        MODULE_NAME: feeder
+    environment:
+      <<: *common-env
+      KABU_API_BASE_URL: ${KABU_API_BASE_URL:?KABU_API_BASE_URL is required}
+      KABU_WS_URL: ${KABU_WS_URL:?KABU_WS_URL is required}
+      KABU_API_PASSWORD: ${KABU_API_PASSWORD:?KABU_API_PASSWORD is required}
+      KABU_DEFAULT_EXCHANGE: ${FEEDER_KABU_DEFAULT_EXCHANGE:-1}
+      KABU_TOKEN_CACHE_FILE: /var/lib/kabu/token_cache.json
+      PUBSUB_TOPIC_RAW_MARKET_DATA: ${PUBSUB_TOPIC_RAW_MARKET_DATA:-raw-market-data}
+    volumes:
+      - trade-ai-logs:/app/logs
+      - kabu-token-cache:/var/lib/kabu
+      - ./secrets/gcp-pubsub-sa.json:/run/secrets/gcp-pubsub-sa.json:ro
+
+  feature-engine:
+    <<: *stream-service
+    build:
+      context: ..
+      dockerfile: services/Dockerfile
+      args:
+        SERVICE_PATH: services/feature-engine
+        PACKAGE_NAME: feature-engine
+        MODULE_NAME: feature_engine
+    environment:
+      <<: *common-env
+      STORAGE_TICK_RESOLUTION: ${STORAGE_TICK_RESOLUTION:-1s}
+      STORAGE_WARM_DIR: /data/warm
+      STORAGE_COLD_DIR: /data/cold
+    volumes:
+      - trade-ai-logs:/app/logs
+      - feature-warm-data:/data/warm
+      - feature-cold-data:/data/cold
+      - ./secrets/gcp-pubsub-sa.json:/run/secrets/gcp-pubsub-sa.json:ro
+
+  strategy-rule:
+    <<: *stream-service
+    build:
+      context: ..
+      dockerfile: services/Dockerfile
+      args:
+        SERVICE_PATH: services/strategy-rule
+        PACKAGE_NAME: strategy-rule
+        MODULE_NAME: strategy_rule
+    environment:
+      <<: *common-env
+      PUBSUB_SUBSCRIPTION_FEATURES: ${PUBSUB_SUBSCRIPTION_RULE_FEATURES:-strategy-rule-processed-features}
+      PUBSUB_TOPIC_SIGNALS: ${PUBSUB_TOPIC_SIGNALS_A:-strategy-signals-a}
+      STRATEGIES_ENABLED: ${STRATEGIES_ENABLED:-sma_crossover,rsi_threshold,bollinger_breakout}
+      SMA_MIN_GAP_RATIO: ${SMA_MIN_GAP_RATIO:-0.005}
+      RSI_BUY_THRESHOLD: ${RSI_BUY_THRESHOLD:-25.0}
+      RSI_SELL_THRESHOLD: ${RSI_SELL_THRESHOLD:-75.0}
+      BOLLINGER_BREAKOUT_TOLERANCE: ${BOLLINGER_BREAKOUT_TOLERANCE:-0.15}
+
+  strategy-ai:
+    <<: *stream-service
+    build:
+      context: ..
+      dockerfile: services/Dockerfile
+      args:
+        SERVICE_PATH: services/strategy-ai
+        PACKAGE_NAME: strategy-ai
+        MODULE_NAME: strategy_ai
+    environment:
+      <<: *common-env
+      LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:?GEMINI_API_KEY is required}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.0-flash}
+      PUBSUB_SUBSCRIPTION_FEATURES: ${PUBSUB_SUBSCRIPTION_AI_FEATURES:-strategy-ai-processed-features}
+      PUBSUB_TOPIC_SIGNALS: ${PUBSUB_TOPIC_SIGNALS_B:-strategy-signals-b}
+
+  aggregator:
+    <<: *stream-service
+    build:
+      context: ..
+      dockerfile: services/Dockerfile
+      args:
+        SERVICE_PATH: services/aggregator
+        PACKAGE_NAME: aggregator
+        MODULE_NAME: aggregator
+    environment:
+      <<: *common-env
+      PUBSUB_SUBSCRIPTION_SIGNALS_A: ${PUBSUB_SUBSCRIPTION_SIGNALS_A:-aggregator-strategy-signals-a}
+      PUBSUB_SUBSCRIPTION_SIGNALS_B: ${PUBSUB_SUBSCRIPTION_SIGNALS_B:-aggregator-strategy-signals-b}
+      PUBSUB_TOPIC_TRADE_SIGNALS: ${PUBSUB_TOPIC_TRADE_SIGNALS:-trade-signals}
+      SOURCE_WEIGHT_RULE: ${SOURCE_WEIGHT_RULE:-1.0}
+      SOURCE_WEIGHT_AI: ${SOURCE_WEIGHT_AI:-1.0}
+      CONSENSUS_MIN_CONFIDENCE: ${CONSENSUS_MIN_CONFIDENCE:-0.3}
+      CONFLICT_POLICY: ${CONFLICT_POLICY:-skip}
+
+  gateway:
+    <<: *stream-service
+    build:
+      context: ..
+      dockerfile: services/Dockerfile
+      args:
+        SERVICE_PATH: services/gateway
+        PACKAGE_NAME: gateway
+        MODULE_NAME: gateway
+    environment:
+      <<: *common-env
+      TRADE_MODE: ${TRADE_MODE:-paper}
+      PUBSUB_SUBSCRIPTION_TRADE_SIGNALS: ${PUBSUB_SUBSCRIPTION_TRADE_SIGNALS:-gateway-trade-signals}
+      PUBSUB_TOPIC_LIVE_ORDERS: ${PUBSUB_TOPIC_LIVE_ORDERS:-live-orders}
+      PUBSUB_TOPIC_PAPER_ORDERS: ${PUBSUB_TOPIC_PAPER_ORDERS:-paper-orders}
+      CAPITAL: ${CAPITAL:-1000000}
+      MAX_RISK_PER_TRADE_PCT: ${MAX_RISK_PER_TRADE_PCT:-0.02}
+      SWING_RISK_SCALE: ${SWING_RISK_SCALE:-0.5}
+      DEFAULT_STOP_LOSS_SPREAD_PCT: ${DEFAULT_STOP_LOSS_SPREAD_PCT:-0.02}
+      MIN_LOT_SIZE: ${MIN_LOT_SIZE:-100}
+
+  oms-live:
+    <<: *stream-service
+    build:
+      context: ..
+      dockerfile: services/Dockerfile
+      args:
+        SERVICE_PATH: services/oms-live
+        PACKAGE_NAME: oms-live
+        MODULE_NAME: oms_live
+    environment:
+      <<: *common-env
+      KABU_API_BASE_URL: ${KABU_API_BASE_URL:?KABU_API_BASE_URL is required}
+      KABU_API_PASSWORD: ${KABU_API_PASSWORD:?KABU_API_PASSWORD is required}
+      KABU_ORDER_PASSWORD: ${KABU_ORDER_PASSWORD:?KABU_ORDER_PASSWORD is required}
+      KABU_DEFAULT_EXCHANGE: ${KABU_DEFAULT_EXCHANGE:-9}
+      KABU_ACCOUNT_TYPE: ${KABU_ACCOUNT_TYPE:-4}
+      KABU_TOKEN_CACHE_FILE: /var/lib/kabu/token_cache.json
+      PUBSUB_SUBSCRIPTION_LIVE_ORDERS: ${PUBSUB_SUBSCRIPTION_LIVE_ORDERS:-oms-live-live-orders}
+      DAY_CLOSEOUT_TIME: ${DAY_CLOSEOUT_TIME:-14:50}
+      DAY_CLOSEOUT_TIMEZONE: ${DAY_CLOSEOUT_TIMEZONE:-Asia/Tokyo}
+      OMS_LIVE_DRY_RUN: ${OMS_LIVE_DRY_RUN:-true}
+      OMS_LIVE_MAX_QTY_PER_ORDER: ${OMS_LIVE_MAX_QTY_PER_ORDER:?OMS_LIVE_MAX_QTY_PER_ORDER is required}
+      OMS_LIVE_ALLOWED_SYMBOLS: ${OMS_LIVE_ALLOWED_SYMBOLS:?OMS_LIVE_ALLOWED_SYMBOLS is required}
+    volumes:
+      - trade-ai-logs:/app/logs
+      - kabu-token-cache:/var/lib/kabu
+      - ./secrets/gcp-pubsub-sa.json:/run/secrets/gcp-pubsub-sa.json:ro
+
+  oms-paper:
+    <<: *stream-service
+    build:
+      context: ..
+      dockerfile: services/Dockerfile
+      args:
+        SERVICE_PATH: services/oms-paper
+        PACKAGE_NAME: oms-paper
+        MODULE_NAME: oms_paper
+    environment:
+      <<: *common-env
+      PUBSUB_SUBSCRIPTION_PAPER_ORDERS: ${PUBSUB_SUBSCRIPTION_PAPER_ORDERS:-oms-paper-paper-orders}
+      PUBSUB_SUBSCRIPTION_RAW_MARKET_DATA: ${PUBSUB_SUBSCRIPTION_RAW_MARKET_DATA:-oms-paper-raw-market-data}
+      DAY_CLOSEOUT_TIME: ${DAY_CLOSEOUT_TIME:-14:50}
+      DAY_CLOSEOUT_TIMEZONE: ${DAY_CLOSEOUT_TIMEZONE:-Asia/Tokyo}
+
+volumes:
+  kabu-token-cache:
+  feature-warm-data:
+  feature-cold-data:
+  trade-ai-logs:

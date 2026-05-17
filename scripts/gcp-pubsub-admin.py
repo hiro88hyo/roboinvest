@@ -1,0 +1,279 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#   "google-cloud-pubsub>=2.38",
+# ]
+# ///
+"""Create and verify managed GCP Pub/Sub resources for ADR-0001.
+
+The source of truth is:
+
+- infra/pubsub/topics.json
+- infra/pubsub/subscriptions.json
+
+Default mode is check-only. Use --apply to create missing resources, and
+--smoke-test to publish / pull / ack one message through a temporary topic and
+subscription.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import time
+from collections.abc import Iterable
+from dataclasses import dataclass
+from pathlib import Path
+
+from google.api_core.exceptions import AlreadyExists, GoogleAPICallError, NotFound
+from google.cloud import pubsub_v1
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+TOPICS_JSON = REPO_ROOT / "infra" / "pubsub" / "topics.json"
+SUBSCRIPTIONS_JSON = REPO_ROOT / "infra" / "pubsub" / "subscriptions.json"
+SMOKE_TOPIC = "adr-0001-smoke-test"
+SMOKE_SUBSCRIPTION = "adr-0001-smoke-test-sub"
+
+
+@dataclass(frozen=True, slots=True)
+class SubscriptionSpec:
+    name: str
+    topic: str
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--project-id",
+        required=True,
+        help="GCP project id that owns the Pub/Sub resources.",
+    )
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Create missing topics/subscriptions. Default is check-only.",
+    )
+    parser.add_argument(
+        "--smoke-test",
+        action="store_true",
+        help="Publish, pull, and ack one message through temporary smoke resources.",
+    )
+    parser.add_argument(
+        "--cleanup-smoke",
+        action="store_true",
+        help="Delete temporary smoke resources after --smoke-test.",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=30.0,
+        help="Publish/pull API timeout seconds. Default: 30.",
+    )
+    return parser.parse_args()
+
+
+def load_topics() -> list[str]:
+    payload = json.loads(TOPICS_JSON.read_text(encoding="utf-8"))
+    topics = payload.get("topics")
+    if not isinstance(topics, list):
+        raise RuntimeError(f"unexpected topics.json shape: {type(topics).__name__}")
+    return [str(topic) for topic in topics]
+
+
+def load_subscriptions() -> list[SubscriptionSpec]:
+    payload = json.loads(SUBSCRIPTIONS_JSON.read_text(encoding="utf-8"))
+    subscriptions = payload.get("subscriptions")
+    if not isinstance(subscriptions, list):
+        raise RuntimeError(f"unexpected subscriptions.json shape: {type(subscriptions).__name__}")
+    return [
+        SubscriptionSpec(name=str(sub["name"]), topic=str(sub["topic"])) for sub in subscriptions
+    ]
+
+
+def topic_path(project_id: str, topic: str) -> str:
+    return pubsub_v1.PublisherClient.topic_path(project_id, topic)
+
+
+def subscription_path(project_id: str, subscription: str) -> str:
+    return pubsub_v1.SubscriberClient.subscription_path(project_id, subscription)
+
+
+def ensure_topics(project_id: str, topics: Iterable[str], *, apply: bool) -> bool:
+    publisher = pubsub_v1.PublisherClient()
+    ok = True
+    try:
+        for topic in topics:
+            path = publisher.topic_path(project_id, topic)
+            try:
+                publisher.get_topic(request={"topic": path})
+                print(f"OK   topic:{topic}")
+            except NotFound:
+                ok = False
+                if not apply:
+                    print(f"MISS topic:{topic}")
+                    continue
+                try:
+                    publisher.create_topic(request={"name": path})
+                    print(f"ADD  topic:{topic}")
+                    ok = True
+                except AlreadyExists:
+                    print(f"OK   topic:{topic}")
+                except GoogleAPICallError as exc:
+                    print(f"NG   topic:{topic} {exc!r}")
+                    ok = False
+            except GoogleAPICallError as exc:
+                print(f"NG   topic:{topic} {exc!r}")
+                ok = False
+    finally:
+        publisher.transport.close()
+    return ok
+
+
+def ensure_subscriptions(
+    project_id: str,
+    subscriptions: Iterable[SubscriptionSpec],
+    *,
+    apply: bool,
+) -> bool:
+    subscriber = pubsub_v1.SubscriberClient()
+    ok = True
+    try:
+        for spec in subscriptions:
+            path = subscriber.subscription_path(project_id, spec.name)
+            topic = topic_path(project_id, spec.topic)
+            try:
+                subscription = subscriber.get_subscription(request={"subscription": path})
+                actual_topic = subscription.topic.rsplit("/", 1)[-1]
+                if actual_topic == spec.topic:
+                    print(f"OK   sub:{spec.name} -> {spec.topic}")
+                else:
+                    print(f"NG   sub:{spec.name} topic={actual_topic}, expected={spec.topic}")
+                    ok = False
+            except NotFound:
+                ok = False
+                if not apply:
+                    print(f"MISS sub:{spec.name} -> {spec.topic}")
+                    continue
+                try:
+                    subscriber.create_subscription(
+                        request={
+                            "name": path,
+                            "topic": topic,
+                            "ack_deadline_seconds": 30,
+                        }
+                    )
+                    print(f"ADD  sub:{spec.name} -> {spec.topic}")
+                    ok = True
+                except AlreadyExists:
+                    print(f"OK   sub:{spec.name} -> {spec.topic}")
+                except GoogleAPICallError as exc:
+                    print(f"NG   sub:{spec.name} {exc!r}")
+                    ok = False
+            except GoogleAPICallError as exc:
+                print(f"NG   sub:{spec.name} {exc!r}")
+                ok = False
+    finally:
+        subscriber.close()
+    return ok
+
+
+def smoke_test(project_id: str, *, timeout: float, cleanup: bool) -> bool:
+    publisher = pubsub_v1.PublisherClient()
+    subscriber = pubsub_v1.SubscriberClient()
+    topic = topic_path(project_id, SMOKE_TOPIC)
+    subscription = subscription_path(project_id, SMOKE_SUBSCRIPTION)
+    payload = f"adr-0001-smoke:{int(time.time())}".encode()
+    ok = False
+    try:
+        try:
+            publisher.create_topic(request={"name": topic})
+            print(f"ADD  smoke-topic:{SMOKE_TOPIC}")
+        except AlreadyExists:
+            print(f"OK   smoke-topic:{SMOKE_TOPIC}")
+
+        try:
+            subscriber.create_subscription(
+                request={
+                    "name": subscription,
+                    "topic": topic,
+                    "ack_deadline_seconds": 30,
+                }
+            )
+            print(f"ADD  smoke-sub:{SMOKE_SUBSCRIPTION}")
+        except AlreadyExists:
+            print(f"OK   smoke-sub:{SMOKE_SUBSCRIPTION}")
+
+        future = publisher.publish(topic, payload, purpose="adr-0001-smoke-test")
+        message_id = future.result(timeout=timeout)
+        print(f"OK   smoke-publish message_id={message_id}")
+
+        response = subscriber.pull(
+            request={"subscription": subscription, "max_messages": 1},
+            timeout=timeout,
+        )
+        if not response.received_messages:
+            print("NG   smoke-pull no messages")
+            return False
+        received = response.received_messages[0]
+        if bytes(received.message.data) != payload:
+            print("NG   smoke-pull payload mismatch")
+            return False
+        subscriber.acknowledge(
+            request={"subscription": subscription, "ack_ids": [received.ack_id]},
+            timeout=timeout,
+        )
+        print(f"OK   smoke-pull-ack message_id={received.message.message_id}")
+        ok = True
+        return True
+    except GoogleAPICallError as exc:
+        print(f"NG   smoke-test {exc!r}")
+        return False
+    finally:
+        if cleanup:
+            try:
+                subscriber.delete_subscription(request={"subscription": subscription})
+                print(f"DEL  smoke-sub:{SMOKE_SUBSCRIPTION}")
+            except NotFound:
+                pass
+            except GoogleAPICallError as exc:
+                print(f"WARN smoke-sub cleanup failed: {exc!r}")
+            try:
+                publisher.delete_topic(request={"topic": topic})
+                print(f"DEL  smoke-topic:{SMOKE_TOPIC}")
+            except NotFound:
+                pass
+            except GoogleAPICallError as exc:
+                print(f"WARN smoke-topic cleanup failed: {exc!r}")
+        subscriber.close()
+        publisher.transport.close()
+        if not ok:
+            print("HINT Check GOOGLE_APPLICATION_CREDENTIALS and Pub/Sub IAM roles.")
+
+
+def main() -> int:
+    args = parse_args()
+    topics = load_topics()
+    subscriptions = load_subscriptions()
+
+    print(f"project={args.project_id}")
+    print(f"mode={'apply' if args.apply else 'check'}")
+    topics_ok = ensure_topics(args.project_id, topics, apply=args.apply)
+    subscriptions_ok = ensure_subscriptions(
+        args.project_id,
+        subscriptions,
+        apply=args.apply,
+    )
+    smoke_ok = True
+    if args.smoke_test:
+        smoke_ok = smoke_test(
+            args.project_id,
+            timeout=args.timeout,
+            cleanup=args.cleanup_smoke,
+        )
+    return 0 if topics_ok and subscriptions_ok and smoke_ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

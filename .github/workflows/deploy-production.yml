@@ -1,0 +1,137 @@
+name: Deploy Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to deploy. Use main for production."
+        required: true
+        default: "main"
+      dry_run:
+        description: "Validate and build only. Do not restart services."
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  verify-ci:
+    name: Verify CI for ref
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Resolve ref
+        id: resolve
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const ref = core.getInput('ref');
+            const {owner, repo} = context.repo;
+            const response = await github.rest.git.getRef({
+              owner,
+              repo,
+              ref: `heads/${ref}`,
+            });
+            core.setOutput('sha', response.data.object.sha);
+
+      - name: Require successful CI
+        uses: actions/github-script@v8
+        env:
+          TARGET_SHA: ${{ steps.resolve.outputs.sha }}
+        with:
+          script: |
+            const {owner, repo} = context.repo;
+            const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+              owner,
+              repo,
+              workflow_id: 'ci.yml',
+              head_sha: process.env.TARGET_SHA,
+              per_page: 20,
+            });
+            const success = runs.find((run) =>
+              run.status === 'completed' && run.conclusion === 'success'
+            );
+            if (!success) {
+              core.setFailed(`No successful CI run found for ${process.env.TARGET_SHA}`);
+              return;
+            }
+            core.info(`CI OK: ${success.html_url}`);
+
+  deploy:
+    name: Deploy on LAN host
+    needs: verify-ci
+    runs-on: [self-hosted, roboinvest-prod]
+    environment: production
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      DEPLOY_DIR: /home/hiroyuki/workspaces/roboinvest
+      COMPOSE_FILE: infra/docker-compose.prod.yml
+      ENV_FILE: infra/env.production
+    steps:
+      - name: Validate runner preconditions
+        run: |
+          set -euo pipefail
+          test "${{ github.event.inputs.ref }}" = "main"
+          test -d "$DEPLOY_DIR/.git"
+          test -f "$DEPLOY_DIR/$ENV_FILE"
+          test -f "$DEPLOY_DIR/infra/.op.service-account.env"
+          test -f "$DEPLOY_DIR/infra/secrets/gcp-pubsub-sa.json"
+          command -v docker >/dev/null
+          command -v op >/dev/null
+
+      - name: Update persistent deploy checkout
+        working-directory: ${{ env.DEPLOY_DIR }}
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git switch main
+          git pull --ff-only origin main
+          git rev-parse --short HEAD
+
+      - name: Validate production compose
+        working-directory: ${{ env.DEPLOY_DIR }}
+        run: |
+          set -euo pipefail
+          set -a
+          . infra/.op.service-account.env
+          set +a
+          op run --env-file "$ENV_FILE" -- docker compose -f "$COMPOSE_FILE" config >/tmp/roboinvest-compose-config.yml
+          if rg 'PUBSUB_EMULATOR_HOST|op://' /tmp/roboinvest-compose-config.yml; then
+            echo "production compose contains forbidden runtime values"
+            exit 1
+          fi
+
+      - name: Build production images
+        working-directory: ${{ env.DEPLOY_DIR }}
+        run: |
+          set -euo pipefail
+          set -a
+          . infra/.op.service-account.env
+          set +a
+          op run --env-file "$ENV_FILE" -- docker compose -f "$COMPOSE_FILE" --profile batch build
+
+      - name: Stop before dry-run restart
+        if: ${{ github.event.inputs.dry_run == 'true' }}
+        run: echo "dry_run=true; skipping docker compose up"
+
+      - name: Deploy production services
+        if: ${{ github.event.inputs.dry_run == 'false' }}
+        working-directory: ${{ env.DEPLOY_DIR }}
+        run: |
+          set -euo pipefail
+          set -a
+          . infra/.op.service-account.env
+          set +a
+          op run --env-file "$ENV_FILE" -- docker compose -f "$COMPOSE_FILE" up -d --build
+          op run --env-file "$ENV_FILE" -- docker compose -f "$COMPOSE_FILE" ps

@@ -115,6 +115,10 @@ module = "jpholiday"
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
+module = "google.cloud.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
 module = "websockets.*"
 ignore_missing_imports = true
 

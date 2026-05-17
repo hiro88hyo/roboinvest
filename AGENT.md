@@ -72,9 +72,23 @@ uv run python scripts/health-check.py
 Python は `uv` を使う。`pip` や `poetry` の直叩きは避ける。
 Dashboard は Volta 管理の Node/npm を使う。
 
+## Health Check Notes
+
+`scripts/health-check.py` はローカル開発環境の軽量スモークテスト。
+`uv run scripts/health-check.py` または対象を絞って `uv run scripts/health-check.py --check pubsub supabase` のように使う。
+
+検査内容:
+
+- Pub/Sub: `infra/pubsub/topics.json` の 7 topics と `infra/pubsub/subscriptions.json` の 9 subscriptions が emulator 上に存在するか確認する。
+- Supabase: `system_status`, `positions`, `strategy_logs`, `aggregator_logs`, `trades_live`, `trades_paper`, `watchlist`, `master_stocks`, `daily_ohlcv` の 9 tables を PostgREST で `limit=0` read できるか確認する。
+- Services: 9 service modules (`universe_scanner`, `feature_engine`, `strategy_rule`, `strategy_ai`, `aggregator`, `gateway`, `oms_paper`, `oms_live`, `feeder`) の `python -m <module> --help` が起動できるか確認する。
+
+必要 env がないセクションは `SKIP` で、失敗扱いではない。`NG` が 1 件でもあれば exit code 1。
+Pub/Sub は `PUBSUB_EMULATOR_HOST` / `PUBSUB_PROJECT_ID`、Supabase は `SUPABASE_URL` / `SUPABASE_SECRET_KEY` が必要。
+
 ## Important Operational Notes
 
-- Pub/Sub topics は 7 件、subscriptions も 7 件が前提。
+- Pub/Sub topics は 7 件、subscriptions は現行 `infra/pubsub/subscriptions.json` で 9 件が前提。
 - Pub/Sub emulator は長時間稼働で OOM することがある。再起動後は topic/subscription の再 seed が必要。
 - 市場開始前の主な失敗要因は subscription 未作成、`daily_ohlcv` 空、`watchlist` 未更新。
 - kabuステーションは localhost 限定。本番は Windows 上の Caddy reverse proxy と SSH tunnel 前提。

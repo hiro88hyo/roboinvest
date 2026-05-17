@@ -48,3 +48,7 @@ infra/supabase/.temp/
 
 # Private runbook (non-distributable; keep out of git)
 docs/runbook/private/
+
+infra/env.production
+infra/.op.service-account.env
+infra/secrets/
