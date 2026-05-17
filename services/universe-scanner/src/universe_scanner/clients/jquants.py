@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import date
+from enum import StrEnum
 from typing import Any, Self
 
 import httpx
@@ -20,6 +21,11 @@ class JQuantsError(RuntimeError):
     """J-Quants API とのやり取りで発生するエラー。"""
 
 
+class JQuantsApiVersion(StrEnum):
+    V1 = "v1"
+    V2 = "v2"
+
+
 def _fmt_date(d: date) -> str:
     return d.strftime("%Y-%m-%d")
 
@@ -28,20 +34,28 @@ def _fmt_date(d: date) -> str:
 class JQuantsClient:
     """J-Quants API クライアント (async)。
 
-    - `auth_refresh` で ID トークンを取得し、以降のリクエストに使用
+    - v2 は API key (`x-api-key`) を使用
+    - v1 は `auth_refresh` で ID トークンを取得し、以降のリクエストに使用
     - 429 / 5xx は指数バックオフでリトライ
     - ページング (`pagination_key`) は自動で解決
     """
 
-    refresh_token: str
-    base_url: str = "https://api.jquants.com/v1"
+    refresh_token: str | None = None
+    api_key: str | None = None
+    api_version: JQuantsApiVersion = JQuantsApiVersion.V2
+    base_url: str = "https://api.jquants.com/v2"
     timeout_seconds: float = 30.0
     _client: httpx.AsyncClient | None = None
     _id_token: str | None = None
 
     async def __aenter__(self) -> Self:
+        if self.api_version == JQuantsApiVersion.V2 and not self.api_key:
+            raise JQuantsError("J-Quants v2 requires api_key")
+        if self.api_version == JQuantsApiVersion.V1 and not self.refresh_token:
+            raise JQuantsError("J-Quants v1 requires refresh_token")
         self._client = httpx.AsyncClient(base_url=self.base_url, timeout=self.timeout_seconds)
-        await self._authenticate()
+        if self.api_version == JQuantsApiVersion.V1:
+            await self._authenticate_v1()
         return self
 
     async def __aexit__(self, *exc: object) -> None:
@@ -49,7 +63,9 @@ class JQuantsClient:
             await self._client.aclose()
             self._client = None
 
-    async def _authenticate(self) -> None:
+    async def _authenticate_v1(self) -> None:
+        if not self.refresh_token:
+            raise JQuantsError("J-Quants v1 requires refresh_token")
         assert self._client is not None
         resp = await self._client.post(
             "/token/auth_refresh",
@@ -73,11 +89,18 @@ class JQuantsClient:
         retry=retry_if_exception_type((httpx.HTTPError, JQuantsError)),
     )
     async def _get(self, path: str, params: dict[str, Any]) -> dict[str, Any]:
-        assert self._client is not None and self._id_token is not None
+        assert self._client is not None
+        headers: dict[str, str]
+        if self.api_version == JQuantsApiVersion.V1:
+            assert self._id_token is not None
+            headers = {"Authorization": f"Bearer {self._id_token}"}
+        else:
+            assert self.api_key is not None
+            headers = {"x-api-key": self.api_key}
         resp = await self._client.get(
             path,
             params=params,
-            headers={"Authorization": f"Bearer {self._id_token}"},
+            headers=headers,
         )
         if resp.status_code == 429 or resp.status_code >= 500:
             raise JQuantsError(f"transient error: status={resp.status_code}")
@@ -105,7 +128,9 @@ class JQuantsClient:
         params: dict[str, Any] = {}
         if as_of is not None:
             params["date"] = _fmt_date(as_of)
-        return await self._paginate("/listed/info", params, key="info")
+        if self.api_version == JQuantsApiVersion.V1:
+            return await self._paginate("/listed/info", params, key="info")
+        return await self._paginate("/equities/master", params, key="data")
 
     async def daily_quotes(
         self,
@@ -125,4 +150,6 @@ class JQuantsClient:
             params["from"] = _fmt_date(from_date)
         if to_date is not None:
             params["to"] = _fmt_date(to_date)
-        return await self._paginate("/prices/daily_quotes", params, key="daily_quotes")
+        if self.api_version == JQuantsApiVersion.V1:
+            return await self._paginate("/prices/daily_quotes", params, key="daily_quotes")
+        return await self._paginate("/equities/bars/daily", params, key="data")

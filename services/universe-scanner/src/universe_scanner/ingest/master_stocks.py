@@ -29,7 +29,7 @@ def _normalize_segment(raw: str | None) -> str:
 
 
 def listed_info_to_frame(rows: list[dict[str, Any]]) -> pl.DataFrame:
-    """J-Quants `/listed/info` のレスポンスを DataFrame に正規化する。
+    """J-Quants listed info/master のレスポンスを DataFrame に正規化する。
 
     出力カラム: symbol, symbol_name, market_segment, sector, is_active
     """
@@ -46,9 +46,15 @@ def listed_info_to_frame(rows: list[dict[str, Any]]) -> pl.DataFrame:
     records = [
         {
             "symbol": str(r.get("Code", "")).strip(),
-            "symbol_name": str(r.get("CompanyName", "")).strip(),
-            "market_segment": _normalize_segment(r.get("MarketCodeName")),
-            "sector": (r.get("Sector17CodeName") or r.get("Sector33CodeName") or None),
+            "symbol_name": str(r.get("CompanyName") or r.get("CoName") or "").strip(),
+            "market_segment": _normalize_segment(r.get("MarketCodeName") or r.get("MktNm")),
+            "sector": (
+                r.get("Sector17CodeName")
+                or r.get("S17Nm")
+                or r.get("Sector33CodeName")
+                or r.get("S33Nm")
+                or None
+            ),
             # J-Quants listed/info は上場中銘柄のみ返す想定
             "is_active": True,
         }
