@@ -1,6 +1,6 @@
 # Handoff Memo (for coding AIs)
 
-最終更新: 2026-05-18 / HEAD: `1bdfb87` (PR #49 マージ後、Dashboard Auth/RLS PR #50 open)
+最終更新: 2026-05-18 / HEAD: `4df75a5` (PR #50 merged on `main`)
 
 別のコーディング AI（Claude Code 別セッション / Cursor / Copilot 等）がこのリポジトリに着手するときに、最初に目を通すための引き継ぎメモ。詳細は本ファイルではなく各リンク先で確認すること。
 
@@ -110,17 +110,16 @@ uv run python scripts/health-check.py
 
 - OMS Live Phase 3 本番 28080 の 9432 / 100 株 round-trip は市場時間中に完了。`docs/runbook/oms-live-phase3.md` に詳細を記録済み。kabu 保有は 9432 / 2000 株、未約定注文なし。
 - `OMS_LIVE_DRY_RUN=true` が Phase 3 e2e で無視されるバグを修正済み。PR #49 `Fix OMS live Phase 3 dry run` は merge 済み、main CI 緑。
-- Dashboard Auth/RLS 設計 docs は main に commit 済み (`1bdfb87`)。main CI 緑。
-- Dashboard Auth/RLS 実装は branch `implement-dashboard-auth-rls` / commit `65527e2`。PR #50: https://github.com/hiro88hyo/roboinvest/pull/50
-- PR #50 は CI 全 green。まだ merge しない方針で停止。本番 DB は変更していない。RLS SQL (`contracts/sql/012_dashboard_auth_rls.sql`) はローカル Supabase にのみ適用して検証済み。
-- PR #50 のローカル検証: anon role は `system_status` SELECT 拒否、`dashboard_admins` 登録済み authenticated user は `system_status` SELECT / UPDATE 可。`cd dashboard && npm run lint`、`npm run typecheck`、`npm test` は pass。
-- 次回は PR #50 のレビューから再開。merge 前に Vercel/Supabase Auth provider/admin user/Deployment Protection の本番適用順を再確認すること。
+- Dashboard Auth/RLS は PR #50 として main に merge 済み。merge commit は `4df75a5`。PR: https://github.com/hiro88hyo/roboinvest/pull/50
+- Preview 検証では OAuth redirect と admin RLS まで確認済み。anon role は `system_status` SELECT 拒否、`dashboard_admins` 登録済み authenticated user は `system_status` SELECT / UPDATE 可。
+- `contracts/sql/012_dashboard_auth_rls.sql` は実装済み。本番 DB への適用前に、Vercel / Supabase Auth provider / admin user / Deployment Protection の本番反映順を再確認すること。
+- `cd dashboard && npm run lint`、`npm run typecheck`、`npm test`、CI、Vercel Preview は pass。
 
 | 優先度 | タスク | 備考 |
 |---|---|---|
 | 高 | **ADR-0001 実装** | GCP Pub/Sub / Supabase Cloud Pro / Vercel Hobby / self-hosted runner / 1Password CLI。月額 ~$30 |
 | 高 | **J-Quants 有料プラン移行** | 無料は 2026-02-17 までのデータ上限。移行後 Universe Scanner を本番自動化 |
-| 中 | **24/7 運用整備** | プロセス監視 / ログ集約 / アラート / バックアップ |
+| 中 | **24/7 運用整備** | プロセス監視 / ログ集約 / アラート / バックアップ。未決事項は `docs/runbook/adr-0001-operations-requirements.md` |
 | 低 | **Feeder Book ゼロ再現の原因追及** | register API 仕様 / 別 endpoint 要調査 |
 | 低 | **Phase 3 残課題** | OrderId 冪等性のハードニング（fail-fast 化済、`docs/runbook/oms-live-phase3.md` の手動回復節を参照） |
 

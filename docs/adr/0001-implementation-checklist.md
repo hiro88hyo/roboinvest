@@ -17,7 +17,7 @@ ADR-0001「本番デプロイアーキテクチャ」を実装に落とすため
 対象外:
 
 - J-Quants 有料プラン移行
-- 24/7 監視、ログ集約、バックアップの本格整備
+- 24/7 監視、ログ集約、バックアップの本格整備（未決事項は `docs/runbook/adr-0001-operations-requirements.md`）
 - 複数 OMS Live プロセス化
 - Pub/Sub 以外の messaging への移行
 
@@ -169,7 +169,7 @@ ADR-0001「本番デプロイアーキテクチャ」を実装に落とすため
 - [x] `docs/runbook/oms-live-phase3.md` の手動回復手順を手元で開ける状態にする（2026-05-17）
 - [ ] Dashboard production URL を一般公開のまま live に進めない（`docs/adr/0002-dashboard-auth-rls.md`）
 - [x] Dashboard OAuth2 + RLS の実装前設計を確定する（`docs/adr/0002-dashboard-auth-rls.md`, `docs/runbook/adr-0002-dashboard-auth-rls.md`）
-- [x] Dashboard の anon read policies を廃止し、authenticated admin RLS に移行する（2026-05-18: `012_dashboard_auth_rls.sql` local verified、Preview OAuth / admin RLS verified）
+- [x] Dashboard の anon read policies を廃止し、authenticated admin RLS に移行する（2026-05-18: PR #50 merged on `main`、Preview OAuth / admin RLS verified）
 - [x] `/system` の Server Action が `SUPABASE_SECRET_KEY` で user-triggered update しない構成に移行する（2026-05-18: authenticated user client + RLS）
 - [x] live 初回は市場時間中に人間が監視して実行する（2026-05-18: Phase 3 9432/100 round-trip completed）
 
