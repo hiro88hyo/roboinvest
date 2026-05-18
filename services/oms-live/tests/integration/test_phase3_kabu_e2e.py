@@ -564,9 +564,7 @@ async def test_phase3_buy_then_sell_round_trip(
                 )
             ) is None, "DRY_RUN で positions(live) が作られてしまった"
             assert (
-                await _read_trades(
-                    url=supabase_url, key=supabase_secret_key, symbol=phase3_symbol
-                )
+                await _read_trades(url=supabase_url, key=supabase_secret_key, symbol=phase3_symbol)
             ) == [], "DRY_RUN で trades_live に書き込まれてしまった"
             return
 
