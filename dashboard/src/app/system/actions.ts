@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { getServiceClient } from "@/lib/supabase/server";
+import { getServerClient } from "@/lib/supabase/server";
 import {
   type TradeMode,
   type UpdateResult,
@@ -10,7 +10,12 @@ import {
 } from "@/lib/system/update";
 
 export async function setKillSwitchAction(isTradingAllowed: boolean): Promise<UpdateResult> {
-  const result = await updateKillSwitch(getServiceClient(), isTradingAllowed);
+  const supabase = await getServerClient();
+  const { data, error } = await supabase.auth.getUser();
+  if (error || !data.user) {
+    return { ok: false, error: "not authenticated" };
+  }
+  const result = await updateKillSwitch(supabase, isTradingAllowed);
   if (result.ok) {
     revalidatePath("/system");
     revalidatePath("/");
@@ -19,7 +24,12 @@ export async function setKillSwitchAction(isTradingAllowed: boolean): Promise<Up
 }
 
 export async function setTradeModeAction(mode: TradeMode): Promise<UpdateResult> {
-  const result = await updateTradeMode(getServiceClient(), mode);
+  const supabase = await getServerClient();
+  const { data, error } = await supabase.auth.getUser();
+  if (error || !data.user) {
+    return { ok: false, error: "not authenticated" };
+  }
+  const result = await updateTradeMode(supabase, mode);
   if (result.ok) {
     revalidatePath("/system");
     revalidatePath("/");

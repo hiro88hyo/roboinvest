@@ -53,7 +53,7 @@ export function SystemControls({ initial }: { initial: SystemStatus | null }) {
     <section className="mt-6 rounded border border-neutral-800 bg-neutral-900/50 p-4">
       <h2 className="text-sm font-semibold text-neutral-200">操作</h2>
       <p className="mt-1 text-xs text-neutral-500">
-        書き込みは Server Action 経由（service-role キー）。Realtime で即時反映されます。
+        書き込みはサインイン中の管理者権限で実行されます。Realtime で即時反映されます。
       </p>
 
       <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">

@@ -37,7 +37,9 @@ Vercel の 1Password Integration を使っていない場合、Vercel には `op
 | `NEXT_PUBLIC_APP_TIMEZONE` | `Asia/Tokyo` | Browser + Server |
 
 `SUPABASE_SECRET_KEY` は絶対に `NEXT_PUBLIC_` prefix にしない。
-Dashboard の Server Components / Server Actions は `SUPABASE_SECRET_KEY` を使い、Client Components は anon key だけを使う。
+Dashboard Auth/RLS 適用後、Dashboard の Server Components / Server Actions は cookie session 付きの authenticated user client を使う。
+`SUPABASE_SECRET_KEY` は保守用 CLI / health check / migration 用に限定し、user-triggered path では使わない。
+Client Components は anon key と authenticated session で Realtime を購読する。
 
 ## 3. Local Production Build Check
 
@@ -99,7 +101,8 @@ SECRET_LEAK:no
 
 ## 5. Supabase Requirements
 
-Dashboard browser Realtime には次が必要。
+Dashboard Auth/RLS 適用前の browser Realtime には次が必要だった。
+Auth/RLS 適用後は `contracts/sql/012_dashboard_auth_rls.sql` により anon read を削除し、authenticated dashboard admin の RLS で Realtime を確認する。
 
 - `contracts/sql/011_dashboard_anon_read_policies.sql` が Supabase Cloud に適用済み。
 - `supabase_realtime` publication に `system_status` / `positions` / `trades_live` / `trades_paper` / `strategy_logs` / `aggregator_logs` が含まれる。

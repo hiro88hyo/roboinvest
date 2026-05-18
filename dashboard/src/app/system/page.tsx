@@ -1,11 +1,11 @@
 import { SystemControls } from "@/components/system/SystemControls";
 import { SystemStatusDetail } from "@/components/system/SystemStatusDetail";
-import { getServiceClient } from "@/lib/supabase/server";
+import { getServerClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
 export default async function SystemPage() {
-  const supabase = getServiceClient();
+  const supabase = await getServerClient();
   const { data: status } = await supabase
     .from("system_status")
     .select("*")

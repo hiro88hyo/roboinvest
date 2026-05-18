@@ -1,6 +1,6 @@
 # Handoff Memo (for coding AIs)
 
-最終更新: 2026-05-15 / HEAD: `0590850` (PR #42 マージ後、`main` clean)
+最終更新: 2026-05-18 / HEAD: `1bdfb87` (PR #49 マージ後、Dashboard Auth/RLS PR #50 open)
 
 別のコーディング AI（Claude Code 別セッション / Cursor / Copilot 等）がこのリポジトリに着手するときに、最初に目を通すための引き継ぎメモ。詳細は本ファイルではなく各リンク先で確認すること。
 
@@ -105,6 +105,16 @@ uv run python scripts/health-check.py
 ---
 
 ## 6. 次セッションの優先タスク
+
+### 2026-05-18 セッションメモ
+
+- OMS Live Phase 3 本番 28080 の 9432 / 100 株 round-trip は市場時間中に完了。`docs/runbook/oms-live-phase3.md` に詳細を記録済み。kabu 保有は 9432 / 2000 株、未約定注文なし。
+- `OMS_LIVE_DRY_RUN=true` が Phase 3 e2e で無視されるバグを修正済み。PR #49 `Fix OMS live Phase 3 dry run` は merge 済み、main CI 緑。
+- Dashboard Auth/RLS 設計 docs は main に commit 済み (`1bdfb87`)。main CI 緑。
+- Dashboard Auth/RLS 実装は branch `implement-dashboard-auth-rls` / commit `65527e2`。PR #50: https://github.com/hiro88hyo/roboinvest/pull/50
+- PR #50 は CI 全 green。まだ merge しない方針で停止。本番 DB は変更していない。RLS SQL (`contracts/sql/012_dashboard_auth_rls.sql`) はローカル Supabase にのみ適用して検証済み。
+- PR #50 のローカル検証: anon role は `system_status` SELECT 拒否、`dashboard_admins` 登録済み authenticated user は `system_status` SELECT / UPDATE 可。`cd dashboard && npm run lint`、`npm run typecheck`、`npm test` は pass。
+- 次回は PR #50 のレビューから再開。merge 前に Vercel/Supabase Auth provider/admin user/Deployment Protection の本番適用順を再確認すること。
 
 | 優先度 | タスク | 備考 |
 |---|---|---|

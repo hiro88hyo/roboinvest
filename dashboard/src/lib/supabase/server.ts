@@ -1,20 +1,34 @@
 import type { Database } from "@contracts/generated/database.types";
-import { createClient } from "@supabase/supabase-js";
+import { createServerClient } from "@supabase/ssr";
+import { cookies } from "next/headers";
 
-export function getReadClient() {
+function getPublicSupabaseEnv() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !key) {
     throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY env vars");
   }
-  return createClient<Database>(url, key, { auth: { persistSession: false } });
+  return { url, key };
 }
 
-export function getServiceClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SECRET_KEY;
-  if (!url || !key) {
-    throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SECRET_KEY env vars");
-  }
-  return createClient<Database>(url, key, { auth: { persistSession: false } });
+export async function getServerClient() {
+  const { url, key } = getPublicSupabaseEnv();
+  const cookieStore = await cookies();
+
+  return createServerClient<Database>(url, key, {
+    cookies: {
+      getAll() {
+        return cookieStore.getAll();
+      },
+      setAll(cookiesToSet) {
+        try {
+          for (const { name, value, options } of cookiesToSet) {
+            cookieStore.set(name, value, options);
+          }
+        } catch {
+          // Server Components cannot set cookies. Proxy / Route Handlers refresh sessions.
+        }
+      },
+    },
+  });
 }
