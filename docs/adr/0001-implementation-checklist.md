@@ -167,6 +167,10 @@ ADR-0001「本番デプロイアーキテクチャ」を実装に落とすため
 - [x] `KABU_ORDER_PASSWORD` が API password と別値で設定されていることを確認する（2026-05-17: values present and distinct）
 - [x] `KABU_DEFAULT_EXCHANGE=9` であることを確認する（2026-05-17）
 - [x] `docs/runbook/oms-live-phase3.md` の手動回復手順を手元で開ける状態にする（2026-05-17）
+- [ ] Dashboard production URL を一般公開のまま live に進めない（`docs/adr/0002-dashboard-auth-rls.md`）
+- [ ] Dashboard OAuth2 + RLS の実装前設計を確定する（`docs/adr/0002-dashboard-auth-rls.md`, `docs/runbook/adr-0002-dashboard-auth-rls.md`）
+- [ ] Dashboard の anon read policies を廃止し、authenticated admin RLS に移行する
+- [ ] `/system` の Server Action が `SUPABASE_SECRET_KEY` で user-triggered update しない構成に移行する
 - [ ] live 初回は市場時間中に人間が監視して実行する
 
 ## 10. First Live Cutover
