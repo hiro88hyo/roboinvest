@@ -26,9 +26,9 @@ Supabase Dashboard で OAuth provider を有効化する。
 設定する redirect URL:
 
 ```text
-https://<production-dashboard-domain>/auth/callback
-https://<preview-dashboard-domain>/auth/callback
-http://localhost:3000/auth/callback
+https://<production-dashboard-domain>/auth/callback**
+https://<preview-dashboard-domain>/auth/callback**
+http://localhost:3000/**
 ```
 
 許可 user は OAuth provider 側だけに依存せず、`dashboard_admins` table でも制御する。
@@ -47,13 +47,20 @@ Supabase project の Dashboard で次を設定する。
 登録する Redirect URLs:
 
 ```text
-https://<production-dashboard-domain>/auth/callback
-https://<stable-preview-dashboard-domain>/auth/callback
-http://localhost:3000/auth/callback
+https://<production-dashboard-domain>/auth/callback**
+https://<stable-preview-dashboard-domain>/auth/callback**
+http://localhost:3000/**
 ```
 
-Vercel の branch preview URL は commit ごとに変わるため、OAuth callback URL としては常用しない。
-Preview で OAuth を検証する場合は、Vercel の stable branch domain または検証用 custom domain を使い、その URL を Supabase と provider 側の両方に登録する。
+Dashboard は Supabase Auth の `redirectTo` に `/auth/callback?next=...` を渡す。
+Supabase Redirect URLs は query string 付き callback を許可するため、`/auth/callback` ではなく `/auth/callback**` または origin 全体の wildcard を登録する。
+
+Vercel の branch preview URL は commit ごとに変わる。
+Preview で OAuth を検証する場合は、Vercel の stable branch domain、検証用 custom domain、または Vercel preview wildcard を Supabase Redirect URLs に登録する。
+
+```text
+https://*-<team-or-account-slug>.vercel.app/**
+```
 
 ### GitHub OAuth App Setup
 
@@ -120,6 +127,17 @@ provider を切り替えた場合は Vercel redeploy が必要。
 
 初回 admin 登録は OAuth login 後に行う。
 最初の login 直後は `auth.users` に user は作られるが、`dashboard_admins` に入るまでは Dashboard data を読めない。
+
+先に `contracts/sql/012_dashboard_auth_rls.sql` を Supabase に適用し、`dashboard_admins` table と RLS policies を作成しておく。
+未適用のまま admin user を追加すると、`relation "public.dashboard_admins" does not exist` が発生する。
+
+Supabase SQL editor で table の存在を確認する。
+
+```sql
+select to_regclass('public.dashboard_admins') as dashboard_admins;
+```
+
+`dashboard_admins` が `null` の場合は、`contracts/sql/012_dashboard_auth_rls.sql` を先に実行する。
 
 Supabase SQL editor で user を確認する。
 
