@@ -4,6 +4,12 @@ import { type NextRequest, NextResponse } from "next/server";
 
 const PUBLIC_PATHS = new Set(["/login", "/auth/callback"]);
 
+function normalizeNext(value: string | null): string {
+  const next = value || "/";
+  if (!next.startsWith("/") || next.startsWith("//")) return "/";
+  return next;
+}
+
 function getPublicSupabaseEnv() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -48,7 +54,7 @@ export async function updateSession(request: NextRequest) {
 
   if (isAuthenticated && pathname === "/login") {
     const redirectUrl = request.nextUrl.clone();
-    redirectUrl.pathname = request.nextUrl.searchParams.get("next") || "/";
+    redirectUrl.pathname = normalizeNext(request.nextUrl.searchParams.get("next"));
     redirectUrl.search = "";
     return NextResponse.redirect(redirectUrl);
   }

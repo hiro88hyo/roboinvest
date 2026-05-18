@@ -1,5 +1,6 @@
 "use server";
 
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { getServerClient } from "@/lib/supabase/server";
 
@@ -10,9 +11,22 @@ function getOAuthProvider(): OAuthProvider {
   return provider === "google" ? "google" : "github";
 }
 
+function normalizeNext(value: FormDataEntryValue | null): string {
+  const next = String(value || "/");
+  if (!next.startsWith("/") || next.startsWith("//")) return "/";
+  return next;
+}
+
+async function getRequestOrigin(): Promise<string> {
+  const headerStore = await headers();
+  const host = headerStore.get("x-forwarded-host") ?? headerStore.get("host") ?? "";
+  const protocol = headerStore.get("x-forwarded-proto") ?? "http";
+  return host ? `${protocol}://${host}` : "";
+}
+
 export async function signInAction(formData: FormData) {
-  const next = String(formData.get("next") || "/");
-  const origin = String(formData.get("origin") || "");
+  const next = normalizeNext(formData.get("next"));
+  const origin = await getRequestOrigin();
   const supabase = await getServerClient();
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: getOAuthProvider(),
