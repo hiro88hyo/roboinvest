@@ -11,6 +11,7 @@ ENV (全部揃って初めて走る):
   OMS_LIVE_PHASE3_SYMBOL                — 例: ``7203`` (default)
   OMS_LIVE_PHASE3_QUANTITY              — 株数 (default: ``100``)
   OMS_LIVE_PHASE3_EXCHANGE              — 市場コード (default: ``9`` SOR、au カブコム証券で必須)
+  OMS_LIVE_DRY_RUN                      — ``true`` なら sendorder / Supabase 書込なしで ack 確認
   PUBSUB_EMULATOR_HOST                  — 例: ``localhost:8085``
   PUBSUB_PROJECT_ID                     — 例: ``trade-ai-dev``
   SUPABASE_URL                          — 例: ``http://127.0.0.1:54321``
@@ -402,7 +403,16 @@ def _build_settings(
     kabu_default_exchange: int,
     oms_live_max_qty_per_order: int | None = None,
     oms_live_allowed_symbols: str = "",
+    oms_live_dry_run: bool | None = None,
 ) -> OmsLiveSettings:
+    if oms_live_dry_run is None:
+        oms_live_dry_run = os.environ.get("OMS_LIVE_DRY_RUN", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+
     return OmsLiveSettings(
         supabase_url=supabase_url,
         supabase_secret_key=supabase_secret_key,
@@ -419,7 +429,7 @@ def _build_settings(
         order_fill_timeout_seconds=30.0,
         oms_live_max_qty_per_order=oms_live_max_qty_per_order,
         oms_live_allowed_symbols=oms_live_allowed_symbols,
-        oms_live_dry_run=False,
+        oms_live_dry_run=oms_live_dry_run,
     )
 
 
@@ -541,6 +551,25 @@ async def test_phase3_buy_then_sell_round_trip(
             topic=LIVE_ORDERS_TOPIC,
             data=buy.model_dump_json().encode("utf-8"),
         )
+        if settings.oms_live_dry_run:
+            stats = await _drain_until_stats(
+                settings=settings,
+                predicate=lambda s: s.dry_run_skipped > 0,
+            )
+            assert stats.dry_run_skipped == 1, f"dry_run_skipped=1 を期待: {stats}"
+            assert stats.filled == 0, f"DRY_RUN で filled が立つのは異常: {stats}"
+            assert (
+                await _read_live_position(
+                    url=supabase_url, key=supabase_secret_key, symbol=phase3_symbol
+                )
+            ) is None, "DRY_RUN で positions(live) が作られてしまった"
+            assert (
+                await _read_trades(
+                    url=supabase_url, key=supabase_secret_key, symbol=phase3_symbol
+                )
+            ) == [], "DRY_RUN で trades_live に書き込まれてしまった"
+            return
+
         await _drain_until_filled(settings=settings)
 
         pos = await _read_live_position(

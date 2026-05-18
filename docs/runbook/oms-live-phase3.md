@@ -27,6 +27,33 @@ OMS Live を **本番環境** (kabu 28080 / Caddy リバプロ経由) に対し�
 - Gateway kill switch 経路は unit + local integration で確認済み。`is_trading_allowed=false` reject、`daily_pnl <= -daily_loss_limit` で kill switch 更新。
 - 次に進むのは通常市場時間中 (次回は 2026-05-18 09:00 JST 以降)。人間監視ありで Step 2 → Step 4 の順に実施する。
 
+## 2026-05-18 オープン後 TODO
+
+市場開始後、人間監視ありで以下の順に進める。異常があれば即停止し、下の「中止手順」に従う。
+
+### 2026-05-18 実施予定メモ
+
+- 今日の目的は、9432 / 100 株の最小構成で OMS Live Phase 3 の本番 kabu 接続 round-trip を確認すること。
+- 実施順は、read-only probe → 安全ノブ確認 → Step 2 `sendorder + cancel` → Step 3 dry-run → Step 4 本番 round-trip。
+- Step 4 は `OMS_LIVE_DRY_RUN` を外すため、人間監視あり、市場時間中、未約定注文を kabu GUI で即確認できる状態でのみ実施する。
+- read-only の `symbol` / `board` 確認は 9432@1 で通る。実発注側は引き続き `KABU_DEFAULT_EXCHANGE=9` / `OMS_LIVE_PHASE3_EXCHANGE=9` の SOR 前提。
+
+### 2026-05-18 実施中メモ
+
+- 09:14 JST 頃に `OMS_LIVE_DRY_RUN=true` で実行したつもりの Phase 3 round-trip が BUY 100 @ 151.6 → SELL 100 @ 151.55 を実発注していた。原因は `test_phase3_kabu_e2e.py` の `_build_settings()` が `oms_live_dry_run=False` をハードコードし、env を無視していたこと。
+- Step 2 の `sendorder + cancel` は BUY 100 @ 151.7 で即約定し、cancel は `Code: 43` (既約定)。その後 SELL 100 @ 151.55 を手動で出して、kabu 保有は 9432 / 2000 株に復帰。未約定注文なし。
+- 修正後は `OMS_LIVE_DRY_RUN=true` を `_build_settings()` が読むようにし、round-trip テストも `dry_run_skipped=1` と DB 無書込を確認して return する。修正後 dry-run は kabu 注文を増やさず PASS。
+- 修正後に Step 4 本番 round-trip を実施し PASS。BUY 100 @ 151.7 → SELL 100 @ 151.65。Supabase は test cleanup 後に `positions(live)` 空 / `trades_live` 空、`system_status.daily_pnl=-10.00`。kabu 保有は 9432 / 2000 株、未約定注文なし。
+
+- [x] kabuステーション本番ログイン、Caddy 28080、Pub/Sub emulator、Supabase local が生きていることを再確認する。
+- [x] `scripts/probe-kabu-oms.py --env prod --host <win-ip> --port 28080 --symbol 9432` を再実行し、`ALL OK` / board 現在値 / 買付余力を確認する。
+- [x] `OMS_LIVE_ALLOWED_SYMBOLS=9432`、`OMS_LIVE_MAX_QTY_PER_ORDER=100`、`KABU_DEFAULT_EXCHANGE=9`、`OMS_LIVE_PHASE3_QUANTITY=100` を再確認する。
+- [x] Step 2 の単発 `sendorder + cancel` を実施し、kabu GUI の注文一覧で受付・約定または取消を確認する。即約定した場合は残ポジションの扱いを Step 4 前に決める。
+- [x] Step 3 の `OMS_LIVE_DRY_RUN=true` を必要に応じて再実行し、Runner pull → ack のログを確認する。
+- [x] Step 4 の本番 round-trip を実施し、BUY 100 → SELL 100、`positions(live)` 空、`trades_live` 2 行、`daily_pnl` 更新を確認する。
+- [x] 実施後、kabu GUI に未約定注文が残っていないこと、Supabase に想定外の `positions(live)` が残っていないことを確認する。
+- [x] 結果、約定価格、`daily_pnl`、異常有無をこの runbook に追記する。
+
 ## 前提条件チェックリスト
 
 走らせる前に **必ず** 全項目確認:
