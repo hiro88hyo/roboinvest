@@ -22,7 +22,7 @@ Trade AI Agent の運用 UI。Supabase に蓄積された `system_status` / `pos
 - リスク制御の実行 → Gateway（Dashboard はキルスイッチを「フラグを倒すだけ」、判定は Gateway 側）
 - 約定ロジック → OMS Live / Paper
 - バックテスト UI（必要になったら別サービス or 別ページ群として後付け、Phase 3 までのスコープ外）
-- 認証・ユーザー管理 → 当面は社内利用前提でスキップ。Supabase Auth 統合は別 PR
+- 認証・ユーザー管理 → Supabase Auth + `dashboard_admins` RLS。詳細は `docs/adr/0002-dashboard-auth-rls.md`
 
 ## 技術スタック（採用判断）
 
@@ -43,8 +43,8 @@ Trade AI Agent の運用 UI。Supabase に蓄積された `system_status` / `pos
 
 - ローカル開発時の Supabase URL: `http://127.0.0.1:54321`、anon key は `infra/supabase/config.toml` 由来
 - Realtime は WebSocket。`NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` に集約
-- 書き込み（キルスイッチ等）は **Server Action 経由**。クライアントから直接 service-role キーを使わない
-- Supabase service-role キーが必要な操作は `SUPABASE_SECRET_KEY` を server 側でのみ参照（`NEXT_PUBLIC_*` には絶対に置かない）
+- 書き込み（キルスイッチ等）は **Server Action 経由**。認証済み user client で RLS を通す
+- `SUPABASE_SECRET_KEY` は保守・migration・batch 用に限定し、Dashboard の user-triggered path では使わない
 - ポート 3000 は `infra/CLAUDE.md` で予約済み
 
 ## 実装フェーズ
@@ -88,7 +88,7 @@ oms-paper / gateway / feeder と同じ 3 フェーズ + scaffold パターン。
 - `/system` に操作 UI を追加
   - キルスイッチ ON/OFF トグル（確認ダイアログ必須）
   - `trade_mode` の `live` ⇄ `paper` セグメント
-- Server Action で `system_status` を更新（`SUPABASE_SECRET_KEY` で UPDATE 権限を持たせる）
+- Server Action で `system_status` を更新（認証済み user client で admin RLS を通す）
 - 操作ログは `system_status.updated_at` で十分（専用 audit テーブルは作らない、需要が出てから）
 - 誤操作防止: live 切替時は確認ダイアログに「実取引が再開されます」を明示
 
@@ -136,7 +136,8 @@ dashboard/
 `.env.example` に列挙するキー:
 - `NEXT_PUBLIC_SUPABASE_URL`: 既定 `http://127.0.0.1:54321`
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`: ローカル Supabase の anon キー
-- `SUPABASE_SECRET_KEY`: Server Action での書き込み専用（**`NEXT_PUBLIC_*` には絶対に置かない**）
+- `NEXT_PUBLIC_SUPABASE_AUTH_PROVIDER`: `github` または `google`（既定 `github`）
+- `SUPABASE_SECRET_KEY`: 保守・migration・batch 用（**`NEXT_PUBLIC_*` には絶対に置かない**）
 - `NEXT_PUBLIC_APP_TIMEZONE`: 既定 `Asia/Tokyo`
 
 `.env.local` は `.gitignore` 済み。コミット禁止。
@@ -159,7 +160,7 @@ npm test            # vitest
 
 - **volta 経由必須**: `npm i -g` で Node / npm をグローバル汚染しない。`package.json` の `volta` フィールドが Single Source of Truth
 - **Server / Client の境界**: Supabase client は server 用と browser 用で別ファイル。混在させない（`"use client"` でないファイルから browser client を import するとビルド時に検出されない事故が起きやすい）
-- **service-role キーは server only**: `NEXT_PUBLIC_*` プレフィックスを付けない。間違えるとブラウザに露出する
+- **service-role キーは user-triggered path で使わない**: 保守用途で使う場合も `NEXT_PUBLIC_*` プレフィックスを付けない
 - **型は手動更新しない**: `database.types.ts` は `scripts/gen-supabase-types.sh` でのみ更新。スキーマ変更時は contracts/sql → 型再生成 → dashboard ビルドの順
 - **Realtime の filter は最小限に**: 全テーブル全件購読すると無駄に重い。表示中の銘柄・直近 N 件などにフィルタ
 - **Realtime の重複に備える**: at-least-once。`signal_id` / `trade_id` を key にしてクライアント側で dedupe する

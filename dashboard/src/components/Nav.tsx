@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { signOutAction } from "@/app/login/actions";
 import { RealtimeIndicator } from "./RealtimeIndicator";
 
 const links = [
@@ -26,6 +27,14 @@ export function Nav() {
         <div className="ml-auto">
           <RealtimeIndicator />
         </div>
+        <form action={signOutAction}>
+          <button
+            className="rounded px-3 py-1.5 text-sm text-neutral-400 hover:bg-neutral-800 hover:text-neutral-50"
+            type="submit"
+          >
+            Sign out
+          </button>
+        </form>
       </div>
     </nav>
   );

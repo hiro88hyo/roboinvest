@@ -1,6 +1,6 @@
 import { parseTradeType, TradeTypeTabs } from "@/components/TradeTypeTabs";
 import { TradesTable } from "@/components/trades/TradesTable";
-import { getServiceClient } from "@/lib/supabase/server";
+import { getServerClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
@@ -14,7 +14,7 @@ export default async function TradesPage({
   const { type } = await searchParams;
   const tradeType = parseTradeType(type);
   const tableName = tradeType === "live" ? "trades_live" : "trades_paper";
-  const supabase = getServiceClient();
+  const supabase = await getServerClient();
   const { data: trades } = await supabase
     .from(tableName)
     .select("*")

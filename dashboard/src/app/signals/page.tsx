@@ -1,13 +1,13 @@
 import { AggregatorLogsTable } from "@/components/signals/AggregatorLogsTable";
 import { StrategyLogsTable } from "@/components/signals/StrategyLogsTable";
-import { getServiceClient } from "@/lib/supabase/server";
+import { getServerClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
 const LIMIT = 50;
 
 export default async function SignalsPage() {
-  const supabase = getServiceClient();
+  const supabase = await getServerClient();
   const [{ data: aggregator }, { data: strategy }] = await Promise.all([
     supabase
       .from("aggregator_logs")
