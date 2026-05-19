@@ -5,6 +5,8 @@
 production compose / Cloud Supabase / managed Pub/Sub を前提に、寄り付き前に paper trading を安全に始めるための最小手順。
 明日は Universe Scanner を手動実行し、その結果を確認してから常駐 services を起動する。
 
+最短版のコマンド一覧は [`paper-open-quickstart.md`](paper-open-quickstart.md) を参照。
+
 ## 1. Preconditions
 
 - `main` が最新であること
