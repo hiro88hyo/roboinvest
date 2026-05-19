@@ -75,6 +75,7 @@ uv run python scripts/health-check.py
 - **Pub/Sub エミュレータは 3 日連続稼働で OOM**。`docker restart trade-ai-pubsub` の後は `infra/pubsub/init-topics.sh` で topics + subscriptions を再 seed が必要。
 - **subscription は手動 PUT が必要**だったが、現在は `infra/pubsub/subscriptions.json` + `init-topics.sh` のサブセクションで自動化済み（`strategy-ai-processed-features` を含む 7 件）。
 - **市場開始前チェックリスト**: subscription 未作成 / `daily_ohlcv` 空 / `watchlist` 未更新 が 3 大要因。`scripts/start-paper-trading.sh` がカバーする範囲とカバーしない範囲をスクリプトを読んで把握すること。
+- **production compose の paper 始業手順**: [`docs/runbook/paper-open-checklist.md`](runbook/paper-open-checklist.md) を参照。Universe Scanner 手動実行 → watchlist 確認 → services 起動の順。
 
 ### 5.2 kabu.com API
 
