@@ -22,12 +22,14 @@ Items and fields:
 | `production` | `SUPABASE_SECRET_KEY` | Supabase service role key |
 | `production` | `SUPABASE_ANON_KEY` | Dashboard client-side anon key |
 | `production` | `GOOGLE_APPLICATION_CREDENTIALS_JSON` | GCP Pub/Sub service account key JSON |
-| `jquants` | `JQUANTS_REFRESH_TOKEN` | Universe Scanner |
+| `jquants` | `JQUANTS_API_KEY` | Universe Scanner v2 API key |
+| `jquants` | `JQUANTS_REFRESH_TOKEN` | Universe Scanner legacy v1 only |
 | `kabu` | `KABU_API_PASSWORD` | kabu token API password |
 | `kabu` | `KABU_ORDER_PASSWORD` | kabu sendorder password |
 | `ai` | `GEMINI_API_KEY` | Strategy AI |
 
 field 名は env var 名と完全一致させる。
+`JQUANTS_API_VERSION=v2` を使う通常構成では `JQUANTS_API_KEY` が必須で、`JQUANTS_REFRESH_TOKEN` は legacy v1 用の任意項目として扱う。
 `KABU_API_PASSWORD` と `KABU_ORDER_PASSWORD` は別 field とし、同値にしない。
 
 ## 2. Create Vault And Items
@@ -53,7 +55,8 @@ item type は `Secure Note` でも `Password` でもよいが、fields を明示
 
 `jquants` item:
 
-- `JQUANTS_REFRESH_TOKEN`
+- `JQUANTS_API_KEY`
+- `JQUANTS_REFRESH_TOKEN`（legacy v1 を使う場合のみ）
 
 `kabu` item:
 
@@ -69,7 +72,7 @@ item type は `Secure Note` でも `Password` でもよいが、fields を明示
 ```bash
 op read "op://Trade AI/production/PUBSUB_PROJECT_ID"
 op read "op://Trade AI/production/SUPABASE_URL"
-op read "op://Trade AI/jquants/JQUANTS_REFRESH_TOKEN"
+op read "op://Trade AI/jquants/JQUANTS_API_KEY"
 op read "op://Trade AI/kabu/KABU_API_PASSWORD"
 op read "op://Trade AI/kabu/KABU_ORDER_PASSWORD"
 op read "op://Trade AI/ai/GEMINI_API_KEY"
@@ -133,6 +136,10 @@ PUBSUB_PROJECT_ID=op://Trade AI/production/PUBSUB_PROJECT_ID
 GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/gcp-pubsub-sa.json
 SUPABASE_URL=op://Trade AI/production/SUPABASE_URL
 SUPABASE_SECRET_KEY=op://Trade AI/production/SUPABASE_SECRET_KEY
+JQUANTS_API_KEY=op://Trade AI/jquants/JQUANTS_API_KEY
+JQUANTS_API_VERSION=v2
+# Optional only when running legacy v1 flow:
+# JQUANTS_REFRESH_TOKEN=op://Trade AI/jquants/JQUANTS_REFRESH_TOKEN
 KABU_API_PASSWORD=op://Trade AI/kabu/KABU_API_PASSWORD
 KABU_ORDER_PASSWORD=op://Trade AI/kabu/KABU_ORDER_PASSWORD
 TRADE_MODE=paper

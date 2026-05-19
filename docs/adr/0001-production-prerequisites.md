@@ -27,12 +27,14 @@ field 名は env var 名と完全一致させる。
 | `production` | `SUPABASE_SECRET_KEY` |
 | `production` | `SUPABASE_ANON_KEY` |
 | `production` | `GOOGLE_APPLICATION_CREDENTIALS_JSON` |
-| `jquants` | `JQUANTS_REFRESH_TOKEN` |
+| `jquants` | `JQUANTS_API_KEY` |
+| `jquants` | `JQUANTS_REFRESH_TOKEN` | legacy v1 only |
 | `kabu` | `KABU_API_PASSWORD` |
 | `kabu` | `KABU_ORDER_PASSWORD` |
 | `ai` | `GEMINI_API_KEY` |
 
 `KABU_API_PASSWORD` と `KABU_ORDER_PASSWORD` は別 field とし、同値にしない。
+`JQUANTS_API_VERSION=v2` を採る限り、production の必須 secret は `JQUANTS_API_KEY` であり、`JQUANTS_REFRESH_TOKEN` は必須ではない。
 Dashboard / Vercel は server-side に `SUPABASE_SECRET_KEY`、client-side に `NEXT_PUBLIC_SUPABASE_URL` と `NEXT_PUBLIC_SUPABASE_ANON_KEY` を設定する。
 
 ## 3. GCP Pub/Sub

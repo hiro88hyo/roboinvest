@@ -16,9 +16,10 @@ GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/gcp-pubsub-sa.json
 SUPABASE_URL=op://Trade AI/production/SUPABASE_URL
 SUPABASE_SECRET_KEY=op://Trade AI/production/SUPABASE_SECRET_KEY
 
-# Universe Scanner batch. Paid-plan production automation is a later ADR-0001 step.
+# Universe Scanner batch. J-Quants API v2 uses API key auth.
 JQUANTS_API_KEY=op://Trade AI/jquants/JQUANTS_API_KEY
-JQUANTS_REFRESH_TOKEN=op://Trade AI/jquants/JQUANTS_REFRESH_TOKEN
+# Optional only for legacy v1 auth flow:
+# JQUANTS_REFRESH_TOKEN=op://Trade AI/jquants/JQUANTS_REFRESH_TOKEN
 JQUANTS_PLAN=standard
 JQUANTS_API_VERSION=v2
 JQUANTS_API_BASE=https://api.jquants.com/v2

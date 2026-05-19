@@ -100,7 +100,8 @@ services/universe-scanner/
 ## 設定（env）
 
 `.env.example` に列挙するキー例:
-- `JQUANTS_REFRESH_TOKEN`: J-Quants リフレッシュトークン
+- `JQUANTS_API_KEY`: J-Quants API v2 の API key
+- `JQUANTS_REFRESH_TOKEN`: legacy v1 を使う場合のリフレッシュトークン
 - `JQUANTS_PLAN`: `light` | `standard` | `premium`
 - `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY`: 書き込み用
 - `SCAN_STATIC_MIN_TURNOVER_JPY`: 静的フィルタの最低売買代金

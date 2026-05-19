@@ -1,6 +1,6 @@
 # Handoff Memo (for coding AIs)
 
-最終更新: 2026-05-18 / HEAD: `1bdfb87` (PR #49 マージ後、Dashboard Auth/RLS PR #50 open)
+最終更新: 2026-05-19 / HEAD: `feat/jquants-integration`
 
 別のコーディング AI（Claude Code 別セッション / Cursor / Copilot 等）がこのリポジトリに着手するときに、最初に目を通すための引き継ぎメモ。詳細は本ファイルではなく各リンク先で確認すること。
 
@@ -26,10 +26,10 @@
 | リスク管理（2%ルール / キルスイッチ / day closeout / swing 自動決済） | ✅ 稼働 |
 | CI（python / dashboard / e2e の 3 job + Dependabot + coverage） | ✅ 緑 |
 | ADR-0001 本番デプロイ | ❌ 文書のみ、未着手 |
-| Universe Scanner 本番自動化 | ❌ J-Quants 有料化待ち、現状は手動 seed |
+| Universe Scanner 本番自動化 | ✅ J-Quants paid cutover 手動実行確認済み、日次自動化は未実装 |
 | 24/7 運用（監視・アラート・バックアップ） | ❌ 未整備 |
 
-**要約**: 「ローカルで paper を回せる」段階までは完成。「本番運用」は ADR-0001 実装と J-Quants 有料移行の 2 本が次の山。
+**要約**: 「ローカルで paper を回せる」段階までは完成。J-Quants paid cutover の手動実行は確認済みで、次の山は ADR-0001 実装の詰めと日次自動化です。
 
 ---
 
@@ -106,21 +106,27 @@ uv run python scripts/health-check.py
 
 ## 6. 次セッションの優先タスク
 
+### 2026-05-19 J-Quants paid cutover メモ
+
+- `infra/env.production` を J-Quants API v2 の `JQUANTS_API_KEY` 前提に修正し、`op run --env-file infra/env.production -- docker compose -f infra/docker-compose.prod.yml --profile batch config` が通ることを確認済み。
+- `universe-scanner` は `--date` 未指定時に `None` を流して落ちていたため、CLI で JST 当日を補う修正を追加。unit test 追加済み。
+- `daily_ohlcv` の一括 PostgREST upsert は `httpx.ReadTimeout` になったため、`SupabaseWriter` を `1000` 件 chunk upsert に変更。unit test 追加済み。
+- `2026-05-19` の batch 実行は完走し、`master_stocks=4444`、`watchlist_size=30`、`valid_date=2026-05-19` を確認済み。`daily_ohlcv` も chunk upsert で Cloud Supabase へ反映済み。
+
 ### 2026-05-18 セッションメモ
 
 - OMS Live Phase 3 本番 28080 の 9432 / 100 株 round-trip は市場時間中に完了。`docs/runbook/oms-live-phase3.md` に詳細を記録済み。kabu 保有は 9432 / 2000 株、未約定注文なし。
 - `OMS_LIVE_DRY_RUN=true` が Phase 3 e2e で無視されるバグを修正済み。PR #49 `Fix OMS live Phase 3 dry run` は merge 済み、main CI 緑。
-- Dashboard Auth/RLS 設計 docs は main に commit 済み (`1bdfb87`)。main CI 緑。
-- Dashboard Auth/RLS 実装は branch `implement-dashboard-auth-rls` / commit `65527e2`。PR #50: https://github.com/hiro88hyo/roboinvest/pull/50
-- PR #50 は CI 全 green。まだ merge しない方針で停止。本番 DB は変更していない。RLS SQL (`contracts/sql/012_dashboard_auth_rls.sql`) はローカル Supabase にのみ適用して検証済み。
-- PR #50 のローカル検証: anon role は `system_status` SELECT 拒否、`dashboard_admins` 登録済み authenticated user は `system_status` SELECT / UPDATE 可。`cd dashboard && npm run lint`、`npm run typecheck`、`npm test` は pass。
-- 次回は PR #50 のレビューから再開。merge 前に Vercel/Supabase Auth provider/admin user/Deployment Protection の本番適用順を再確認すること。
+- Dashboard Auth/RLS は PR #50 として main に merge 済み。merge commit は `4df75a5`。PR: https://github.com/hiro88hyo/roboinvest/pull/50
+- Preview 検証では OAuth redirect と admin RLS まで確認済み。anon role は `system_status` SELECT 拒否、`dashboard_admins` 登録済み authenticated user は `system_status` SELECT / UPDATE 可。
+- `contracts/sql/012_dashboard_auth_rls.sql` は実装済み。本番 DB への適用前に、Vercel / Supabase Auth provider / admin user / Deployment Protection の本番反映順を再確認すること。
+- `cd dashboard && npm run lint`、`npm run typecheck`、`npm test`、CI、Vercel Preview は pass。
 
 | 優先度 | タスク | 備考 |
 |---|---|---|
 | 高 | **ADR-0001 実装** | GCP Pub/Sub / Supabase Cloud Pro / Vercel Hobby / self-hosted runner / 1Password CLI。月額 ~$30 |
-| 高 | **J-Quants 有料プラン移行** | 無料は 2026-02-17 までのデータ上限。移行後 Universe Scanner を本番自動化 |
-| 中 | **24/7 運用整備** | プロセス監視 / ログ集約 / アラート / バックアップ |
+| 高 | **Universe Scanner 日次自動化** | paid cutover の手動実行は確認済み。次は scheduler / routine 化と運用記録の整備 |
+| 中 | **24/7 運用整備** | プロセス監視 / ログ集約 / アラート / バックアップ。未決事項は `docs/runbook/adr-0001-operations-requirements.md` |
 | 低 | **Feeder Book ゼロ再現の原因追及** | register API 仕様 / 別 endpoint 要調査 |
 | 低 | **Phase 3 残課題** | OrderId 冪等性のハードニング（fail-fast 化済、`docs/runbook/oms-live-phase3.md` の手動回復節を参照） |
 

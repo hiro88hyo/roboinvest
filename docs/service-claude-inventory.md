@@ -8,7 +8,7 @@
 
 | Service | CLAUDE.md の主な内容 | 棚卸しメモ |
 |---|---|---|
-| `universe-scanner` | J-Quants ingest、静的/動的フィルタ、`watchlist` 書き込み | 構成説明は有用。env は `SUPABASE_SERVICE_ROLE_KEY` 表記が残るが、現行コード/他 docs は `SUPABASE_SECRET_KEY` 寄り。J-Quants 有料移行待ちのため本番自動化は未完。 |
+| `universe-scanner` | J-Quants ingest、静的/動的フィルタ、`watchlist` 書き込み | 構成説明は有用。env は `SUPABASE_SERVICE_ROLE_KEY` 表記が残るが、現行コード/他 docs は `SUPABASE_SECRET_KEY` 寄り。2026-05-19 に paid cutover の batch 手動実行まで確認済み。 |
 | `feeder` | kabu API 接続、PUSH parser、watchlist 登録、Pub/Sub publish | kabu 接続制約と token cache の注意が重要。古い本番リバプロ記述に nginx が残るが、引き継ぎ上の現方針は Windows 上の Caddy。`KABU_DEFAULT_EXCHANGE=1` 記述は feeder の登録用として扱い、OMS Live の発注 `Exchange=9` と混同しない。 |
 | `feature-engine` | 指標計算、streaming、position price update、storage、PnL reset | 実装フェーズ説明は初期計画の名残。env に `SUPABASE_SERVICE_ROLE_KEY` 表記が残るが、現行実装は `SUPABASE_SECRET_KEY` を読む箇所がある。 |
 | `strategy-rule` | ルール戦略 plugin、backtest、streaming、strategy logs | 「下流未実装」など初期計画文が残る。戦略パラメータと plugin 規約は今も参照価値あり。 |
@@ -24,7 +24,7 @@
 - `SUPABASE_SERVICE_ROLE_KEY` 表記が一部サービス文書に残っている。現行のローカル setup と多くのサービスは `SUPABASE_SECRET_KEY` を使う。変更時は対象サービスの `config.py` / `__main__.py` を正とする。
 - Pub/Sub subscription 件数は古い文書で 7 件と書かれることがある。現行の `infra/pubsub/subscriptions.json` は 9 件。
 - Feeder 文書の本番 reverse proxy は nginx 記述が残る。引き継ぎ上の現方針は Windows 上の Caddy reverse proxy。
-- Universe Scanner の本番自動化は J-Quants 有料プラン移行待ち。ローカル実装済みでも本番 daily automation は未完として扱う。
+- Universe Scanner の実装と paid cutover の手動実行確認までは完了。次の論点は日次自動化の起動方法と、`daily_ohlcv` の大きい upsert を前提にした運用時間の見積もり。
 
 ## Read Order By Task
 
