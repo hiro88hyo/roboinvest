@@ -4,7 +4,6 @@ import json
 
 import httpx
 import pytest
-
 from universe_scanner.clients.supabase import SupabaseWriter
 
 
