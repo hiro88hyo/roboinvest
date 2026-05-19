@@ -194,6 +194,22 @@ ADR-0001「本番デプロイアーキテクチャ」を実装に落とすため
 - [ ] 問題があれば即 kill switch を入れ、`docs/runbook/oms-live-phase3.md` の回復手順に従う
 - [ ] 初回 live 結果を `docs/HANDOFF.md` または runbook に追記する
 
+## 10.5 Live Readiness Snapshot
+
+live までの残りを短く見るための要約。2026-05-19 時点。
+
+- [ ] production compose の paper 朝運用を、オープン前準備から寄り付き後監視まで 1 セッション通す
+- [ ] `14:50` closeout を production compose / Cloud Supabase 構成で実地確認する
+- [ ] `Universe Scanner` の日次起動方式を決める
+- [ ] live 切替当日の最小手順を最終確認する
+- [ ] 最小数量 / allowlist 限定の初回 live を人間監視つきで実行する
+
+補足:
+
+- 技術的な主要ブロッカーはかなり解消済み
+- 残りは paper 実運用確認と、live 切替の運用確認が中心
+- `Universe Scanner` は当面手動でも live 移行は可能だが、常用前に日次自動化したい
+
 ## 11. Done Criteria
 
 - [ ] `make test-all` が通る
