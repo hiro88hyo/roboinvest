@@ -1,6 +1,6 @@
 # Handoff Memo (for coding AIs)
 
-最終更新: 2026-05-18 / HEAD: `4df75a5` (PR #50 merged on `main`)
+最終更新: 2026-05-19 / HEAD: `feat/jquants-integration`
 
 別のコーディング AI（Claude Code 別セッション / Cursor / Copilot 等）がこのリポジトリに着手するときに、最初に目を通すための引き継ぎメモ。詳細は本ファイルではなく各リンク先で確認すること。
 
@@ -26,10 +26,10 @@
 | リスク管理（2%ルール / キルスイッチ / day closeout / swing 自動決済） | ✅ 稼働 |
 | CI（python / dashboard / e2e の 3 job + Dependabot + coverage） | ✅ 緑 |
 | ADR-0001 本番デプロイ | ❌ 文書のみ、未着手 |
-| Universe Scanner 本番自動化 | ❌ J-Quants 有料化待ち、現状は手動 seed |
+| Universe Scanner 本番自動化 | ✅ J-Quants paid cutover 手動実行確認済み、日次自動化は未実装 |
 | 24/7 運用（監視・アラート・バックアップ） | ❌ 未整備 |
 
-**要約**: 「ローカルで paper を回せる」段階までは完成。「本番運用」は ADR-0001 実装と J-Quants 有料移行の 2 本が次の山。
+**要約**: 「ローカルで paper を回せる」段階までは完成。J-Quants paid cutover の手動実行は確認済みで、次の山は ADR-0001 実装の詰めと日次自動化です。
 
 ---
 
@@ -106,6 +106,13 @@ uv run python scripts/health-check.py
 
 ## 6. 次セッションの優先タスク
 
+### 2026-05-19 J-Quants paid cutover メモ
+
+- `infra/env.production` を J-Quants API v2 の `JQUANTS_API_KEY` 前提に修正し、`op run --env-file infra/env.production -- docker compose -f infra/docker-compose.prod.yml --profile batch config` が通ることを確認済み。
+- `universe-scanner` は `--date` 未指定時に `None` を流して落ちていたため、CLI で JST 当日を補う修正を追加。unit test 追加済み。
+- `daily_ohlcv` の一括 PostgREST upsert は `httpx.ReadTimeout` になったため、`SupabaseWriter` を `1000` 件 chunk upsert に変更。unit test 追加済み。
+- `2026-05-19` の batch 実行は完走し、`master_stocks=4444`、`watchlist_size=30`、`valid_date=2026-05-19` を確認済み。`daily_ohlcv` も chunk upsert で Cloud Supabase へ反映済み。
+
 ### 2026-05-18 セッションメモ
 
 - OMS Live Phase 3 本番 28080 の 9432 / 100 株 round-trip は市場時間中に完了。`docs/runbook/oms-live-phase3.md` に詳細を記録済み。kabu 保有は 9432 / 2000 株、未約定注文なし。
@@ -118,7 +125,7 @@ uv run python scripts/health-check.py
 | 優先度 | タスク | 備考 |
 |---|---|---|
 | 高 | **ADR-0001 実装** | GCP Pub/Sub / Supabase Cloud Pro / Vercel Hobby / self-hosted runner / 1Password CLI。月額 ~$30 |
-| 高 | **J-Quants 有料プラン移行** | 無料は 2026-02-17 までのデータ上限。移行後 Universe Scanner を本番自動化 |
+| 高 | **Universe Scanner 日次自動化** | paid cutover の手動実行は確認済み。次は scheduler / routine 化と運用記録の整備 |
 | 中 | **24/7 運用整備** | プロセス監視 / ログ集約 / アラート / バックアップ。未決事項は `docs/runbook/adr-0001-operations-requirements.md` |
 | 低 | **Feeder Book ゼロ再現の原因追及** | register API 仕様 / 別 endpoint 要調査 |
 | 低 | **Phase 3 残課題** | OrderId 冪等性のハードニング（fail-fast 化済、`docs/runbook/oms-live-phase3.md` の手動回復節を参照） |

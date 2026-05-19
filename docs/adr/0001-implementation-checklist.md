@@ -16,7 +16,6 @@ ADR-0001「本番デプロイアーキテクチャ」を実装に落とすため
 
 対象外:
 
-- J-Quants 有料プラン移行
 - 24/7 監視、ログ集約、バックアップの本格整備（未決事項は `docs/runbook/adr-0001-operations-requirements.md`）
 - 複数 OMS Live プロセス化
 - Pub/Sub 以外の messaging への移行
@@ -79,7 +78,18 @@ ADR-0001「本番デプロイアーキテクチャ」を実装に落とすため
 - [x] `scripts/health-check.py` が Cloud Supabase に対して通ることを確認する（9 tables OK）
 - [x] `scripts/reconcile-positions.py --dry-run` が本番 kabu + Cloud Supabase の組み合わせで read-only 実行できることを確認する（kabu only: 9432 qty=2000 avg=152.0）
 
-## 4. Production Compose
+## 4. J-Quants Paid Cutover
+
+- [x] 1Password `Trade AI/jquants` item に `JQUANTS_API_KEY` field を追加する（2026-05-19）
+- [x] `op read "op://Trade AI/jquants/JQUANTS_API_KEY"` が読めることを確認する（2026-05-19: `op run --env-file infra/env.production -- docker compose ... config` で解決確認）
+- [x] `JQUANTS_API_VERSION=v2` 前提では `JQUANTS_REFRESH_TOKEN` を必須にしない運用であることを確認する（2026-05-19: code/docs/env を v2 API key 前提に整理）
+- [x] `infra/env.production` の `JQUANTS_API_KEY` / `JQUANTS_PLAN` / `JQUANTS_API_VERSION=v2` が paid plan 前提になっていることを確認する（2026-05-19）
+- [x] `op run --env-file infra/env.production -- docker compose -f infra/docker-compose.prod.yml --profile batch config` が通る（2026-05-19）
+- [x] `universe-scanner` を batch profile で手動実行し、`master_stocks` / `daily_ohlcv` / `watchlist` が Cloud Supabase に upsert されることを確認する（2026-05-19: `master_stocks=4444`, `watchlist=30`, `daily_ohlcv` chunk upsert 完了）
+- [x] `watchlist` が当営業日 `valid_date` で 20〜50 銘柄程度生成され、空 watchlist を書いていないことを確認する（2026-05-19: `valid_date=2026-05-19`, `watchlist_size=30`）
+- [x] batch 実行結果を runbook / `docs/HANDOFF.md` に記録する（2026-05-19）
+
+## 5. Production Compose
 
 - [x] `infra/docker-compose.prod.yml` を追加する
 - [x] Pub/Sub emulator / `pubsub-init` を prod compose から除外する

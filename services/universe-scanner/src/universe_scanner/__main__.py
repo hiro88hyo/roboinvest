@@ -53,7 +53,8 @@ async def _amain(target_date: date) -> int:
 
 def main() -> None:
     args = _build_parser().parse_args()
-    sys.exit(asyncio.run(_amain(args.target_date)))
+    target_date = args.target_date or datetime.now(JST).date()
+    sys.exit(asyncio.run(_amain(target_date)))
 
 
 if __name__ == "__main__":
