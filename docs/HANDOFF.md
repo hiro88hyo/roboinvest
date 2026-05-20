@@ -76,6 +76,7 @@ uv run python scripts/health-check.py
 - **subscription は手動 PUT が必要**だったが、現在は `infra/pubsub/subscriptions.json` + `init-topics.sh` のサブセクションで自動化済み（`strategy-ai-processed-features` を含む 7 件）。
 - **市場開始前チェックリスト**: subscription 未作成 / `daily_ohlcv` 空 / `watchlist` 未更新 が 3 大要因。`scripts/start-paper-trading.sh` がカバーする範囲とカバーしない範囲をスクリプトを読んで把握すること。
 - **production compose の paper 始業手順**: [`docs/runbook/paper-open-checklist.md`](runbook/paper-open-checklist.md) を参照。Universe Scanner 手動実行 → watchlist 確認 → services 起動の順。
+- **実売買 `GO` の判定基準**: [`docs/runbook/live-go-checklist.md`](runbook/live-go-checklist.md) を参照。`paper GO` / `Weak GO` / `Strong GO` を分けて潰す。
 
 ### 5.2 kabu.com API
 

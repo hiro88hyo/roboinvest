@@ -154,6 +154,7 @@ volume 削除は本 runbook の範囲外とし、必要な場合はバックア�
 - `OMS_LIVE_ALLOWED_SYMBOLS` は検証銘柄だけに絞る。
 - `OMS_LIVE_MAX_QTY_PER_ORDER` は最小単元から始める。
 - live readiness gate は `docs/adr/0001-implementation-checklist.md` の 9 章を満たしてから実施する。
+- 実売買へ切り替える当日の判定は `docs/runbook/live-go-checklist.md` を使い、`paper GO` → `Weak GO` → `Strong GO` の順で潰す。
 - 問題があれば Dashboard / Supabase の kill switch を止める前提で確認する。
 
 ## 10. Post-Run Checks
