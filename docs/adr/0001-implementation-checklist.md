@@ -200,7 +200,7 @@ live までの残りを短く見るための要約。2026-05-19 時点。
 
 - [ ] production compose の paper 朝運用を、オープン前準備から寄り付き後監視まで 1 セッション通す
 - [ ] `14:50` closeout を production compose / Cloud Supabase 構成で実地確認する
-- [ ] `Universe Scanner` の日次起動方式を決める
+- [x] `Universe Scanner` の日次起動方式を決める（2026-05-19: LAN host systemd user timer `roboinvest-universe-scanner.timer` 07:55 JST -> `bash scripts/run-production-universe-scanner.sh`、`docs/runbook/adr-0001-universe-scanner-automation.md`。2026-05-20 JST: timer enabled / linger yes / service manual start success まで確認）
 - [ ] live 切替当日の最小手順を最終確認する
 - [ ] 最小数量 / allowlist 限定の初回 live を人間監視つきで実行する
 

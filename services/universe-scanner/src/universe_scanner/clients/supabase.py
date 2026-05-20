@@ -17,10 +17,7 @@ class SupabaseError(RuntimeError):
 
 @dataclass(slots=True)
 class SupabaseWriter:
-    """Supabase PostgREST 経由の書き込み専用クライアント。
-
-    upsert (merge-duplicates) のみを提供する。読み取りは本サービスでは不要。
-    """
+    """Supabase PostgREST 経由の書き込み専用クライアント。"""
 
     url: str
     secret_key: str
@@ -85,6 +82,31 @@ class SupabaseWriter:
                 index,
                 len(chunk),
             )
+
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((httpx.HTTPError, SupabaseError)),
+    )
+    async def delete_where(self, table: str, *, filters: dict[str, str]) -> None:
+        """Delete rows from `table` matching PostgREST filters like `eq.2026-05-20`."""
+        assert self._client is not None
+        resp = await self._client.delete(
+            f"/rest/v1/{table}",
+            params=filters,
+            headers={"Prefer": "return=minimal"},
+        )
+        if resp.status_code >= 500:
+            raise SupabaseError(
+                "transient error: "
+                f"table={table} status={resp.status_code} body={resp.text[:200]}"
+            )
+        if resp.status_code >= 300:
+            raise SupabaseError(
+                f"delete failed: table={table} status={resp.status_code} body={resp.text[:200]}"
+            )
+        logger.info("supabase delete: table=%s filters=%s", table, filters)
 
 
 def _chunked(rows: list[dict[str, Any]], chunk_size: int) -> list[list[dict[str, Any]]]:

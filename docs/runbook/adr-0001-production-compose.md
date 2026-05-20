@@ -125,6 +125,9 @@ op run --env-file infra/env.production -- \
   docker compose -f infra/docker-compose.prod.yml --profile batch build universe-scanner
 ```
 
+日次自動化は host cron から `bash scripts/run-production-universe-scanner.sh` を呼ぶ方針とする。
+詳細は `docs/runbook/adr-0001-universe-scanner-automation.md` を参照。
+
 ## 8. Stop / Restart
 
 通常停止:

@@ -178,9 +178,9 @@ async def test_invalidate_token_forces_refetch() -> None:
 async def test_connect_websocket_passes_ping_settings(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``ws_ping_interval`` / ``ws_ping_timeout`` がそのまま ``websockets.connect``
-    に渡ること。kabu/Caddy が pong を返さない疑いがあるため、デフォルト
-    (``None`` = client-side ping 無効) も含めて検証する。"""
+    """``ws_ping_interval`` / ``ws_ping_timeout`` / ``ws_max_queue`` がそのまま
+    ``websockets.connect`` に渡ること。kabu/Caddy が pong を返さない疑いが
+    あるため、デフォルト (``None`` = client-side ping 無効) も含めて検証する。"""
     captured: dict[str, Any] = {}
 
     class _DummyConn:
@@ -217,6 +217,7 @@ async def test_connect_websocket_passes_ping_settings(
         assert captured["url"] == "ws://localhost:18081/kabusapi/websocket"
         assert captured["kwargs"]["ping_interval"] is None
         assert captured["kwargs"]["ping_timeout"] is None
+        assert captured["kwargs"]["max_queue"] == 2048
         # X-API-KEY ヘッダも引き続き付与されている
         headers = dict(captured["kwargs"]["additional_headers"])
         assert headers["X-API-KEY"] == "tok-ws"
@@ -231,12 +232,14 @@ async def test_connect_websocket_passes_ping_settings(
         http_client=httpx.AsyncClient(transport=httpx.MockTransport(token_handler)),
         ws_ping_interval=30.0,
         ws_ping_timeout=15.0,
+        ws_max_queue=512,
     )
     try:
         async with client2.connect_websocket():
             pass
         assert captured["kwargs"]["ping_interval"] == 30.0
         assert captured["kwargs"]["ping_timeout"] == 15.0
+        assert captured["kwargs"]["max_queue"] == 512
     finally:
         await client2.aclose()
 

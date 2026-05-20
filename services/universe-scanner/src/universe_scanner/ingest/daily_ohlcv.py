@@ -9,8 +9,11 @@ import polars as pl
 from ..calendar import business_days_back, is_tse_business_day, previous_business_day
 from ..clients.jquants import JQuantsClient
 from ..clients.supabase import SupabaseWriter
+from ..symbols import collect_legacy_symbol_codes, normalize_symbol_code
 
 logger = logging.getLogger(__name__)
+
+_DELETE_CHUNK_SIZE = 200
 
 
 def daily_quotes_to_frame(rows: list[dict[str, Any]]) -> pl.DataFrame:
@@ -40,7 +43,7 @@ def daily_quotes_to_frame(rows: list[dict[str, Any]]) -> pl.DataFrame:
             continue
         records.append(
             {
-                "symbol": str(r.get("Code", "")).strip(),
+                "symbol": normalize_symbol_code(r.get("Code", "")),
                 "date": r.get("Date"),
                 "open": r.get("Open") if "Open" in r else r.get("O"),
                 "high": r.get("High") if "High" in r else r.get("H"),
@@ -53,8 +56,12 @@ def daily_quotes_to_frame(rows: list[dict[str, Any]]) -> pl.DataFrame:
         )
     if not records:
         return pl.DataFrame(schema=schema)
-    df = pl.DataFrame(records).with_columns(pl.col("date").str.to_date())
-    return df.cast(schema)  # type: ignore[arg-type]
+    df = pl.DataFrame(records).with_columns(pl.col("date").str.to_date()).cast(schema)  # type: ignore[arg-type]
+    return df.unique(
+        subset=["symbol", "date"],
+        keep="first",
+        maintain_order=True,
+    )
 
 
 async def ingest_daily_ohlcv(
@@ -73,10 +80,12 @@ async def ingest_daily_ohlcv(
     start = business_days_back(end, lookback_days)
 
     frames: list[pl.DataFrame] = []
+    legacy_codes: set[str] = set()
     cursor = start
     while cursor <= end:
         if is_tse_business_day(cursor):
             rows = await jquants.daily_quotes(target_date=cursor)
+            legacy_codes.update(collect_legacy_symbol_codes(r.get("Code", "") for r in rows))
             frame = daily_quotes_to_frame(rows)
             logger.info("daily_ohlcv: date=%s fetched=%d", cursor, frame.height)
             if frame.height > 0:
@@ -101,6 +110,8 @@ async def ingest_daily_ohlcv(
         }
         for row in df.to_dicts()
     ]
+    if legacy_codes:
+        await _delete_legacy_symbols(supabase, "daily_ohlcv", sorted(legacy_codes))
     await supabase.upsert("daily_ohlcv", payload, on_conflict="symbol,date")
     return df
 
@@ -109,3 +120,16 @@ def _next_day(d: date) -> date:
     from datetime import timedelta
 
     return d + timedelta(days=1)
+
+
+async def _delete_legacy_symbols(
+    supabase: SupabaseWriter,
+    table: str,
+    legacy_codes: list[str],
+) -> None:
+    for start in range(0, len(legacy_codes), _DELETE_CHUNK_SIZE):
+        chunk = legacy_codes[start : start + _DELETE_CHUNK_SIZE]
+        await supabase.delete_where(
+            table,
+            filters={"symbol": f"in.({','.join(chunk)})"},
+        )
