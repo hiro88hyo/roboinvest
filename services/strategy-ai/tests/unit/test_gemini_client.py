@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from strategy_ai.llm.base import LLMError
@@ -9,22 +10,22 @@ from strategy_ai.llm.gemini import DecisionSchema, GeminiClient
 
 
 class _FakeModels:
-    def __init__(self, response):
+    def __init__(self, response: object) -> None:
         self._response = response
-        self.kwargs = None
+        self.kwargs: dict[str, Any] | None = None
 
-    async def generate_content(self, **kwargs):
+    async def generate_content(self, **kwargs: Any) -> object:
         self.kwargs = kwargs
         return self._response
 
 
 class _FakeAio:
-    def __init__(self, response):
+    def __init__(self, response: object) -> None:
         self.models = _FakeModels(response)
 
 
 class _FakeClient:
-    def __init__(self, response):
+    def __init__(self, response: object) -> None:
         self.aio = _FakeAio(response)
 
 
@@ -73,6 +74,7 @@ async def test_complete_sets_json_schema_and_disables_afc() -> None:
 
     await client.complete("prompt")
 
+    assert fake_client.aio.models.kwargs is not None
     config = fake_client.aio.models.kwargs["config"]
     assert config.response_mime_type == "application/json"
     assert config.response_schema is DecisionSchema
