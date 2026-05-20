@@ -191,13 +191,19 @@ class FeederSession:
             done, pending = await asyncio.wait(
                 {ws_task, wl_task}, return_when=asyncio.FIRST_COMPLETED
             )
+
+            if wl_task in done and ws_task in pending:
+                ws_done, ws_pending = await asyncio.wait({ws_task}, timeout=0.05)
+                done |= ws_done
+                pending = (pending - ws_done) | ws_pending
+
             for task in pending:
                 task.cancel()
             for task in pending:
                 with suppress(asyncio.CancelledError, Exception):
                     await task
 
-            first_done = next(iter(done))
+            first_done = ws_task if ws_task in done else wl_task
             task_exc = first_done.exception()
             if task_exc is not None:
                 raise task_exc
