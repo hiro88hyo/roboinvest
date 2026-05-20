@@ -115,6 +115,7 @@ class FeederSession:
     sink: MessageSink
     backoff: BackoffPolicy = field(default_factory=BackoffPolicy)
     sleep: Callable[[float], Awaitable[None]] = field(default=asyncio.sleep)
+    max_pending_sends: int = 64
     _registered: set[SymbolRegistration] = field(default_factory=set, init=False)
 
     async def run(self, *, iterations: int | None = None) -> list[CycleStats]:
@@ -196,7 +197,6 @@ class FeederSession:
                 with suppress(asyncio.CancelledError, Exception):
                     await task
 
-            # done から例外を取り出す。WS 切断は例外なしの「完了」もあり得る
             first_done = next(iter(done))
             task_exc = first_done.exception()
             if task_exc is not None:
@@ -212,6 +212,7 @@ class FeederSession:
         )
 
     async def _consume_ws(self, ws: AsyncIterable[str | bytes], counters: _Counters) -> None:
+        pending_sends: set[asyncio.Task[None]] = set()
         try:
             async for raw in ws:
                 counters.messages_received += 1
@@ -219,12 +220,15 @@ class FeederSession:
                 if payload is None:
                     continue
                 for record in parse_push_message(payload):
-                    await self.sink(record)
-                    counters.records_emitted += 1
+                    await self._enqueue_sink_send(record, pending_sends, counters)
+                await self._drain_completed_sends(pending_sends, counters)
+            await self._finish_pending_sends(pending_sends, counters)
         except ConnectionClosed as exc:
-            # keepalive ping timeout など WS 切断は OSError 契約に揃え、
-            # session.run の (TimeoutError, OSError) ハンドラで reconnect させる
+            await self._cancel_pending_sends(pending_sends)
             raise OSError(f"websocket closed: {exc}") from exc
+        except Exception:
+            await self._cancel_pending_sends(pending_sends)
+            raise
 
     async def _consume_watchlist(self, counters: _Counters) -> None:
         """初回以降の watchlist スナップショットを取り、差分を反映し続ける。"""
@@ -257,6 +261,74 @@ class FeederSession:
             self._registered.update(diff.add)
         return _ApplyResult(add_count=len(diff.add), remove_count=len(diff.remove))
 
+    async def _enqueue_sink_send(
+        self,
+        record: TickData | OrderBookSnapshot,
+        pending_sends: set[asyncio.Task[None]],
+        counters: _Counters,
+    ) -> None:
+        task = asyncio.create_task(self.sink(record), name="feeder-sink-send")
+        pending_sends.add(task)
+        if len(pending_sends) >= max(1, self.max_pending_sends):
+            await self._collect_send_results(pending_sends, counters, wait_for_one=True)
+
+    async def _drain_completed_sends(
+        self,
+        pending_sends: set[asyncio.Task[None]],
+        counters: _Counters,
+    ) -> None:
+        await self._collect_send_results(pending_sends, counters, wait_for_one=False)
+
+    async def _finish_pending_sends(
+        self,
+        pending_sends: set[asyncio.Task[None]],
+        counters: _Counters,
+    ) -> None:
+        while pending_sends:
+            await self._collect_send_results(pending_sends, counters, wait_for_one=True)
+
+    async def _collect_send_results(
+        self,
+        pending_sends: set[asyncio.Task[None]],
+        counters: _Counters,
+        *,
+        wait_for_one: bool,
+    ) -> None:
+        if not pending_sends:
+            return
+        if wait_for_one:
+            done, _ = await asyncio.wait(
+                pending_sends,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        else:
+            done = {task for task in pending_sends if task.done()}
+            if not done:
+                return
+        pending_sends.difference_update(done)
+        for task in done:
+            exc = task.exception()
+            if exc is not None:
+                await self._cancel_pending_sends(pending_sends)
+                raise exc
+            counters.records_emitted += 1
+
+    async def _cancel_pending_sends(self, pending_sends: set[asyncio.Task[None]]) -> None:
+        if not pending_sends:
+            return
+        for task in pending_sends:
+            task.cancel()
+        for task in list(pending_sends):
+            with suppress(asyncio.CancelledError, Exception):
+                await task
+        pending_sends.clear()
+
+
+@dataclass(slots=True)
+class _ApplyResult:
+    add_count: int
+    remove_count: int
+
 
 @dataclass(slots=True)
 class _Counters:
@@ -266,20 +338,19 @@ class _Counters:
     records_emitted: int = 0
 
 
-@dataclass(frozen=True, slots=True)
-class _ApplyResult:
-    add_count: int
-    remove_count: int
-
-
 def _decode_json(raw: str | bytes) -> dict[str, Any] | None:
+    if isinstance(raw, bytes):
+        try:
+            raw = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            logger.warning("ws message decode failed: not utf-8")
+            return None
     try:
-        text = raw.decode("utf-8") if isinstance(raw, bytes) else raw
-        payload: Any = json.loads(text)
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        logger.exception("ws message parse failed")
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        logger.warning("ws message is not valid json: %r", raw[:200])
         return None
     if not isinstance(payload, dict):
-        logger.warning("ws message not a JSON object: type=%s", type(payload).__name__)
+        logger.warning("ws message is not object json: type=%s", type(payload).__name__)
         return None
     return payload

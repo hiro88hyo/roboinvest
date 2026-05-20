@@ -112,6 +112,7 @@ async def run_stream(
             timeout_seconds=settings.kabu_http_timeout_seconds,
             ws_ping_interval=settings.kabu_ws_ping_interval_seconds,
             ws_ping_timeout=settings.kabu_ws_ping_timeout_seconds,
+            ws_max_queue=settings.kabu_ws_max_queue,
             token_cache=token_cache,
         ) as kabu,
         SupabaseWatchlistReader(
@@ -135,6 +136,7 @@ async def run_stream(
             default_exchange=settings.kabu_default_exchange,
             sink=sink,
             backoff=backoff,
+            max_pending_sends=settings.sink_max_pending_records,
         )
         return await session.run(iterations=iterations)
 

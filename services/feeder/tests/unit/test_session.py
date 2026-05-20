@@ -118,6 +118,24 @@ class _CapturingSink:
         self.records.append(record)
 
 
+@dataclass(slots=True)
+class _BlockingSink:
+    release: asyncio.Event
+    started_two: asyncio.Event
+    active: int = 0
+    max_active: int = 0
+    calls: int = 0
+
+    async def __call__(self, record: TickData | OrderBookSnapshot) -> None:
+        self.calls += 1
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        if self.calls >= 2:
+            self.started_two.set()
+        await self.release.wait()
+        self.active -= 1
+
+
 def _row(symbol: str) -> WatchlistRow:
     return WatchlistRow(symbol=symbol, valid_date=date(2026, 4, 25))
 
@@ -162,10 +180,19 @@ def _make_session(
 
 
 async def test_initial_cycle_registers_and_emits_records() -> None:
+    async def _hanging_feed() -> AsyncIterator[list[WatchlistRow]]:
+        yield [_row("7203"), _row("9984")]
+        await asyncio.Event().wait()
+        yield []  # pragma: no cover
+
     kabu = _FakeKabu(ws_messages=[[_ws_tick_msg("7203"), _ws_book_msg("9984")]])
-    session, sink, _ = _make_session(
+    sink = _CapturingSink()
+    session = FeederSession(
         kabu=kabu,
-        watchlist_snapshots=[[_row("7203"), _row("9984")]],
+        watchlist_feed=_hanging_feed(),
+        default_exchange=1,
+        sink=sink,
+        backoff=BackoffPolicy(jitter_ratio=0.0),
     )
 
     results = await session.run(iterations=1)
@@ -338,6 +365,11 @@ async def test_unregister_all_failure_is_swallowed() -> None:
 
 
 async def test_invalid_ws_payload_is_skipped() -> None:
+    async def _hanging_feed() -> AsyncIterator[list[WatchlistRow]]:
+        yield [_row("7203")]
+        await asyncio.Event().wait()
+        yield []  # pragma: no cover
+
     kabu = _FakeKabu(
         ws_messages=[
             [
@@ -347,9 +379,13 @@ async def test_invalid_ws_payload_is_skipped() -> None:
             ]
         ],
     )
-    session, sink, _ = _make_session(
+    sink = _CapturingSink()
+    session = FeederSession(
         kabu=kabu,
-        watchlist_snapshots=[[_row("7203")]],
+        watchlist_feed=_hanging_feed(),
+        default_exchange=1,
+        sink=sink,
+        backoff=BackoffPolicy(jitter_ratio=0.0),
     )
 
     results = await session.run(iterations=1)
@@ -428,3 +464,32 @@ async def test_attempt_resets_after_successful_cycle() -> None:
     # 失敗(1) → 1.0s, 成功(2) attempt リセット, 失敗(3)... が、3 回目で iterations 上限
     # に達するため最後の sleep は走らない仕様。失敗→成功のリセットだけ確認する
     assert sleep_log == [1.0]
+
+
+async def test_ws_sink_delivery_can_overlap() -> None:
+    async def _hanging_feed() -> AsyncIterator[list[WatchlistRow]]:
+        yield [_row("7203")]
+        await asyncio.Event().wait()
+        yield []  # pragma: no cover
+
+    release = asyncio.Event()
+    started_two = asyncio.Event()
+    sink = _BlockingSink(release=release, started_two=started_two)
+    kabu = _FakeKabu(ws_messages=[[_ws_tick_msg("7203"), _ws_tick_msg("9984")]])
+    session = FeederSession(
+        kabu=kabu,
+        watchlist_feed=_hanging_feed(),
+        default_exchange=1,
+        sink=sink,
+        backoff=BackoffPolicy(jitter_ratio=0.0),
+        max_pending_sends=2,
+    )
+
+    task = asyncio.create_task(session.run(iterations=1))
+    await asyncio.wait_for(started_two.wait(), timeout=1.0)
+    release.set()
+    results = await asyncio.wait_for(task, timeout=1.0)
+
+    assert results[0].messages_received == 2
+    assert results[0].records_emitted == 2
+    assert sink.max_active == 2

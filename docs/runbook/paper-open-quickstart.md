@@ -19,6 +19,12 @@ op run --env-file infra/env.production --   docker compose -f infra/docker-compo
 ## 3. Run Universe Scanner
 
 ```bash
+bash scripts/run-production-universe-scanner.sh
+```
+
+直接 compose を叩く場合:
+
+```bash
 op run --env-file infra/env.production --   docker compose -f infra/docker-compose.prod.yml --profile batch run --rm universe-scanner
 ```
 

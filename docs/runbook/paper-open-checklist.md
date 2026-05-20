@@ -23,7 +23,14 @@ op run --env-file infra/env.production -- docker compose -f infra/docker-compose
 
 ## 2. Run Universe Scanner
 
-寄り付き前に当日 watchlist を生成する。
+寄り付き前に当日 watchlist を生成する。通常の手動起動は `bash scripts/run-production-universe-scanner.sh` を使ってよい。
+
+```bash
+cd /home/hiroyuki/workspaces/roboinvest
+bash scripts/run-production-universe-scanner.sh
+```
+
+従来どおり compose を直接叩く場合は次。
 
 ```bash
 set -a && . infra/.op.service-account.env && set +a

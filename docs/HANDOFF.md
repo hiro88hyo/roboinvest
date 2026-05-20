@@ -1,6 +1,6 @@
 # Handoff Memo (for coding AIs)
 
-最終更新: 2026-05-19 / HEAD: `feat/jquants-integration`
+最終更新: 2026-05-20 / HEAD: `main`
 
 別のコーディング AI（Claude Code 別セッション / Cursor / Copilot 等）がこのリポジトリに着手するときに、最初に目を通すための引き継ぎメモ。詳細は本ファイルではなく各リンク先で確認すること。
 
@@ -107,12 +107,32 @@ uv run python scripts/health-check.py
 
 ## 6. 次セッションの優先タスク
 
+### 2026-05-20 paper production test / stabilization wrap-up
+
+- `2026-05-20` の paper production test は日中観測まで完了。Universe Scanner → feeder → feature-engine → strategy-rule / strategy-ai → aggregator → gateway → oms-paper の流れは稼働確認済み。
+- Universe Scanner は J-Quants v2 の旧 5 文字コード混在で `feeder` register が落ちていたため、symbol 正規化と legacy symbol 削除を追加。関連ファイル: `services/universe-scanner/src/universe_scanner/symbols.py`、`ingest/master_stocks.py`、`ingest/daily_ohlcv.py`。
+- `feeder` は `no close frame received or sent` が 3-4 分周期で再発していたため、WS 受信と Pub/Sub publish の完全直列をやめ、bounded concurrency (`max_pending_sends`) を追加。`2026-05-20 12:55 JST` の再デプロイ以降、`15:00 JST` 越えまで reconnect なしで安定観測。
+- `strategy-ai` は Gemini 応答の途中切れに対して parser を強化し、`BUY` / `SELL` / `HOLD` の action token だけ読める断片も安全側で回収するようにした。非正の confidence の signal は strategy で捨てる。
+- `strategy-ai` の recovered-partial 系ログは `INFO` から `DEBUG` に落とした。残る warning はごく少数の `{"action": "` レベル断片のみで、運用上は一旦許容。
+- 実行済みテスト: universe-scanner 13 pass、feeder 38 pass、strategy-ai 25 pass。production compose 上でも `feeder` 長時間安定と `strategy-ai` warning 大幅減を確認済み。
+
+### 2026-05-20 08:55 JST 市場オープン中テスト再開メモ
+
+- 現在は `2026-05-20 08:55 JST` の寄り付き前。次セッションはオープン中の paper production test を優先する。
+- Universe Scanner 自動化は実質完了。`roboinvest-universe-scanner.timer` は enabled/active、`loginctl show-user hiroyuki --property=Linger` は `yes`、`systemctl --user start roboinvest-universe-scanner.service` は `status=0/SUCCESS` まで確認済み。残る未観測は 07:55 JST の定時発火 1 回だけ。
+- 市場オープン中テストは `docs/runbook/paper-open-checklist.md` の Step 4 以降をなぞる。すでに watchlist / daily_ohlcv は生成済みなので、次は `docker compose -f infra/docker-compose.prod.yml up -d --build` で常駐 services を起動し、`health-check.py --check supabase services` を確認する。
+- 起動後は `feeder` の kabu WebSocket 接続、`raw-market-data` 流入、`feature-engine -> strategy-rule / strategy-ai -> aggregator -> gateway -> oms-paper` の流れ、`gateway` reject の偏りを重点監視する。
+- ログ確認コマンド: `op run --env-file infra/env.production -- docker compose -f infra/docker-compose.prod.yml logs --tail=100 feeder feature-engine strategy-rule strategy-ai aggregator gateway oms-paper`
+- 可能なら本日 `2026-05-20` の市場時間中に、paper 構成で寄り付き後の 1 セッション観測を完了させる。次の大きい未完了は production compose / Cloud Supabase 構成での `14:50` closeout 実地確認。
+
 ### 2026-05-19 J-Quants paid cutover メモ
 
 - `infra/env.production` を J-Quants API v2 の `JQUANTS_API_KEY` 前提に修正し、`op run --env-file infra/env.production -- docker compose -f infra/docker-compose.prod.yml --profile batch config` が通ることを確認済み。
 - `universe-scanner` は `--date` 未指定時に `None` を流して落ちていたため、CLI で JST 当日を補う修正を追加。unit test 追加済み。
 - `daily_ohlcv` の一括 PostgREST upsert は `httpx.ReadTimeout` になったため、`SupabaseWriter` を `1000` 件 chunk upsert に変更。unit test 追加済み。
 - `2026-05-19` の batch 実行は完走し、`master_stocks=4444`、`watchlist_size=30`、`valid_date=2026-05-19` を確認済み。`daily_ohlcv` も chunk upsert で Cloud Supabase へ反映済み。
+- 日次起動方式は「LAN host の systemd user timer `roboinvest-universe-scanner.timer` から 07:55 JST に実行」に決定。runbook: `docs/runbook/adr-0001-universe-scanner-automation.md`。
+- `scripts/install-universe-scanner-timer.sh` で timer を有効化し、`loginctl enable-linger hiroyuki` も適用済み。`systemctl --user start roboinvest-universe-scanner.service` は成功し、残る未観測は 07:55 JST の定時発火 1 回だけ。
 
 ### 2026-05-18 セッションメモ
 
@@ -126,7 +146,7 @@ uv run python scripts/health-check.py
 | 優先度 | タスク | 備考 |
 |---|---|---|
 | 高 | **ADR-0001 実装** | GCP Pub/Sub / Supabase Cloud Pro / Vercel Hobby / self-hosted runner / 1Password CLI。月額 ~$30 |
-| 高 | **Universe Scanner 日次自動化** | paid cutover の手動実行は確認済み。次は scheduler / routine 化と運用記録の整備 |
+| 高 | **Universe Scanner 日次自動化** | systemd timer / runbook / service-path fix まで完了。残りは初回 07:55 JST 発火確認 |
 | 中 | **24/7 運用整備** | プロセス監視 / ログ集約 / アラート / バックアップ。未決事項は `docs/runbook/adr-0001-operations-requirements.md` |
 | 低 | **Feeder Book ゼロ再現の原因追及** | register API 仕様 / 別 endpoint 要調査 |
 | 低 | **Phase 3 残課題** | OrderId 冪等性のハードニング（fail-fast 化済、`docs/runbook/oms-live-phase3.md` の手動回復節を参照） |

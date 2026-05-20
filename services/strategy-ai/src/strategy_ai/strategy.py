@@ -54,6 +54,13 @@ class AiStrategy:
         if decision.action is Action.HOLD:
             logger.debug("ai HOLD skipped: symbol=%s", features.symbol)
             return None
+        if decision.confidence <= 0.0:
+            logger.debug(
+                "ai non-positive confidence skipped: symbol=%s action=%s",
+                features.symbol,
+                decision.action.value,
+            )
+            return None
 
         return StrategySignal(
             source=SignalSource.AI,

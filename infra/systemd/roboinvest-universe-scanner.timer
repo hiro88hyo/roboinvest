@@ -1,0 +1,10 @@
+[Unit]
+Description=Run RoboInvest Universe Scanner every weekday before market open
+
+[Timer]
+OnCalendar=Mon..Fri 07:55:00 Asia/Tokyo
+Persistent=true
+Unit=roboinvest-universe-scanner.service
+
+[Install]
+WantedBy=timers.target

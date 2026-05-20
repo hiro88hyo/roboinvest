@@ -88,6 +88,10 @@ async def run_pipeline(
             )
 
         rows = to_watchlist_rows(scored, valid_date_iso=target_date.isoformat())
+        await supabase.delete_where(
+            "watchlist",
+            filters={"valid_date": f"eq.{target_date.isoformat()}"},
+        )
         await supabase.upsert("watchlist", rows, on_conflict="symbol,valid_date")
 
     return PipelineResult(valid_date=target_date, watchlist_size=len(rows))

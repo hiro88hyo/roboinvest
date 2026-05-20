@@ -14,7 +14,9 @@ def test_parse_response_plain_json() -> None:
 
 
 def test_parse_response_with_code_fence() -> None:
-    text = '```json\n{"action": "SELL", "confidence": 0.7, "reasoning": "x"}\n```'
+    text = """```json
+{"action": "SELL", "confidence": 0.7, "reasoning": "x"}
+```"""
     decision = parse_response(text)
     assert decision is not None
     assert decision.action is Action.SELL
@@ -41,6 +43,49 @@ def test_parse_response_lowercase_action_normalised() -> None:
     assert decision is not None
     assert decision.action is Action.BUY
     assert decision.reasoning == ""
+
+
+def test_parse_response_recovers_from_partial_json() -> None:
+    decision = parse_response("""{
+  "action": "HOLD",
+  "confidence": 0.37,
+""")
+    assert decision is not None
+    assert decision.action is Action.HOLD
+    assert decision.confidence == 0.37
+    assert decision.reasoning == ""
+
+
+def test_parse_response_recovers_hold_without_confidence() -> None:
+    decision = parse_response('{"action": "HOLD", "confidence": ')
+    assert decision is not None
+    assert decision.action is Action.HOLD
+    assert decision.confidence == 0.0
+    assert decision.reasoning == ""
+
+
+def test_parse_response_recovers_buy_without_confidence_as_zero() -> None:
+    decision = parse_response('{"action": "BUY", "')
+    assert decision is not None
+    assert decision.action is Action.BUY
+    assert decision.confidence == 0.0
+    assert decision.reasoning == ""
+
+
+def test_parse_response_recovers_unterminated_action_token() -> None:
+    decision = parse_response('{"action": "HOLD')
+    assert decision is not None
+    assert decision.action is Action.HOLD
+    assert decision.confidence == 0.0
+    assert decision.reasoning == ""
+
+
+def test_parse_response_recovers_reasoning_when_present() -> None:
+    decision = parse_response('{"action": "BUY", "confidence": 0.72, "reasoning": "需給が強い"')
+    assert decision is not None
+    assert decision.action is Action.BUY
+    assert decision.confidence == 0.72
+    assert decision.reasoning == "需給が強い"
 
 
 def test_parse_response_rejects_unknown_action() -> None:

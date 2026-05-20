@@ -30,6 +30,9 @@ class FeederSettings(BaseSettings):
     # 必要なら env で値を入れて library default や任意の値を有効化できる。
     kabu_ws_ping_interval_seconds: float | None = None
     kabu_ws_ping_timeout_seconds: float | None = None
+    # 寄り付きなどで PUSH が密になると application 側の publish 待ちで consumer が
+    # 一時的に遅れうるため、受信キューはデフォルトより十分大きく持つ。
+    kabu_ws_max_queue: int | None = 2048
 
     supabase_url: str = ""
     supabase_secret_key: str = ""
@@ -40,6 +43,8 @@ class FeederSettings(BaseSettings):
     pubsub_publish_timeout_seconds: float = 30.0
 
     watchlist_poll_interval_seconds: float = 60.0
+    # WS 受信と Pub/Sub publish を完全直列にしないための上限。
+    sink_max_pending_records: int = 64
 
     reconnect_initial_backoff_sec: float = 1.0
     reconnect_max_backoff_sec: float = 60.0

@@ -1,0 +1,11 @@
+[Unit]
+Description=Run RoboInvest Universe Scanner batch
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+Environment=PATH=/home/hiroyuki/.local/bin:/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=/home/hiroyuki/workspaces/roboinvest
+ExecStart=/usr/bin/env bash /home/hiroyuki/workspaces/roboinvest/scripts/run-production-universe-scanner.sh
+Nice=10

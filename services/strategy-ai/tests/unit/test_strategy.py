@@ -119,3 +119,13 @@ async def test_strategy_returns_none_when_reasoning_missing() -> None:
 
     assert signal is not None
     assert signal.reasoning is None
+
+
+@pytest.mark.asyncio
+async def test_strategy_skips_non_positive_confidence_decision() -> None:
+    llm = FakeLLMClient(['{"action": "BUY", "'])
+    strategy = AiStrategy(llm=llm, min_interval_seconds=60)
+
+    signal = await strategy.evaluate(make_features(), {})
+
+    assert signal is None

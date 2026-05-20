@@ -8,11 +8,14 @@ import polars as pl
 
 from ..clients.jquants import JQuantsClient
 from ..clients.supabase import SupabaseWriter
+from ..symbols import collect_legacy_symbol_codes, normalize_symbol_code
 
 logger = logging.getLogger(__name__)
 
+_DELETE_CHUNK_SIZE = 200
 
-# J-Quants `MarketCodeName` → `master_stocks.market_segment` の正規化。
+
+# J-Quants `MarketCodeName` -> `master_stocks.market_segment` の正規化。
 # 一次情報の表記ゆれに備えて予めマップする。未知値はそのまま保存。
 # キーは J-Quants が返す全角カッコを含む文字列リテラルのため、RUF001 を抑止。
 _MARKET_SEGMENT_ALIASES = {
@@ -45,7 +48,7 @@ def listed_info_to_frame(rows: list[dict[str, Any]]) -> pl.DataFrame:
         )
     records = [
         {
-            "symbol": str(r.get("Code", "")).strip(),
+            "symbol": normalize_symbol_code(r.get("Code", "")),
             "symbol_name": str(r.get("CompanyName") or r.get("CoName") or "").strip(),
             "market_segment": _normalize_segment(r.get("MarketCodeName") or r.get("MktNm")),
             "sector": (
@@ -60,7 +63,11 @@ def listed_info_to_frame(rows: list[dict[str, Any]]) -> pl.DataFrame:
         }
         for r in rows
     ]
-    return pl.DataFrame(records)
+    return pl.DataFrame(records).unique(
+        subset=["symbol"],
+        keep="first",
+        maintain_order=True,
+    )
 
 
 async def ingest_master_stocks(
@@ -74,7 +81,24 @@ async def ingest_master_stocks(
     df = listed_info_to_frame(raw)
     logger.info("master_stocks: fetched=%d", df.height)
 
+    legacy_codes = collect_legacy_symbol_codes(r.get("Code", "") for r in raw)
+    if legacy_codes:
+        await _delete_legacy_symbols(supabase, "master_stocks", legacy_codes)
+
     now = datetime.now(UTC).isoformat()
     payload = [{**row, "updated_at": now} for row in df.to_dicts()]
     await supabase.upsert("master_stocks", payload, on_conflict="symbol")
     return df
+
+
+async def _delete_legacy_symbols(
+    supabase: SupabaseWriter,
+    table: str,
+    legacy_codes: list[str],
+) -> None:
+    for start in range(0, len(legacy_codes), _DELETE_CHUNK_SIZE):
+        chunk = legacy_codes[start : start + _DELETE_CHUNK_SIZE]
+        await supabase.delete_where(
+            table,
+            filters={"symbol": f"in.({','.join(chunk)})"},
+        )
