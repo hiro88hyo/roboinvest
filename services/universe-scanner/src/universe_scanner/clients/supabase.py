@@ -99,8 +99,7 @@ class SupabaseWriter:
         )
         if resp.status_code >= 500:
             raise SupabaseError(
-                "transient error: "
-                f"table={table} status={resp.status_code} body={resp.text[:200]}"
+                f"transient error: table={table} status={resp.status_code} body={resp.text[:200]}"
             )
         if resp.status_code >= 300:
             raise SupabaseError(
