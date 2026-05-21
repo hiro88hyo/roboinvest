@@ -3,9 +3,11 @@
     "raw-market-data",
     "processed-features",
     "strategy-signals-a",
+    "strategy-ai-triggers",
     "strategy-signals-b",
     "trade-signals",
     "live-orders",
-    "paper-orders"
+    "paper-orders",
+    "adr-0001-smoke-test"
   ]
 }

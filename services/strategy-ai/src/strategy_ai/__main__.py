@@ -71,7 +71,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     st = subparsers.add_parser(
         "stream",
-        help="processed-features を購読して strategy-signals-b に publish する常駐ループ",
+        help="strong rule triggers を購読して strategy-signals-b に publish する常駐ループ",
     )
     st.add_argument(
         "--iterations",

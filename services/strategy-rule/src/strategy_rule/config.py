@@ -26,8 +26,10 @@ class StrategyRuleSettings(BaseSettings):
     pubsub_emulator_host: str = ""
     pubsub_subscription_features: str = "strategy-rule-processed-features"
     pubsub_topic_signals: str = "strategy-signals-a"
+    pubsub_topic_ai_triggers: str = "strategy-ai-triggers"
     pubsub_pull_max_messages: int = 100
     pubsub_ack_deadline_seconds: int = 30
+    ai_trigger_min_confidence: float = 0.8
 
     strategies_enabled: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: list(DEFAULT_STRATEGIES),

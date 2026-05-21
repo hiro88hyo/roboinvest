@@ -42,6 +42,8 @@ class StreamRunner:
     - Pub/Sub から pull → `ProcessedFeatures` にパース
     - `StrategyEngine.evaluate` で 0..N 件のシグナルを生成
     - 各 `StrategySignal` を `strategy-signals-a` に publish (1 メッセージ 1 シグナル)
+    - 強い RULE シグナルがある場合は、最も confidence が高い 1 件だけを
+      `strategy-ai-triggers` に `ProcessedFeatures` と一緒に publish
     - 同じバッチを Supabase `strategy_logs` に upsert
     - 処理済みメッセージは ack。パース不能はポイズン扱いで ack、処理中の一過性
       エラーは ack せずに Pub/Sub の再配信に任せる
@@ -118,22 +120,52 @@ class StreamRunner:
 
         try:
             signals = self.engine.evaluate(features)
-            await self._dispatch_signals(features.symbol, signals)
+            await self._dispatch_signals(features, signals)
         except Exception:
             logger.exception("process failed: message_id=%s", msg.message_id)
             return "process_error", 0
         return "processed", len(signals)
 
-    async def _dispatch_signals(self, symbol: str, signals: list[StrategySignal]) -> None:
+    async def _dispatch_signals(
+        self,
+        features: ProcessedFeatures,
+        signals: list[StrategySignal],
+    ) -> None:
         if not signals:
             return
         for signal in signals:
             await self.publisher.publish(
                 self.settings.pubsub_topic_signals,
                 data=signal.model_dump_json().encode("utf-8"),
-                attributes={"symbol": symbol, "source": signal.source.value},
+                attributes={"symbol": features.symbol, "source": signal.source.value},
             )
+        await self._dispatch_ai_trigger(features, signals)
         await self.writer.insert_strategy_logs(signals)
+
+    async def _dispatch_ai_trigger(
+        self,
+        features: ProcessedFeatures,
+        signals: list[StrategySignal],
+    ) -> None:
+        trigger_signal = _select_ai_trigger_signal(
+            signals,
+            min_confidence=self.settings.ai_trigger_min_confidence,
+        )
+        if trigger_signal is None:
+            return
+        payload = {
+            "signal": trigger_signal.model_dump(mode="json"),
+            "features": features.model_dump(mode="json"),
+        }
+        await self.publisher.publish(
+            self.settings.pubsub_topic_ai_triggers,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            attributes={
+                "symbol": features.symbol,
+                "source": trigger_signal.source.value,
+                "action": trigger_signal.action.value,
+            },
+        )
 
 
 def _parse_features(data: bytes) -> ProcessedFeatures | None:
@@ -151,3 +183,14 @@ def _parse_features(data: bytes) -> ProcessedFeatures | None:
         return ProcessedFeatures.model_validate(payload)
     except ValidationError:
         return None
+
+
+def _select_ai_trigger_signal(
+    signals: list[StrategySignal],
+    *,
+    min_confidence: float,
+) -> StrategySignal | None:
+    candidates = [s for s in signals if s.source.value == "RULE" and s.confidence >= min_confidence]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda signal: signal.confidence)

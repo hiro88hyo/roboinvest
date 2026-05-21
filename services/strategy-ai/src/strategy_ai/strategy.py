@@ -29,7 +29,7 @@ class AiStrategy:
     """
 
     llm: LLMClient
-    min_interval_seconds: float = 60.0
+    min_interval_seconds: float = 300.0
     name: str = "ai_consensus"
 
     async def evaluate(

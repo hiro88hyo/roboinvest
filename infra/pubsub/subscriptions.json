@@ -9,8 +9,8 @@
       "topic": "processed-features"
     },
     {
-      "name": "strategy-ai-processed-features",
-      "topic": "processed-features"
+      "name": "strategy-ai-rule-signals",
+      "topic": "strategy-ai-triggers"
     },
     {
       "name": "aggregator-strategy-signals-a",
@@ -35,6 +35,10 @@
     {
       "name": "oms-live-live-orders",
       "topic": "live-orders"
+    },
+    {
+      "name": "adr-0001-smoke-test-sub",
+      "topic": "adr-0001-smoke-test"
     }
   ]
 }

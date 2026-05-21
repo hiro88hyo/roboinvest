@@ -406,3 +406,37 @@ def test_parse_features_round_trip() -> None:
     assert _parse_features(b"not-json") is None
     assert _parse_features(b"[1,2,3]") is None
     assert _parse_features(json.dumps({"symbol": "7203"}).encode()) is None
+
+
+async def test_strong_rule_signal_also_publishes_ai_trigger() -> None:
+    pubsub = _PubSubRouter(pull_batches=[_make_pull_response([("a1", _features_payload())])])
+    supabase = _SupabaseRouter()
+    settings = _settings()
+    settings.ai_trigger_min_confidence = 0.8
+    engine = StrategyEngine(
+        [_FakeStrategy("strong_buy", action=Side.BUY, confidence=Decimal("0.9"))]
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(
+        pubsub_router=pubsub,
+        supabase_router=supabase,
+        engine=engine,
+        settings=settings,
+        run_body=_body,
+    )
+
+    assert stats.signals_emitted == 1
+    assert len(pubsub.published) == 2
+    assert pubsub.published[0].url.path.endswith("/topics/strategy-signals-a:publish")
+    assert pubsub.published[1].url.path.endswith("/topics/strategy-ai-triggers:publish")
+
+    trigger_body = json.loads(pubsub.published[1].content.decode())
+    trigger_msg = trigger_body["messages"][0]
+    trigger_payload = json.loads(base64.b64decode(trigger_msg["data"]).decode("utf-8"))
+    assert trigger_payload["signal"]["symbol"] == "7203"
+    assert trigger_payload["signal"]["confidence"] == 0.9
+    assert trigger_payload["features"]["symbol"] == "7203"
+    assert trigger_msg["attributes"] == {"symbol": "7203", "source": "RULE", "action": "BUY"}
