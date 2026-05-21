@@ -33,7 +33,7 @@ import json
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -42,7 +42,7 @@ from pydantic import ValidationError
 from trade_contracts.enums import Action, TradeMode
 from trade_contracts.signal import UnifiedTradeSignal
 
-from .. import kill_switch
+from .. import kill_switch, lot_calculator
 from ..clients.pubsub import PubSubPublisher, PubSubSubscriber, PulledMessage
 from ..clients.supabase import SupabaseClient
 from ..config import GatewaySettings, RiskConfig
@@ -202,6 +202,25 @@ class StreamRunner:
             self._log_reject(signal, "no_quantity", trade_mode)
             return _Decision(approved=False, kill_switch_fired=False)
 
+        quantity = await self._rebudget_live_buy_quantity(
+            signal=signal,
+            trade_mode=trade_mode,
+            entry_price=entry_price,
+            quantity=quantity,
+        )
+        if quantity is None:
+            self._log_reject(signal, "insufficient_live_budget", trade_mode)
+            return _Decision(approved=False, kill_switch_fired=False)
+
+        quantity = self._cap_live_buy_quantity(
+            signal=signal,
+            trade_mode=trade_mode,
+            quantity=quantity,
+        )
+        if quantity is None:
+            self._log_reject(signal, "live_qty_cap_below_min_lot", trade_mode)
+            return _Decision(approved=False, kill_switch_fired=False)
+
         order = build_order(
             signal=signal,
             quantity=quantity,
@@ -228,6 +247,93 @@ class StreamRunner:
             signal.signal_id,
         )
         return _Decision(approved=True, kill_switch_fired=False)
+
+    async def _rebudget_live_buy_quantity(
+        self,
+        *,
+        signal: UnifiedTradeSignal,
+        trade_mode: TradeMode,
+        entry_price: Decimal | None,
+        quantity: int,
+    ) -> int | None:
+        if trade_mode is not TradeMode.LIVE or signal.action is not Action.BUY:
+            return quantity
+        if entry_price is None:
+            return quantity
+
+        live_exposure = await self.supabase.read_live_capital_in_use()
+        remaining_capital = self.risk_config.capital - live_exposure
+        if remaining_capital <= 0:
+            logger.warning(
+                "live buy budget exhausted: symbol=%s exposure=%s capital=%s",
+                signal.symbol,
+                live_exposure,
+                self.risk_config.capital,
+            )
+            return None
+
+        risk_config = replace(self.risk_config, capital=remaining_capital)
+        check = lot_calculator.calculate(
+            signal=signal,
+            entry_price=entry_price,
+            config=risk_config,
+        )
+        rebudgeted = check.adjusted_quantity if check.passed else None
+        if rebudgeted is None or rebudgeted <= 0:
+            logger.info(
+                "live buy rejected by remaining budget: "
+                "symbol=%s exposure=%s remaining_capital=%s reason=%s",
+                signal.symbol,
+                live_exposure,
+                remaining_capital,
+                check.reason,
+            )
+            return None
+        if rebudgeted < quantity:
+            logger.info(
+                "live buy quantity reduced by exposure budget: "
+                "symbol=%s qty=%d rebudgeted=%d exposure=%s remaining_capital=%s",
+                signal.symbol,
+                quantity,
+                rebudgeted,
+                live_exposure,
+                remaining_capital,
+            )
+        return rebudgeted
+
+    def _cap_live_buy_quantity(
+        self,
+        *,
+        signal: UnifiedTradeSignal,
+        trade_mode: TradeMode,
+        quantity: int,
+    ) -> int | None:
+        if trade_mode is not TradeMode.LIVE or signal.action is not Action.BUY:
+            return quantity
+
+        cap = self.settings.oms_live_max_qty_per_order
+        if cap is None or quantity <= cap:
+            return quantity
+
+        capped = (cap // self.risk_config.min_lot_size) * self.risk_config.min_lot_size
+        if capped < self.risk_config.min_lot_size:
+            logger.warning(
+                "live buy quantity cap below min lot: symbol=%s qty=%d cap=%d min_lot=%d",
+                signal.symbol,
+                quantity,
+                cap,
+                self.risk_config.min_lot_size,
+            )
+            return None
+
+        logger.info(
+            "live buy quantity capped: symbol=%s qty=%d capped=%d cap=%d",
+            signal.symbol,
+            quantity,
+            capped,
+            cap,
+        )
+        return capped
 
     def _log_reject(self, signal: UnifiedTradeSignal, reason: str, trade_mode: TradeMode) -> None:
         logger.info(

@@ -214,6 +214,29 @@ async def test_read_latest_daily_close_raises_on_invalid_value() -> None:
             await client.read_latest_daily_close(symbol="7203")
 
 
+async def test_read_live_capital_in_use_sums_current_and_entry_prices() -> None:
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[
+            {"quantity": 100, "current_price": "2500.5", "entry_price": "2400"},
+            {"quantity": 200, "current_price": None, "entry_price": "1100"},
+            {"quantity": 0, "current_price": "9999", "entry_price": "9999"},
+        ])
+
+    async with _build_client(_handler) as client:
+        total = await client.read_live_capital_in_use()
+
+    assert str(total) == "470050.0"
+
+
+async def test_read_live_capital_in_use_raises_on_invalid_quantity() -> None:
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[{"quantity": "oops", "current_price": "2500"}])
+
+    async with _build_client(_handler) as client:
+        with pytest.raises(SupabaseError, match="invalid position quantity"):
+            await client.read_live_capital_in_use()
+
+
 async def test_read_latest_daily_close_retries_on_5xx() -> None:
     calls: list[httpx.Request] = []
 

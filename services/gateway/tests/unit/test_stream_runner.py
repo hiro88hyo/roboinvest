@@ -264,6 +264,75 @@ async def test_buy_with_no_existing_position_publishes_to_live_orders() -> None:
     assert json.loads(pubsub.acked[0].content.decode()) == {"ackIds": ["a1"]}
 
 
+async def test_live_buy_quantity_is_capped_by_oms_limit() -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response(
+                [(
+                    "a1",
+                    _unified_payload(
+                        action=Action.BUY,
+                        stop_loss_price="2400",
+                    ),
+                )]
+            )
+        ]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trade_mode="live")],
+        positions_quantity_rows=[[]],
+        positions_price_rows=[[{"current_price": "2500"}]],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        settings=_settings(oms_live_max_qty_per_order=100),
+        run_body=_body,
+    )
+
+    assert stats.approved == 1
+    body = json.loads(pubsub.published[0].content.decode())
+    order = json.loads(base64.b64decode(body["messages"][0]["data"]).decode())
+    assert order["quantity"] == 100
+
+
+async def test_live_buy_is_rejected_when_existing_live_exposure_exhausts_budget() -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response(
+                [(
+                    "a1",
+                    _unified_payload(
+                        action=Action.BUY,
+                        stop_loss_price="2400",
+                    ),
+                )]
+            )
+        ]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trade_mode="live")],
+        positions_quantity_rows=[[]],
+        positions_price_rows=[
+            [{"current_price": "2500"}],
+            [{"quantity": 300, "current_price": "2500"}],
+        ],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+
+    assert stats.approved == 0
+    assert stats.rejected == 1
+    assert pubsub.published == []
+
+
 async def test_paper_mode_publishes_to_paper_orders() -> None:
     pubsub = _PubSubRouter(
         pull_batches=[

@@ -31,7 +31,7 @@ ADR-0001「本番デプロイアーキテクチャ」を実装に落とすため
 - [x] Vercel project 名と GitHub repository 連携方針を決める（`trade-ai-dashboard`, root `dashboard/`, `docs/runbook/adr-0001-dashboard-vercel.md`）
 - [x] 1Password vault / item / field naming を決める（`docs/adr/0001-production-prerequisites.md`）
 - [x] 1Password 登録手順を runbook 化する（`docs/runbook/adr-0001-1password.md`）
-- [ ] `OMS_LIVE_DRY_RUN` が本番テンプレートで明示管理される方針を決める
+- [x] `OMS_LIVE_DRY_RUN` が本番テンプレートで明示管理される方針を決める（`infra/env.production.tpl` で `OMS_LIVE_DRY_RUN=true` を明示し、`docs/runbook/adr-0001-production-compose.md` に初回は dry-run 維持と記載）
 
 ## 2. GCP Pub/Sub
 
@@ -126,7 +126,7 @@ ADR-0001「本番デプロイアーキテクチャ」を実装に落とすため
 - [x] kabu API password と order password を別 field として登録する（1Password `kabu/KABU_API_PASSWORD`, `kabu/KABU_ORDER_PASSWORD` 読取確認済み）
 - [x] GCP credentials の扱いを決める（初回 trial は 1Password から service account key JSON を一時 materialize、将来 ADC 相当に移行）
 - [x] `op run -- docker compose -f infra/docker-compose.prod.yml up -d` の起動手順を runbook 化する
-- [ ] 起動後に host 上へ secret 実値ファイルが残らないことを確認する（`infra/secrets/gcp-pubsub-sa.json` は稼働中 compose が ro mount 中のため停止時に削除）
+- [x] 起動後に host 上へ secret 実値ファイルが残らないことを確認する（2026-05-21: bind mount 元を tmpfs `/dev/shm/roboinvest/gcp-pubsub-sa.json` へ移行し、`infra/secrets/gcp-pubsub-sa.json` は削除済み）
 - [x] `.gitignore` に本番 secret materialize 先を追加する
 
 ## 6. Dashboard / Vercel
@@ -142,8 +142,8 @@ ADR-0001「本番デプロイアーキテクチャ」を実装に落とすため
 
 ## 7. GitHub Actions Deploy
 
-- [ ] LAN host に repo-scoped self-hosted runner をインストールする
-- [ ] repository は private のまま運用する
+- [x] LAN host に repo-scoped self-hosted runner をインストールする（`/home/hiroyuki/actions-runner` に `.runner` / `.credentials` / `.service` あり。repo-scoped runner 設定済み）
+- [x] repository は private のまま運用する（GitHub API `repos/hiro88hyo/roboinvest.private=true` を確認）
 - [x] runner user の権限を Docker 操作に必要な範囲へ絞る方針を runbook 化する（Docker group は host root 相当として扱う）
 - [x] deploy workflow を追加する（`.github/workflows/deploy-production.yml`）
 - [x] deploy workflow は `workflow_dispatch` で動かす（`dry_run=true` がデフォルト、`production` environment 承認前提）
@@ -162,7 +162,7 @@ ADR-0001「本番デプロイアーキテクチャ」を実装に落とすため
 - [x] `raw-market-data` から `processed-features` まで流れることを確認する（7203 tick publish→feature-engine pull/publish/ack）
 - [x] Strategy A/B から Aggregator/Gateway まで流れることを確認する（A/B smoke signals→aggregator_logs→trade-signals→paper-orders）
 - [x] OMS Paper が約定を作り `trades_paper` / `positions` を更新することを確認する（7203 BUY qty=300 price=2510）
-- [ ] 14:50 day closeout が paper positions を閉じることを確認する（事前コード確認済み: scheduler 有効、JST 14:50、`trading_style=day`、7203 paper day qty=300。実閉鎖確認は未実施）
+- [ ] 14:50 day closeout が paper positions を閉じることを確認する（事前コード確認済み: scheduler 有効、JST 14:50、`trading_style=day`、7203 paper day qty=300。paper 実閉鎖は未再観測。2026-05-21 は live で closeout 実地確認済み）
 - [x] Dashboard の realtime 表示が更新されることを確認する（Cloud 初期表示 7203 OK、anon Realtime `system_status` UPDATE event OK）
 - [x] paper trial のログと Supabase 状態を runbook に記録する（`docs/runbook/adr-0001-paper-production-trial.md`）
 
@@ -185,24 +185,24 @@ ADR-0001「本番デプロイアーキテクチャ」を実装に落とすため
 
 ## 10. First Live Cutover
 
-- [ ] Dashboard で `trade_mode=live` に切り替える
-- [ ] kill switch を有効に戻す前に `positions(live)` が期待状態であることを確認する
-- [ ] `OMS_LIVE_DRY_RUN` を unset または `false` にする
-- [ ] 最小数量 / allowlist 限定で 1 注文だけ通す
-- [ ] kabu 側の注文照会と `trades_live` を突合する
-- [ ] `positions(live)` と kabu 実保有を突合する
-- [ ] 問題があれば即 kill switch を入れ、`docs/runbook/oms-live-phase3.md` の回復手順に従う
-- [ ] 初回 live 結果を `docs/HANDOFF.md` または runbook に追記する
+- [x] Dashboard で `trade_mode=live` に切り替える（2026-05-21: production Cloud Supabase `system_status.trade_mode=live` へ切替済み）
+- [x] kill switch を有効に戻す前に `positions(live)` が期待状態であることを確認する（2026-05-21: Strong GO 後および引け後とも `positions(live)` 空を確認）
+- [x] `OMS_LIVE_DRY_RUN` を unset または `false` にする（2026-05-21: 通常 live 運用移行時に `OMS_LIVE_DRY_RUN=false` へ切替済み）
+- [x] 最小数量 / allowlist 限定で 1 注文だけ通す（2026-05-21: Strong GO で `9432 / 100` を実施、その後 watchlist 30 銘柄へ段階拡張）
+- [x] kabu 側の注文照会と `trades_live` を突合する（2026-05-21: Strong GO `9432` BUY/SELL と live session の約定を `/orders` と `trades_live` で確認）
+- [x] `positions(live)` と kabu 実保有を突合する（2026-05-21: Strong GO 後は双方空、日中も引け後に live ポジション残なしを確認）
+- [x] 問題があれば即 kill switch を入れ、`docs/runbook/oms-live-phase3.md` の回復手順に従う（中止手順・kill switch ON/OFF・fail-fast 回復手順を runbook 化済み）
+- [x] 初回 live 結果を `docs/HANDOFF.md` または runbook に追記する（2026-05-21: `docs/HANDOFF.md` に Strong GO / live session 結果を記録済み）
 
 ## 10.5 Live Readiness Snapshot
 
 live までの残りを短く見るための要約。2026-05-19 時点。
 
-- [ ] production compose の paper 朝運用を、オープン前準備から寄り付き後監視まで 1 セッション通す
-- [ ] `14:50` closeout を production compose / Cloud Supabase 構成で実地確認する
+- [x] production compose の paper 朝運用を、オープン前準備から寄り付き後監視まで 1 セッション通す（2026-05-20: Universe Scanner -> feeder -> feature-engine -> strategy-rule / strategy-ai -> aggregator -> gateway -> oms-paper の日中観測を完了）
+- [x] `14:50` closeout を production compose / Cloud Supabase 構成で実地確認する（2026-05-21: live セッション引け後に positions(live) 空、2874 最終 round-trip 後も残ポジションなし）
 - [x] `Universe Scanner` の日次起動方式を決める（2026-05-19: LAN host systemd user timer `roboinvest-universe-scanner.timer` 07:55 JST -> `bash scripts/run-production-universe-scanner.sh`、`docs/runbook/adr-0001-universe-scanner-automation.md`。2026-05-20 JST: timer enabled / linger yes / service manual start success まで確認）
-- [ ] live 切替当日の最小手順を最終確認する
-- [ ] 最小数量 / allowlist 限定の初回 live を人間監視つきで実行する
+- [x] live 切替当日の最小手順を最終確認する（2026-05-21: paper GO -> Weak GO -> Strong GO -> `trade_mode=live` / `OMS_LIVE_DRY_RUN=false` 切替を本番で通し、token 競合時の注意点も `docs/HANDOFF.md` に記録）
+- [x] 最小数量 / allowlist 限定の初回 live を人間監視つきで実行する（2026-05-21: Strong GO `9432 / 100` 実施後、通常 live 運用へ段階移行）
 
 補足:
 
@@ -212,11 +212,11 @@ live までの残りを短く見るための要約。2026-05-19 時点。
 
 ## 11. Done Criteria
 
-- [ ] `make test-all` が通る
-- [ ] production compose が LAN host で `paper` mode として継続稼働する
-- [ ] managed Pub/Sub / Supabase Cloud / Vercel の本番接続がすべて確認済み
-- [ ] self-hosted runner から deploy できる
-- [ ] secrets が平文ファイルとして永続化されない
-- [ ] paper trial の E2E と 14:50 closeout が本番構成で確認済み
-- [ ] live 初回の最小注文が kabu / Supabase / Dashboard で突合済み
-- [ ] rollback / kill switch / reconcile の手順が runbook 化済み
+- [x] `make test-all` が通る（2026-05-20: 905 passed, 21 skipped + dashboard 47 passed）
+- [x] production compose が LAN host で `paper` mode として継続稼働する（2026-05-20: paper production test を日中セッションで完了、`feeder` reconnect 問題も再デプロイ後は 15:00 JST 越えまで未再発）
+- [x] managed Pub/Sub / Supabase Cloud / Vercel の本番接続がすべて確認済み（Pub/Sub managed topics/subscriptions, Cloud Supabase, Vercel Preview まで確認済み）
+- [x] self-hosted runner から deploy できる（GitHub Actions `Deploy Production` run `25981863922` success、`Deploy on LAN host` job 完走）
+- [x] secrets が平文ファイルとして永続化されない（2026-05-21: GCP service account key は tmpfs `/dev/shm/roboinvest/gcp-pubsub-sa.json` にのみ materialize、repo 配下の永続ファイルは削除済み）
+- [ ] paper trial の E2E と 14:50 closeout が本番構成で確認済み（2026-05-20 paper 日中観測は完了、14:50 closeout は live で実地確認済みだが paper では未再観測）
+- [x] live 初回の最小注文が kabu / Supabase / Dashboard で突合済み（2026-05-21: Strong GO `9432 / 100` を kabu `/orders`、Supabase `trades_live` / `positions(live)`、Dashboard監視手段で確認）
+- [x] rollback / kill switch / reconcile の手順が runbook 化済み（`docs/runbook/adr-0001-github-actions-deploy.md`、`docs/runbook/oms-live-phase3.md`、`scripts/reconcile-positions.py`）

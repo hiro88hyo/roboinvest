@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -18,6 +19,7 @@ class GatewaySettings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        populate_by_name=True,
     )
 
     log_level: str = "INFO"
@@ -38,6 +40,10 @@ class GatewaySettings(BaseSettings):
     swing_risk_scale: Decimal = Decimal("0.5")
     default_stop_loss_spread_pct: Decimal = Decimal("0.02")
     min_lot_size: int = 100
+    oms_live_max_qty_per_order: int | None = Field(
+        default=None,
+        validation_alias="OMS_LIVE_MAX_QTY_PER_ORDER",
+    )
 
     backtest_output_dir: Path = Path("./out/gateway")
 

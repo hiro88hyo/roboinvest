@@ -93,21 +93,21 @@ op://Trade AI/production/GOOGLE_APPLICATION_CREDENTIALS_JSON
 以後、LAN host では必要時に 1Password から materialize する。
 
 ```bash
-mkdir -p infra/secrets
-op read "op://Trade AI/production/GOOGLE_APPLICATION_CREDENTIALS_JSON" > infra/secrets/gcp-pubsub-sa.json
-chmod 600 infra/secrets/gcp-pubsub-sa.json
+mkdir -p /dev/shm/roboinvest
+op read "op://Trade AI/production/GOOGLE_APPLICATION_CREDENTIALS_JSON" > /dev/shm/roboinvest/gcp-pubsub-sa.json
+chmod 600 /dev/shm/roboinvest/gcp-pubsub-sa.json
 ```
 
 JSON として読めることを確認する。
 
 ```bash
-uv run python -m json.tool infra/secrets/gcp-pubsub-sa.json >/dev/null
+uv run python -m json.tool /dev/shm/roboinvest/gcp-pubsub-sa.json >/dev/null
 ```
 
 `client_email` が想定 service account であることだけ確認する。secret 値は表示しない。
 
 ```bash
-uv run python -c 'import json; print(json.load(open("infra/secrets/gcp-pubsub-sa.json"))["client_email"])'
+uv run python -c 'import json; print(json.load(open("/dev/shm/roboinvest/gcp-pubsub-sa.json"))["client_email"])'
 ```
 
 期待値:
@@ -171,21 +171,21 @@ op run --env-file infra/env.production -- \
 GCP Pub/Sub resource 作成・smoke test は以下で行う。
 
 ```bash
-GOOGLE_APPLICATION_CREDENTIALS=infra/secrets/gcp-pubsub-sa.json \
+GOOGLE_APPLICATION_CREDENTIALS=/dev/shm/roboinvest/gcp-pubsub-sa.json \
   uv run scripts/gcp-pubsub-admin.py --project-id trade-ai-prod
 ```
 
 不足がある場合:
 
 ```bash
-GOOGLE_APPLICATION_CREDENTIALS=infra/secrets/gcp-pubsub-sa.json \
+GOOGLE_APPLICATION_CREDENTIALS=/dev/shm/roboinvest/gcp-pubsub-sa.json \
   uv run scripts/gcp-pubsub-admin.py --project-id trade-ai-prod --apply
 ```
 
 一時 topic / subscription で smoke test:
 
 ```bash
-GOOGLE_APPLICATION_CREDENTIALS=infra/secrets/gcp-pubsub-sa.json \
+GOOGLE_APPLICATION_CREDENTIALS=/dev/shm/roboinvest/gcp-pubsub-sa.json \
   uv run scripts/gcp-pubsub-admin.py \
     --project-id trade-ai-prod \
     --smoke-test \
@@ -284,7 +284,7 @@ rg -n 'OP_SERVICE_ACCOUNT_TOKEN=' docs .github infra --glob '!infra/.op.service-
 ## 9. Cleanup
 
 - `infra/env.production` は `.gitignore` 対象。commit しない。
-- `infra/secrets/gcp-pubsub-sa.json` は `.gitignore` 対象。必要時だけ置く。
+- `/dev/shm/roboinvest/gcp-pubsub-sa.json` は `.gitignore` 対象。必要時だけ置く。
 - 作業端末にダウンロードした service account key JSON は削除する。
 - shell history、terminal scrollback、screen recording に secret が残っていないか注意する。
 - key を rotate したら、1Password field を更新し、古い key は Google Cloud Console で disable / delete する。

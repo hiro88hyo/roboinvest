@@ -226,6 +226,57 @@ class SupabaseClient:
         wait=wait_exponential(multiplier=1, min=1, max=10),
         retry=retry_if_exception_type((httpx.HTTPError, SupabaseError)),
     )
+    async def read_live_capital_in_use(self) -> Decimal:
+        """Return summed live position value using current_price, falling back to entry_price."""
+        assert self._client is not None
+        resp = await self._client.get(
+            "/rest/v1/positions",
+            params={
+                "select": "quantity,current_price,entry_price",
+                "trade_type": "eq.live",
+            },
+        )
+        if resp.status_code >= 500:
+            raise SupabaseError(
+                f"transient error: table=positions status={resp.status_code} body={resp.text[:200]}"
+            )
+        if resp.status_code >= 300:
+            raise SupabaseError(
+                f"read failed: table=positions status={resp.status_code} body={resp.text[:200]}"
+            )
+        rows = resp.json()
+        if not isinstance(rows, list):
+            raise SupabaseError(f"unexpected positions payload: {type(rows).__name__}")
+        total = Decimal("0")
+        for row in rows:
+            if not isinstance(row, dict):
+                raise SupabaseError(f"invalid position row: {row!r}")
+            try:
+                quantity = int(row["quantity"])
+            except (KeyError, TypeError, ValueError) as exc:
+                raise SupabaseError(f"invalid position quantity: {row}") from exc
+            if quantity <= 0:
+                continue
+            raw_price = row.get("current_price")
+            if raw_price is None:
+                raw_price = row.get("entry_price")
+            if raw_price is None:
+                continue
+            try:
+                price = Decimal(str(raw_price))
+            except (InvalidOperation, ValueError) as exc:
+                raise SupabaseError(f"invalid position price: {raw_price!r}") from exc
+            if price <= 0:
+                continue
+            total += price * quantity
+        return total
+
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((httpx.HTTPError, SupabaseError)),
+    )
     async def disable_trading(self, *, now: datetime | None = None) -> None:
         """Flip ``system_status.is_trading_allowed`` to ``false`` (kill-switch firing).
 

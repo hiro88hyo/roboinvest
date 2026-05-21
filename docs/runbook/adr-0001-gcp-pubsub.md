@@ -96,9 +96,9 @@ op://Trade AI/production/GOOGLE_APPLICATION_CREDENTIALS_JSON
 production compose を起動する LAN host では、1Password から key JSON を materialize する。
 
 ```bash
-mkdir -p infra/secrets
-op read "op://Trade AI/production/GOOGLE_APPLICATION_CREDENTIALS_JSON" > infra/secrets/gcp-pubsub-sa.json
-chmod 600 infra/secrets/gcp-pubsub-sa.json
+mkdir -p /dev/shm/roboinvest
+op read "op://Trade AI/production/GOOGLE_APPLICATION_CREDENTIALS_JSON" > /dev/shm/roboinvest/gcp-pubsub-sa.json
+chmod 600 /dev/shm/roboinvest/gcp-pubsub-sa.json
 ```
 
 `infra/env.production` は container 内 path を指す。
@@ -107,7 +107,7 @@ chmod 600 infra/secrets/gcp-pubsub-sa.json
 GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/gcp-pubsub-sa.json
 ```
 
-`infra/docker-compose.prod.yml` は `infra/secrets/gcp-pubsub-sa.json` を read-only で `/run/secrets/gcp-pubsub-sa.json` に mount する。
+`infra/docker-compose.prod.yml` は `/dev/shm/roboinvest/gcp-pubsub-sa.json` を read-only で `/run/secrets/gcp-pubsub-sa.json` に mount する。
 
 ## 5. Check Current State
 
@@ -115,7 +115,7 @@ GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/gcp-pubsub-sa.json
 check-only は get/list 系なので runtime service account の `Pub/Sub Viewer` で足りる。
 
 ```bash
-GOOGLE_APPLICATION_CREDENTIALS=infra/secrets/gcp-pubsub-sa.json \
+GOOGLE_APPLICATION_CREDENTIALS=/dev/shm/roboinvest/gcp-pubsub-sa.json \
   uv run scripts/gcp-pubsub-admin.py --project-id trade-ai-prod
 ```
 
@@ -125,7 +125,7 @@ missing が出る場合だけ次の apply に進む。
 
 `infra/pubsub/topics.json` / `infra/pubsub/subscriptions.json` に基づいて不足分を作る。
 この `--apply` は topic / subscription 作成権限が必要なため、bootstrap identity で実行する。
-runtime service account key (`infra/secrets/gcp-pubsub-sa.json`) では通常実行しない。
+runtime service account key (`/dev/shm/roboinvest/gcp-pubsub-sa.json`) では通常実行しない。
 
 ```bash
 GOOGLE_APPLICATION_CREDENTIALS=/path/to/bootstrap-pubsub-admin.json \
@@ -135,7 +135,7 @@ GOOGLE_APPLICATION_CREDENTIALS=/path/to/bootstrap-pubsub-admin.json \
 作成後、もう一度 check-only を実行する。
 
 ```bash
-GOOGLE_APPLICATION_CREDENTIALS=infra/secrets/gcp-pubsub-sa.json \
+GOOGLE_APPLICATION_CREDENTIALS=/dev/shm/roboinvest/gcp-pubsub-sa.json \
   uv run scripts/gcp-pubsub-admin.py --project-id trade-ai-prod
 ```
 
@@ -189,7 +189,7 @@ apply / smoke test が終わったら、runtime service account から `Pub/Sub 
 戻した後、runtime credentials で check-only を実行する。
 
 ```bash
-GOOGLE_APPLICATION_CREDENTIALS=infra/secrets/gcp-pubsub-sa.json \
+GOOGLE_APPLICATION_CREDENTIALS=/dev/shm/roboinvest/gcp-pubsub-sa.json \
   uv run scripts/gcp-pubsub-admin.py --project-id trade-ai-prod
 ```
 
@@ -215,7 +215,7 @@ op run --env-file infra/env.production -- \
 
 ## 10. Cleanup / Rotation Notes
 
-- `infra/secrets/gcp-pubsub-sa.json` は `.gitignore` 対象だが、LAN host には実値が残る。trial 後に削除するか、権限・保管場所を明確にする。
+- `/dev/shm/roboinvest/gcp-pubsub-sa.json` は `.gitignore` 対象だが、LAN host には実値が残る。trial 後に削除するか、権限・保管場所を明確にする。
 - service account key を再作成したら、1Password の `GOOGLE_APPLICATION_CREDENTIALS_JSON` を更新し、古い key を GCP 側で disable / delete する。
 - production services は `google-cloud-pubsub` 公式 client 経由で ADC / `GOOGLE_APPLICATION_CREDENTIALS` を使う。
 

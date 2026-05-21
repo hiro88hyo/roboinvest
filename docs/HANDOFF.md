@@ -83,7 +83,7 @@ uv run python scripts/health-check.py
 - **kabuステーションは localhost 限定**（http.sys URL ACL の制約）。本番は Windows 上の Caddy リバプロ（28080/28081）、開発機からは SSH トンネル経由。WS の Host ヘッダー上書き禁止。
 - **本番は SOR 必須（Exchange=9）**。`KABU_DEFAULT_EXCHANGE` のデフォルトは `9`（commit 885ed7b）。`1` だと `Code:100378` で reject。
 - **検証 18081 は sendorder を黙殺する**。実発注検証は本番 28080 のみ。
-- **Feeder と OMS Live の kabu トークンは共有ファイル経由**（`KABU_TOKEN_CACHE_FILE`、デフォルト `/tmp/kabu_token_cache.json`、PR #42）。`KABU_API_PASSWORD` を同じにしても奪い合いにならない。
+- **Feeder と OMS Live の kabu トークンは共有ファイル経由**（`KABU_TOKEN_CACHE_FILE`、デフォルト `/tmp/kabu_token_cache.json`、PR #42）。ただし **別プロセスが `/token` を再発行すると既存 token は無効化される** ため、Strong GO の実発注では `feeder` や確認用 probe を止めて OMS Live 単独にすること。
 - **OMS Live は `KABU_API_PASSWORD` と `KABU_ORDER_PASSWORD` を別 env で読む**。`.env` で同値だと sendorder が通らない（2026-05-13 で踏んだ）。
 
 ### 5.3 Supabase / contracts
@@ -116,6 +116,28 @@ uv run python scripts/health-check.py
 - `strategy-ai` は Gemini 応答の途中切れに対して parser を強化し、`BUY` / `SELL` / `HOLD` の action token だけ読める断片も安全側で回収するようにした。非正の confidence の signal は strategy で捨てる。
 - `strategy-ai` の recovered-partial 系ログは `INFO` から `DEBUG` に落とした。残る warning はごく少数の `{"action": "` レベル断片のみで、運用上は一旦許容。
 - 実行済みテスト: universe-scanner 13 pass、feeder 38 pass、strategy-ai 25 pass。production compose 上でも `feeder` 長時間安定と `strategy-ai` warning 大幅減を確認済み。
+
+### 2026-05-21 Strong GO 完了メモ
+
+- `paper GO`、`Weak GO` は production compose / Cloud Supabase / managed Pub/Sub 上で完了。市場オープン後の `gateway` reject は `already_long` / `no_position_for_sell` が主で、reject 偏重ではなかった。
+- `2026-05-21 09:10-09:11 JST` に OMS Live の最小 round-trip を実施。対象は `9432 / 100`、`trade_mode=paper` のまま `live-orders` へ直接 publish して `oms-live` のみで e2e を確認した。
+- 約定結果は BUY `155.40` → SELL `155.25`、`system_status.daily_pnl=-15.00`。Supabase は `trades_live` 2 行、`positions(live)` は空に復帰。kabu `/orders` にも 2 件の約定履歴が残り、残ポジションはなし。
+- 実施中に、`feeder` 稼働中または `probe-kabu-oms.py` 実行中だと kabu `/token` 再発行で OMS Live の token が失効し、`sendorder` が `401 APIキー不一致` になることを再確認した。Strong GO を再実施する場合は `feeder` 停止、`KABU_TOKEN_CACHE_FILE=` で one-shot `oms-live` を起動し、途中で kabu probe を打たないこと。
+- 実発注後は `feeder` / 常駐 `oms-live` を production compose で再起動済み。常駐 `oms-live` は `OMS_LIVE_DRY_RUN=true` に戻っている。
+
+### 2026-05-21 live session メモ
+
+- 2026-05-21 は trade_mode=live / OMS_LIVE_DRY_RUN=false で日中 live 運用を実施。trades_live には少なくとも 3905、6232、4047、9880、2874 の round-trip が残り、引け後の positions(live) は空、system_status.daily_pnl=15975.0 を確認した。
+- 当日 watchlist 30 銘柄へ OMS_LIVE_ALLOWED_SYMBOLS を拡張して live 運用した。初期は 9432 固定だったため allowed_symbols reject が多かったが、拡張後は自然約定が通った。
+- token 競合を避けるための one-shot Strong GO 実施後、通常運用では常駐 feeder / oms-live を再起動済み。
+- 運用中に見えた主な課題は 2 つ。
+  1. gateway が 200/400/500/1500 株の live BUY を出し、oms-live が OMS_LIVE_MAX_QTY_PER_ORDER=100 で reject していた。
+  2. 一部銘柄で kabu Code 21: 可能額が不足 が複数回発生した。
+- 課題 1 への対処として、gateway 側に OMS_LIVE_MAX_QTY_PER_ORDER を読み込ませ、live BUY 数量を publish 前に cap する修整を追加済み。production gateway 再ビルド・再起動済み。
+- 課題 2 への対処として、gateway 側に positions(live) の評価額合計を差し引いた残予算で live BUY 数量を再計算するガードを追加済み。これにより open live exposure がある状態では新規 BUY が縮小または reject される。production gateway 再ビルド・再起動済み。
+- 追加テスト: uv run pytest services/gateway/tests/unit で 125 passed。
+- 次セッションの確認ポイントは、翌営業日の寄り付き後に max_qty_per_order reject と kabu Code 21 が実際に減るかを live ログで観測すること。
+- 2026-05-21 引け後に production compose の GCP credentials mount を repo 配下 `infra/secrets/gcp-pubsub-sa.json` から tmpfs `/dev/shm/roboinvest/gcp-pubsub-sa.json` へ移行し、旧平文ファイルは削除済み。`Deploy Production` workflow、`run-production-universe-scanner.sh`、関連 runbook も tmpfs 前提へ更新した。
 
 ### 2026-05-20 08:55 JST 市場オープン中テスト再開メモ
 

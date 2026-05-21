@@ -14,7 +14,7 @@ x-python-service: &python-service
     <<: *common-env
   volumes:
     - trade-ai-logs:/app/logs
-    - ./secrets/gcp-pubsub-sa.json:/run/secrets/gcp-pubsub-sa.json:ro
+    - ${GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH:-/dev/shm/roboinvest/gcp-pubsub-sa.json}:/run/secrets/gcp-pubsub-sa.json:ro
 
 x-stream-service: &stream-service
   <<: *python-service
@@ -61,7 +61,7 @@ services:
     volumes:
       - trade-ai-logs:/app/logs
       - kabu-token-cache:/var/lib/kabu
-      - ./secrets/gcp-pubsub-sa.json:/run/secrets/gcp-pubsub-sa.json:ro
+      - ${GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH:-/dev/shm/roboinvest/gcp-pubsub-sa.json}:/run/secrets/gcp-pubsub-sa.json:ro
 
   feature-engine:
     <<: *stream-service
@@ -81,7 +81,7 @@ services:
       - trade-ai-logs:/app/logs
       - feature-warm-data:/data/warm
       - feature-cold-data:/data/cold
-      - ./secrets/gcp-pubsub-sa.json:/run/secrets/gcp-pubsub-sa.json:ro
+      - ${GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH:-/dev/shm/roboinvest/gcp-pubsub-sa.json}:/run/secrets/gcp-pubsub-sa.json:ro
 
   strategy-rule:
     <<: *stream-service
@@ -158,6 +158,7 @@ services:
       SWING_RISK_SCALE: ${SWING_RISK_SCALE:-0.5}
       DEFAULT_STOP_LOSS_SPREAD_PCT: ${DEFAULT_STOP_LOSS_SPREAD_PCT:-0.02}
       MIN_LOT_SIZE: ${MIN_LOT_SIZE:-100}
+      OMS_LIVE_MAX_QTY_PER_ORDER: ${OMS_LIVE_MAX_QTY_PER_ORDER:-}
 
   oms-live:
     <<: *stream-service
@@ -185,7 +186,7 @@ services:
     volumes:
       - trade-ai-logs:/app/logs
       - kabu-token-cache:/var/lib/kabu
-      - ./secrets/gcp-pubsub-sa.json:/run/secrets/gcp-pubsub-sa.json:ro
+      - ${GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH:-/dev/shm/roboinvest/gcp-pubsub-sa.json}:/run/secrets/gcp-pubsub-sa.json:ro
 
   oms-paper:
     <<: *stream-service

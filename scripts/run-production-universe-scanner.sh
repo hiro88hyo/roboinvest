@@ -72,8 +72,8 @@ if [ ! -f infra/env.production ]; then
   exit 1
 fi
 
-if [ ! -f infra/secrets/gcp-pubsub-sa.json ]; then
-  echo "missing infra/secrets/gcp-pubsub-sa.json" >&2
+if [ ! -f /dev/shm/roboinvest/gcp-pubsub-sa.json ]; then
+  echo "missing /dev/shm/roboinvest/gcp-pubsub-sa.json" >&2
   exit 1
 fi
 
