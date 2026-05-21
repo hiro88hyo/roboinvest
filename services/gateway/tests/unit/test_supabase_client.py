@@ -216,11 +216,14 @@ async def test_read_latest_daily_close_raises_on_invalid_value() -> None:
 
 async def test_read_live_capital_in_use_sums_current_and_entry_prices() -> None:
     async def _handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=[
-            {"quantity": 100, "current_price": "2500.5", "entry_price": "2400"},
-            {"quantity": 200, "current_price": None, "entry_price": "1100"},
-            {"quantity": 0, "current_price": "9999", "entry_price": "9999"},
-        ])
+        return httpx.Response(
+            200,
+            json=[
+                {"quantity": 100, "current_price": "2500.5", "entry_price": "2400"},
+                {"quantity": 200, "current_price": None, "entry_price": "1100"},
+                {"quantity": 0, "current_price": "9999", "entry_price": "9999"},
+            ],
+        )
 
     async with _build_client(_handler) as client:
         total = await client.read_live_capital_in_use()

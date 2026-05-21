@@ -268,13 +268,15 @@ async def test_live_buy_quantity_is_capped_by_oms_limit() -> None:
     pubsub = _PubSubRouter(
         pull_batches=[
             _pull_response(
-                [(
-                    "a1",
-                    _unified_payload(
-                        action=Action.BUY,
-                        stop_loss_price="2400",
-                    ),
-                )]
+                [
+                    (
+                        "a1",
+                        _unified_payload(
+                            action=Action.BUY,
+                            stop_loss_price="2400",
+                        ),
+                    )
+                ]
             )
         ]
     )
@@ -304,13 +306,15 @@ async def test_live_buy_is_rejected_when_existing_live_exposure_exhausts_budget(
     pubsub = _PubSubRouter(
         pull_batches=[
             _pull_response(
-                [(
-                    "a1",
-                    _unified_payload(
-                        action=Action.BUY,
-                        stop_loss_price="2400",
-                    ),
-                )]
+                [
+                    (
+                        "a1",
+                        _unified_payload(
+                            action=Action.BUY,
+                            stop_loss_price="2400",
+                        ),
+                    )
+                ]
             )
         ]
     )
