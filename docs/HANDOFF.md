@@ -138,13 +138,22 @@ uv run python scripts/health-check.py
 - 追加テスト: uv run pytest services/gateway/tests/unit で 125 passed。
 - 次セッションの確認ポイントは、翌営業日の寄り付き後に max_qty_per_order reject と kabu Code 21 が実際に減るかを live ログで観測すること。
 - 2026-05-21 引け後に production compose の GCP credentials mount を repo 配下 `infra/secrets/gcp-pubsub-sa.json` から tmpfs `/dev/shm/roboinvest/gcp-pubsub-sa.json` へ移行し、旧平文ファイルは削除済み。`Deploy Production` workflow、`run-production-universe-scanner.sh`、関連 runbook も tmpfs 前提へ更新した。
-- 2026-05-21 夜に managed Pub/Sub の check-only は成功したが、`scripts/gcp-pubsub-admin.py --smoke-test --cleanup-smoke` は runtime SA で `PermissionDenied`。project / topics / subscriptions / API 自体は存在するが、smoke 用 publish/pull/cleanup に必要な IAM は未確認。
+- 2026-05-21 夜時点では managed Pub/Sub の check-only は成功したが、当時の `scripts/gcp-pubsub-admin.py --smoke-test --cleanup-smoke` は一時 smoke resource の create/delete まで行う実装だったため、runtime SA で `PermissionDenied` になった。以後は dedicated smoke resource を常設し、既存 resource は `KEEP` する実装へ修正した。
+- 2026-05-21 深夜に runtime SA へ一時的に Pub/Sub 編集者権限を付けて `--apply` を実行し、`adr-0001-smoke-test` / `adr-0001-smoke-test-sub` を作成。その後すぐ権限を `Publisher` / `Subscriber` / `Viewer` の最小構成へ戻し、同じ runtime SA で `scripts/gcp-pubsub-admin.py --smoke-test --cleanup-smoke` が `RESULT OK` となることを再確認した。今後 `--apply` が必要なときだけ一時的に強い権限を付与する。
 
 ### Next Session TODO
 
 - 最優先は寄り付き後の live ログ観測。`gateway` の数量抑制が効いて `qty>100` が `oms-live` まで流れないこと、`kabu Code 21` が減ることを確認する。
-- managed Pub/Sub の IAM 整理は市場時間外でよい。`scripts/gcp-pubsub-admin.py --smoke-test --cleanup-smoke` が runtime SA で `PermissionDenied` になる理由を切り分け、必要権限を確定する。
+- managed Pub/Sub smoke test は 2026-05-21 に対応完了。runtime SA に付与した Pub/Sub 編集者権限で `--apply` を実行し、`adr-0001-smoke-test` / `adr-0001-smoke-test-sub` を作成後、同日 `scripts/gcp-pubsub-admin.py --smoke-test --cleanup-smoke` が `RESULT OK` まで通ることを確認した。
 - paper `14:50 closeout` の再観測は保留。ADR チェックリスト上の残件だが、live 運用の阻害条件ではない。
+
+### 2026-05-22 Execution Plan
+
+- 2026-05-22 の市場時間中は `live` 確認を最優先し、`paper` と同時並行で進めない。
+- 寄り付き前に production compose / Cloud Supabase / managed Pub/Sub の通常起動状態を確認し、`gateway` / `oms-live` / kabu ログ観測の準備をする。
+- 寄り付き後は `gateway` の数量抑制が効いて `qty>100` が `oms-live` まで流れないこと、`kabu Code 21` が減ることを live ログで確認する。
+- live 観測中は kabu token 競合を避けるため、`paper` 用の切替や追加 probe を挟まない。
+- `paper 14:50 closeout` の再観測は 2026-05-22 の live 確認と切り離し、別枠で実施する。
 
 ### 2026-05-20 08:55 JST 市場オープン中テスト再開メモ
 
@@ -171,6 +180,7 @@ uv run python scripts/health-check.py
 - Dashboard Auth/RLS は PR #50 として main に merge 済み。merge commit は `4df75a5`。PR: https://github.com/hiro88hyo/roboinvest/pull/50
 - Preview 検証では OAuth redirect と admin RLS まで確認済み。anon role は `system_status` SELECT 拒否、`dashboard_admins` 登録済み authenticated user は `system_status` SELECT / UPDATE 可。
 - `contracts/sql/012_dashboard_auth_rls.sql` は実装済み。本番 DB への適用前に、Vercel / Supabase Auth provider / admin user / Deployment Protection の本番反映順を再確認すること。
+- 2026-05-21 夜に Vercel URL を再確認し、candidate production URL `https://project-wh73t.vercel.app/` は未ログインで `/login?next=%2F` へ `307` redirect、preview URL は `401` で保護されることを確認した。さらに production Supabase でも anon key の `system_status` SELECT は `401 permission denied` を確認。ADR-0001 checklist の「Dashboard production URL を一般公開のまま live に進めない」は完了扱い。
 - `cd dashboard && npm run lint`、`npm run typecheck`、`npm test`、CI、Vercel Preview は pass。
 
 | 優先度 | タスク | 備考 |

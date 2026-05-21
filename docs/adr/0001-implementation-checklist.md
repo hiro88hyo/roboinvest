@@ -61,9 +61,9 @@ ADR-0001「本番デプロイアーキテクチャ」を実装に落とすため
   - `oms-paper-paper-orders`
 - [x] `infra/pubsub/topics.json` / `infra/pubsub/subscriptions.json` と本番作成内容の差分を確認する（`scripts/gcp-pubsub-admin.py --apply` 済み）
 - [x] 本番用 topic/subscription 作成スクリプトと runbook を追加する（`scripts/gcp-pubsub-admin.py`, `docs/runbook/adr-0001-gcp-pubsub.md`）
-- [ ] LAN host から emulator なしで `scripts/gcp-pubsub-admin.py --smoke-test --cleanup-smoke` を通す（2026-05-21: check-only は成功、runtime SA では `PermissionDenied` で smoke-test 未通過）
+- [x] LAN host から emulator なしで `scripts/gcp-pubsub-admin.py --smoke-test --cleanup-smoke` を通す（2026-05-21: runtime SA に Pub/Sub 編集者権限を付与して `--apply` 実行後、dedicated smoke resource を再利用する smoke test が `RESULT OK`）
 
-注意: subscription は `infra/pubsub/subscriptions.json` を正とする。ADR/HANDOFF の古い記述に 7 件とある場合でも、現行ファイルでは `raw-market-data` と order 系を含めて 9 件になっている。
+注意: subscription は `infra/pubsub/subscriptions.json` を正とする。ADR/HANDOFF の古い記述に 7 件とある場合でも、production pipeline 用は `raw-market-data` と order 系を含めて 9 件、さらに runtime smoke test 用の dedicated subscription 1 件を加えて現行ファイルでは 10 件になっている。
 
 ## 3. Supabase Cloud
 
@@ -177,7 +177,7 @@ ADR-0001「本番デプロイアーキテクチャ」を実装に落とすため
 - [x] `KABU_ORDER_PASSWORD` が API password と別値で設定されていることを確認する（2026-05-17: values present and distinct）
 - [x] `KABU_DEFAULT_EXCHANGE=9` であることを確認する（2026-05-17）
 - [x] `docs/runbook/oms-live-phase3.md` の手動回復手順を手元で開ける状態にする（2026-05-17）
-- [ ] Dashboard production URL を一般公開のまま live に進めない（`docs/adr/0002-dashboard-auth-rls.md`）
+- [x] Dashboard production URL を一般公開のまま live に進めない（2026-05-21: candidate production URL `https://project-wh73t.vercel.app/` は未ログインで `307 /login?next=%2F`、preview URL は `401` 保護を確認。production Supabase でも anon key の `system_status` SELECT は `401 permission denied`。`docs/adr/0002-dashboard-auth-rls.md`）
 - [x] Dashboard OAuth2 + RLS の実装前設計を確定する（`docs/adr/0002-dashboard-auth-rls.md`, `docs/runbook/adr-0002-dashboard-auth-rls.md`）
 - [x] Dashboard の anon read policies を廃止し、authenticated admin RLS に移行する（2026-05-18: PR #50 merged on `main`、Preview OAuth / admin RLS verified）
 - [x] `/system` の Server Action が `SUPABASE_SECRET_KEY` で user-triggered update しない構成に移行する（2026-05-18: authenticated user client + RLS）
@@ -222,7 +222,7 @@ live までの残りを短く見るための要約。2026-05-19 時点。
 ## 12. Next Action
 
 - [ ] 次回の最優先として、寄り付き後に `gateway` / `oms-live` / kabu の live ログを見て `max_qty_per_order` reject と `Code 21` の減少を確認する
-- [ ] 市場時間外に、runtime SA の Pub/Sub IAM を整理し `scripts/gcp-pubsub-admin.py --smoke-test --cleanup-smoke` を通す
+- [x] 市場時間外に、smoke resource を `--apply` し、runtime SA で `scripts/gcp-pubsub-admin.py --smoke-test --cleanup-smoke` を通す（2026-05-21: 一時的に Pub/Sub 編集者権限で `--apply` 実行後、権限を `Publisher` / `Subscriber` / `Viewer` に戻した状態でも `RESULT OK` を再確認）
 - [ ] paper `14:50 closeout` の再観測は保留扱いとし、live 運用観測と IAM 整理より優先しない
 - [x] live 初回の最小注文が kabu / Supabase / Dashboard で突合済み（2026-05-21: Strong GO `9432 / 100` を kabu `/orders`、Supabase `trades_live` / `positions(live)`、Dashboard監視手段で確認）
 - [x] rollback / kill switch / reconcile の手順が runbook 化済み（`docs/runbook/adr-0001-github-actions-deploy.md`、`docs/runbook/oms-live-phase3.md`、`scripts/reconcile-positions.py`）

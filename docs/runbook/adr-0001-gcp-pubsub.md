@@ -49,7 +49,7 @@ bootstrap identity には次のいずれかを付ける。
 - 推奨: `Pub/Sub Admin` を一時付与し、作成・smoke test 後に外す。
 - より細かくする場合: topic / subscription の create / get / delete / publish / consume が可能な custom role を使う。
 
-`--smoke-test --cleanup-smoke` は一時 topic / subscription の作成と削除も行うため、削除権限も必要。
+`--smoke-test` は専用 smoke topic / subscription で publish / pull / ack を確認する。初回だけ bootstrap identity で `--apply` して smoke resources を作り、以後は runtime SA で再利用する。
 
 ### 3.2 Runtime Service Account
 
@@ -143,27 +143,27 @@ GOOGLE_APPLICATION_CREDENTIALS=/dev/shm/roboinvest/gcp-pubsub-sa.json \
 
 ## 7. Smoke Test
 
-一時 topic / subscription を使って publish / pull / ack を確認する。
-production pipeline の 7 topics / 9 subscriptions にはテストメッセージを流さない。
+専用 smoke topic / subscription を使って publish / pull / ack を確認する。
+production pipeline の 7 topics / 9 subscriptions とは別に、専用 smoke resource 1 topic / 1 subscription を使う。
 
-`--cleanup-smoke` は一時 topic / subscription を削除するため、bootstrap identity で実行する。
+初回だけ bootstrap identity で `--apply` を実行し、`adr-0001-smoke-test` / `adr-0001-smoke-test-sub` を作成する。その後の smoke test は runtime SA でよい。
 
 ```bash
-GOOGLE_APPLICATION_CREDENTIALS=/path/to/bootstrap-pubsub-admin.json \
+GOOGLE_APPLICATION_CREDENTIALS=/dev/shm/roboinvest/gcp-pubsub-sa.json \
   uv run scripts/gcp-pubsub-admin.py \
     --project-id trade-ai-prod \
     --smoke-test \
     --cleanup-smoke
 ```
 
-runtime service account の疎通だけを確認したい場合は、既存 production topic/subscription に影響しない別の read-only/publish-only smoke 手順を追加してから実施する。
-
 期待する結果:
 
+- `OK smoke-topic:adr-0001-smoke-test`
+- `OK smoke-sub:adr-0001-smoke-test-sub`
 - `OK smoke-publish ...`
 - `OK smoke-pull-ack ...`
-- `DEL smoke-sub:adr-0001-smoke-test-sub`
-- `DEL smoke-topic:adr-0001-smoke-test`
+- `KEEP smoke-sub:adr-0001-smoke-test-sub`
+- `KEEP smoke-topic:adr-0001-smoke-test`
 
 
 ## 8. Temporary Admin Grant Cleanup
@@ -174,7 +174,7 @@ apply / smoke test が終わったら、runtime service account から `Pub/Sub 
 2026-05-16 note: LAN host には `gcloud` がなく、runtime service account で Cloud Resource Manager `projects.getIamPolicy` を読むと `403 Forbidden` になる。
 これは runtime key では project IAM を確認・変更できないためで、Pub/Sub Admin cleanup は owner / IAM admin 権限を持つ Google Cloud Console または管理者 `gcloud` 認証で実施する。
 
-2026-05-16: Google Cloud Console で手動削除済み。削除後、runtime credentials で `scripts/gcp-pubsub-admin.py --project-id roboinvest-445500` を実行し、7 topics / 9 subscriptions がすべて `OK` になることを確認済み。
+2026-05-16: Google Cloud Console で手動削除済み。削除後、runtime credentials で `scripts/gcp-pubsub-admin.py --project-id roboinvest-445500` を実行し、production pipeline 7 topics / 9 subscriptions が `OK` になることを確認済み。
 
 残す roles:
 

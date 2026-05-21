@@ -13,15 +13,14 @@ The source of truth is:
 - infra/pubsub/subscriptions.json
 
 Default mode is check-only. Use --apply to create missing resources, and
---smoke-test to publish / pull / ack one message through a temporary topic and
-subscription.
+--smoke-test to publish / pull / ack one message through dedicated smoke-test
+resources.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import sys
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -58,12 +57,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--smoke-test",
         action="store_true",
-        help="Publish, pull, and ack one message through temporary smoke resources.",
+        help="Publish, pull, and ack one message through dedicated smoke resources.",
     )
     parser.add_argument(
         "--cleanup-smoke",
         action="store_true",
-        help="Delete temporary smoke resources after --smoke-test.",
+        help="Delete smoke resources only when this run created them.",
     )
     parser.add_argument(
         "--timeout",
@@ -98,6 +97,45 @@ def topic_path(project_id: str, topic: str) -> str:
 
 def subscription_path(project_id: str, subscription: str) -> str:
     return pubsub_v1.SubscriberClient.subscription_path(project_id, subscription)
+
+
+def ensure_smoke_topic(
+    publisher: pubsub_v1.PublisherClient,
+    *,
+    project_id: str,
+) -> tuple[str, bool]:
+    path = topic_path(project_id, SMOKE_TOPIC)
+    try:
+        publisher.get_topic(request={"topic": path})
+        print(f"OK   smoke-topic:{SMOKE_TOPIC}")
+        return path, False
+    except NotFound:
+        publisher.create_topic(request={"name": path})
+        print(f"ADD  smoke-topic:{SMOKE_TOPIC}")
+        return path, True
+
+
+def ensure_smoke_subscription(
+    subscriber: pubsub_v1.SubscriberClient,
+    *,
+    project_id: str,
+    topic: str,
+) -> tuple[str, bool]:
+    path = subscription_path(project_id, SMOKE_SUBSCRIPTION)
+    try:
+        subscriber.get_subscription(request={"subscription": path})
+        print(f"OK   smoke-sub:{SMOKE_SUBSCRIPTION}")
+        return path, False
+    except NotFound:
+        subscriber.create_subscription(
+            request={
+                "name": path,
+                "topic": topic,
+                "ack_deadline_seconds": 30,
+            }
+        )
+        print(f"ADD  smoke-sub:{SMOKE_SUBSCRIPTION}")
+        return path, True
 
 
 def ensure_topics(project_id: str, topics: Iterable[str], *, apply: bool) -> bool:
@@ -182,28 +220,19 @@ def ensure_subscriptions(
 def smoke_test(project_id: str, *, timeout: float, cleanup: bool) -> bool:
     publisher = pubsub_v1.PublisherClient()
     subscriber = pubsub_v1.SubscriberClient()
-    topic = topic_path(project_id, SMOKE_TOPIC)
-    subscription = subscription_path(project_id, SMOKE_SUBSCRIPTION)
     payload = f"adr-0001-smoke:{int(time.time())}".encode()
     ok = False
+    created_topic = False
+    created_subscription = False
+    topic = ""
+    subscription = ""
     try:
-        try:
-            publisher.create_topic(request={"name": topic})
-            print(f"ADD  smoke-topic:{SMOKE_TOPIC}")
-        except AlreadyExists:
-            print(f"OK   smoke-topic:{SMOKE_TOPIC}")
-
-        try:
-            subscriber.create_subscription(
-                request={
-                    "name": subscription,
-                    "topic": topic,
-                    "ack_deadline_seconds": 30,
-                }
-            )
-            print(f"ADD  smoke-sub:{SMOKE_SUBSCRIPTION}")
-        except AlreadyExists:
-            print(f"OK   smoke-sub:{SMOKE_SUBSCRIPTION}")
+        topic, created_topic = ensure_smoke_topic(publisher, project_id=project_id)
+        subscription, created_subscription = ensure_smoke_subscription(
+            subscriber,
+            project_id=project_id,
+            topic=topic,
+        )
 
         future = publisher.publish(topic, payload, purpose="adr-0001-smoke-test")
         message_id = future.result(timeout=timeout)
@@ -232,24 +261,33 @@ def smoke_test(project_id: str, *, timeout: float, cleanup: bool) -> bool:
         return False
     finally:
         if cleanup:
-            try:
-                subscriber.delete_subscription(request={"subscription": subscription})
-                print(f"DEL  smoke-sub:{SMOKE_SUBSCRIPTION}")
-            except NotFound:
-                pass
-            except GoogleAPICallError as exc:
-                print(f"WARN smoke-sub cleanup failed: {exc!r}")
-            try:
-                publisher.delete_topic(request={"topic": topic})
-                print(f"DEL  smoke-topic:{SMOKE_TOPIC}")
-            except NotFound:
-                pass
-            except GoogleAPICallError as exc:
-                print(f"WARN smoke-topic cleanup failed: {exc!r}")
+            if created_subscription:
+                try:
+                    subscriber.delete_subscription(request={"subscription": subscription})
+                    print(f"DEL  smoke-sub:{SMOKE_SUBSCRIPTION}")
+                except NotFound:
+                    pass
+                except GoogleAPICallError as exc:
+                    print(f"WARN smoke-sub cleanup failed: {exc!r}")
+            elif ok:
+                print(f"KEEP smoke-sub:{SMOKE_SUBSCRIPTION}")
+            if created_topic:
+                try:
+                    publisher.delete_topic(request={"topic": topic})
+                    print(f"DEL  smoke-topic:{SMOKE_TOPIC}")
+                except NotFound:
+                    pass
+                except GoogleAPICallError as exc:
+                    print(f"WARN smoke-topic cleanup failed: {exc!r}")
+            elif ok:
+                print(f"KEEP smoke-topic:{SMOKE_TOPIC}")
         subscriber.close()
         publisher.transport.close()
         if not ok:
-            print("HINT Check GOOGLE_APPLICATION_CREDENTIALS and Pub/Sub IAM roles.")
+            print(
+                "HINT Check GOOGLE_APPLICATION_CREDENTIALS and Pub/Sub IAM roles. "
+                "If runtime SA cannot create smoke resources, pre-create them with --apply."
+            )
 
 
 def main() -> int:
@@ -258,13 +296,9 @@ def main() -> int:
     subscriptions = load_subscriptions()
 
     print(f"project={args.project_id}")
-    print(f"mode={'apply' if args.apply else 'check'}")
+
     topics_ok = ensure_topics(args.project_id, topics, apply=args.apply)
-    subscriptions_ok = ensure_subscriptions(
-        args.project_id,
-        subscriptions,
-        apply=args.apply,
-    )
+    subs_ok = ensure_subscriptions(args.project_id, subscriptions, apply=args.apply)
     smoke_ok = True
     if args.smoke_test:
         smoke_ok = smoke_test(
@@ -272,8 +306,13 @@ def main() -> int:
             timeout=args.timeout,
             cleanup=args.cleanup_smoke,
         )
-    return 0 if topics_ok and subscriptions_ok and smoke_ok else 1
+
+    if topics_ok and subs_ok and smoke_ok:
+        print("RESULT OK")
+        return 0
+    print("RESULT NG")
+    return 1
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())
