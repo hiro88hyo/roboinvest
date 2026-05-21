@@ -138,6 +138,7 @@ uv run python scripts/health-check.py
 - 追加テスト: uv run pytest services/gateway/tests/unit で 125 passed。
 - 次セッションの確認ポイントは、翌営業日の寄り付き後に max_qty_per_order reject と kabu Code 21 が実際に減るかを live ログで観測すること。
 - 2026-05-21 引け後に production compose の GCP credentials mount を repo 配下 `infra/secrets/gcp-pubsub-sa.json` から tmpfs `/dev/shm/roboinvest/gcp-pubsub-sa.json` へ移行し、旧平文ファイルは削除済み。`Deploy Production` workflow、`run-production-universe-scanner.sh`、関連 runbook も tmpfs 前提へ更新した。
+- 2026-05-21 夜に managed Pub/Sub の check-only は成功したが、`scripts/gcp-pubsub-admin.py --smoke-test --cleanup-smoke` は runtime SA で `PermissionDenied`。project / topics / subscriptions / API 自体は存在するが、smoke 用 publish/pull/cleanup に必要な IAM は未確認。
 
 ### 2026-05-20 08:55 JST 市場オープン中テスト再開メモ
 

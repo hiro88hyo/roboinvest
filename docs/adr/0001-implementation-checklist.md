@@ -22,10 +22,10 @@ ADR-0001「本番デプロイアーキテクチャ」を実装に落とすため
 
 ## 1. Preflight
 
-- [ ] LAN host の OS / CPU / RAM / SSD / Docker version を記録する
-- [ ] LAN host から kabu Windows 機の Caddy `28080` / `28081` に到達できることを確認する
-- [ ] `KABU_API_BASE_URL=http://<win-ip>:28080/kabusapi` で `scripts/probe-kabu.py` が通る
-- [ ] `scripts/probe-kabu-oms.py --env prod --skip send` で wallet / positions など read-only API が通る
+- [x] LAN host の OS / CPU / RAM / SSD / Docker version を記録する（2026-05-21: Ubuntu 6.8.0-111-generic, Intel Core i3-12100 4CPU, RAM 15GiB, root volume 94G/14G avail, Docker 29.4.3）
+- [x] LAN host から kabu Windows 機の Caddy `28080` / `28081` に到達できることを確認する（2026-05-21: `curl` で両方 HTTP 405 応答、到達確認）
+- [x] `KABU_API_BASE_URL=http://<win-ip>:28080/kabusapi` で `scripts/probe-kabu.py` が通る（2026-05-21: `--host 192.168.2.21 --port 28080 --host-header localhost --skip ws` で `ALL OK`）
+- [x] `scripts/probe-kabu-oms.py --env prod --skip send` で wallet / positions など read-only API が通る（2026-05-21: `--host 192.168.2.21 --port 28080 --host-header localhost` で `ALL OK`）
 - [x] 本番用 GCP project id 命名方針を決める（`docs/adr/0001-production-prerequisites.md`）
 - [x] 本番用 Supabase project と region 方針を決める（`docs/adr/0001-production-prerequisites.md`）
 - [x] Vercel project 名と GitHub repository 連携方針を決める（`trade-ai-dashboard`, root `dashboard/`, `docs/runbook/adr-0001-dashboard-vercel.md`）
@@ -35,9 +35,9 @@ ADR-0001「本番デプロイアーキテクチャ」を実装に落とすため
 
 ## 2. GCP Pub/Sub
 
-- [ ] 本番 GCP project を作成する
-- [ ] Pub/Sub API を有効化する
-- [ ] service account を作成する
+- [x] 本番 GCP project を作成する（managed Pub/Sub runtime project `roboinvest-445500` を運用中、topics/subscriptions read 成功で存在確認）
+- [x] Pub/Sub API を有効化する（2026-05-21: managed topics/subscriptions の check-only が成功し、API 利用可能を確認）
+- [x] service account を作成する（runtime SA `roboinvest-pubsub-runtime@roboinvest-445500.iam.gserviceaccount.com` を確認）
 - [x] service account の権限方針を Pub/Sub publisher/subscriber/viewer に絞る（`docs/adr/0001-production-prerequisites.md`）
 - [x] 初回 apply 用に一時付与した `Pub/Sub Admin` を runtime service account から外す（Console で手動削除、runtime key で Pub/Sub check 7 topics/9 subscriptions OK）
 - [x] managed Pub/Sub 用に各 service の Pub/Sub client を公式 `google-cloud-pubsub` 共通 wrapper へ移行する
@@ -61,7 +61,7 @@ ADR-0001「本番デプロイアーキテクチャ」を実装に落とすため
   - `oms-paper-paper-orders`
 - [x] `infra/pubsub/topics.json` / `infra/pubsub/subscriptions.json` と本番作成内容の差分を確認する（`scripts/gcp-pubsub-admin.py --apply` 済み）
 - [x] 本番用 topic/subscription 作成スクリプトと runbook を追加する（`scripts/gcp-pubsub-admin.py`, `docs/runbook/adr-0001-gcp-pubsub.md`）
-- [ ] LAN host から emulator なしで `scripts/gcp-pubsub-admin.py --smoke-test --cleanup-smoke` を通す
+- [ ] LAN host から emulator なしで `scripts/gcp-pubsub-admin.py --smoke-test --cleanup-smoke` を通す（2026-05-21: check-only は成功、runtime SA では `PermissionDenied` で smoke-test 未通過）
 
 注意: subscription は `infra/pubsub/subscriptions.json` を正とする。ADR/HANDOFF の古い記述に 7 件とある場合でも、現行ファイルでは `raw-market-data` と order 系を含めて 9 件になっている。
 
