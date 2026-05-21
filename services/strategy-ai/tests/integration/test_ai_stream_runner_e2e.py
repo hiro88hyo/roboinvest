@@ -1,7 +1,7 @@
 """StreamRunner の end-to-end 統合テスト。
 
 実際の Pub/Sub エミュレータと Supabase PostgREST に対して:
-- processed-features に ProcessedFeatures を publish
+- strategy-ai-triggers に RULE signal + ProcessedFeatures の trigger payload を publish
 - StreamRunner を 1 回転させる (pull → AiStrategy 評価 → publish + strategy_logs upsert)
 - strategy-signals-b サブスクリプションから pull して
   `StrategySignal` (source=AI) が届くことを確認
@@ -37,7 +37,7 @@ from trade_contracts.signal import StrategySignal
 pytestmark = pytest.mark.integration
 
 
-FEATURES_TOPIC = "processed-features"
+TRIGGERS_TOPIC = "strategy-ai-triggers"
 SIGNALS_TOPIC = "strategy-signals-b"
 
 
@@ -108,14 +108,14 @@ async def provisioned_subs(
     pubsub_project_id: str,
     run_id: str,
 ) -> AsyncIterator[dict[str, str]]:
-    features_sub = f"it-sai-features-{run_id}"
+    triggers_sub = f"it-sai-triggers-{run_id}"
     signals_sub = f"it-sai-signals-{run_id}"
-    await _ensure_subscription(pubsub_admin, pubsub_project_id, features_sub, FEATURES_TOPIC)
+    await _ensure_subscription(pubsub_admin, pubsub_project_id, triggers_sub, TRIGGERS_TOPIC)
     await _ensure_subscription(pubsub_admin, pubsub_project_id, signals_sub, SIGNALS_TOPIC)
     try:
-        yield {"features_sub": features_sub, "signals_sub": signals_sub}
+        yield {"triggers_sub": triggers_sub, "signals_sub": signals_sub}
     finally:
-        await _delete_subscription(pubsub_admin, pubsub_project_id, features_sub)
+        await _delete_subscription(pubsub_admin, pubsub_project_id, triggers_sub)
         await _delete_subscription(pubsub_admin, pubsub_project_id, signals_sub)
 
 
@@ -157,14 +157,14 @@ def _build_settings(
     supabase_secret_key: str,
     pubsub_project_id: str,
     pubsub_emulator_host: str,
-    features_sub: str,
+    triggers_sub: str,
 ) -> StrategyAiSettings:
     return StrategyAiSettings(
         supabase_url=supabase_url,
         supabase_secret_key=supabase_secret_key,
         pubsub_project_id=pubsub_project_id,
         pubsub_emulator_host=pubsub_emulator_host,
-        pubsub_subscription_features=features_sub,
+        pubsub_subscription_features=triggers_sub,
         pubsub_topic_signals=SIGNALS_TOPIC,
         pubsub_pull_max_messages=10,
     )
@@ -178,7 +178,23 @@ def _make_strategy() -> AiStrategy:
     return AiStrategy(llm=llm, min_interval_seconds=0)
 
 
-async def test_features_flow_to_signal_topic_and_supabase(
+def _make_trigger_payload(*, symbol: str, timestamp: datetime, price: Decimal) -> bytes:
+    features = ProcessedFeatures(symbol=symbol, timestamp=timestamp, price=price)
+    payload = {
+        "signal": {
+            "source": "RULE",
+            "symbol": symbol,
+            "action": "BUY",
+            "confidence": 0.9,
+            "reasoning": "rule trigger",
+            "created_at": timestamp.isoformat(),
+        },
+        "features": json.loads(features.model_dump_json()),
+    }
+    return json.dumps(payload).encode("utf-8")
+
+
+async def test_trigger_flow_to_signal_topic_and_supabase(
     provisioned_subs: dict[str, str],
     pubsub_project_id: str,
     pubsub_emulator_host: str,
@@ -191,9 +207,9 @@ async def test_features_flow_to_signal_topic_and_supabase(
         supabase_secret_key=supabase_secret_key,
         pubsub_project_id=pubsub_project_id,
         pubsub_emulator_host=pubsub_emulator_host,
-        features_sub=provisioned_subs["features_sub"],
+        triggers_sub=provisioned_subs["triggers_sub"],
     )
-    features = ProcessedFeatures(
+    payload = _make_trigger_payload(
         symbol=test_symbol,
         timestamp=datetime.now(UTC),
         price=Decimal("2500"),
@@ -204,9 +220,9 @@ async def test_features_flow_to_signal_topic_and_supabase(
         emulator_host=pubsub_emulator_host,
     ) as publisher:
         await publisher.publish(
-            FEATURES_TOPIC,
-            data=features.model_dump_json().encode("utf-8"),
-            attributes={"symbol": test_symbol},
+            TRIGGERS_TOPIC,
+            data=payload,
+            attributes={"symbol": test_symbol, "source": "RULE", "action": "BUY"},
         )
 
     async with (
@@ -277,7 +293,7 @@ async def test_features_flow_to_signal_topic_and_supabase(
             )
 
 
-async def test_redelivered_features_inserts_distinct_signal_rows(
+async def test_redelivered_triggers_insert_distinct_signal_rows(
     provisioned_subs: dict[str, str],
     pubsub_project_id: str,
     pubsub_emulator_host: str,
@@ -285,7 +301,7 @@ async def test_redelivered_features_inserts_distinct_signal_rows(
     supabase_secret_key: str,
     test_symbol: str,
 ) -> None:
-    """Pub/Sub の再配信 (同じ ProcessedFeatures が 2 回届く) でも
+    """Pub/Sub の再配信 (同じ trigger payload が 2 回届く) でも
     `strategy_logs` に 2 行入り (signal_id は別) かつ一意制約違反が起きないことを確認する。
     AiStrategy のレート制御は min_interval_seconds=0 で外している。
     """
@@ -294,24 +310,28 @@ async def test_redelivered_features_inserts_distinct_signal_rows(
         supabase_secret_key=supabase_secret_key,
         pubsub_project_id=pubsub_project_id,
         pubsub_emulator_host=pubsub_emulator_host,
-        features_sub=provisioned_subs["features_sub"],
+        triggers_sub=provisioned_subs["triggers_sub"],
     )
-    payload = (
-        ProcessedFeatures(
-            symbol=test_symbol,
-            timestamp=datetime.now(UTC),
-            price=Decimal("2500"),
-        )
-        .model_dump_json()
-        .encode("utf-8")
+    payload = _make_trigger_payload(
+        symbol=test_symbol,
+        timestamp=datetime.now(UTC),
+        price=Decimal("2500"),
     )
 
     async with PubSubPublisher(
         project_id=pubsub_project_id,
         emulator_host=pubsub_emulator_host,
     ) as publisher:
-        await publisher.publish(FEATURES_TOPIC, data=payload, attributes={"symbol": test_symbol})
-        await publisher.publish(FEATURES_TOPIC, data=payload, attributes={"symbol": test_symbol})
+        await publisher.publish(
+            TRIGGERS_TOPIC,
+            data=payload,
+            attributes={"symbol": test_symbol, "source": "RULE", "action": "BUY"},
+        )
+        await publisher.publish(
+            TRIGGERS_TOPIC,
+            data=payload,
+            attributes={"symbol": test_symbol, "source": "RULE", "action": "BUY"},
+        )
 
     inserted_signal_ids: list[str] = []
     async with (
@@ -325,7 +345,6 @@ async def test_redelivered_features_inserts_distinct_signal_rows(
         ) as publisher,
         SupabaseWriter(url=supabase_url, secret_key=supabase_secret_key) as writer,
     ):
-        # 2 件分のレスポンスを与える
         llm = FixtureLLMClient(
             responses=(
                 json.dumps({"action": "BUY", "confidence": 0.7, "reasoning": "1st"}),
@@ -360,7 +379,7 @@ async def test_redelivered_features_inserts_distinct_signal_rows(
             )
             assert resp.status_code == 200, resp.text
             rows = resp.json()
-            assert len(rows) == 2  # 異なる signal_id が 2 行
+            assert len(rows) == 2
             inserted_signal_ids = [r["signal_id"] for r in rows]
         finally:
             for sid in inserted_signal_ids:
