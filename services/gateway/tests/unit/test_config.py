@@ -16,16 +16,19 @@ def test_settings_defaults() -> None:
     assert s.pubsub_subscription_trade_signals == "gateway-trade-signals"
     assert s.pubsub_topic_live_orders == "live-orders"
     assert s.pubsub_topic_paper_orders == "paper-orders"
+    assert s.oms_live_max_qty_per_order is None
 
 
 def test_settings_env_override(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setenv("CAPITAL", "500000")
     monkeypatch.setenv("MAX_RISK_PER_TRADE_PCT", "0.01")
     monkeypatch.setenv("MIN_LOT_SIZE", "200")
+    monkeypatch.setenv("OMS_LIVE_MAX_QTY_PER_ORDER", "100")
     s = GatewaySettings(_env_file=None)
     assert s.capital == Decimal("500000")
     assert s.max_risk_per_trade_pct == Decimal("0.01")
     assert s.min_lot_size == 200
+    assert s.oms_live_max_qty_per_order == 100
 
 
 def test_risk_config_from_settings() -> None:

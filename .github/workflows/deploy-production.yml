@@ -86,7 +86,7 @@ jobs:
           test -d "$DEPLOY_DIR/.git"
           test -f "$DEPLOY_DIR/$ENV_FILE"
           test -f "$DEPLOY_DIR/infra/.op.service-account.env"
-          test -f "$DEPLOY_DIR/infra/secrets/gcp-pubsub-sa.json"
+          test -f "/dev/shm/roboinvest/gcp-pubsub-sa.json"
           command -v docker >/dev/null
           command -v op >/dev/null
 

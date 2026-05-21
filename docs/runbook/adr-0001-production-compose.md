@@ -39,9 +39,9 @@ OMS_LIVE_ALLOWED_SYMBOLS=7203
 初回 production trial では、1Password の `production/GOOGLE_APPLICATION_CREDENTIALS_JSON` を compose 用の read-only secret file に materialize する。
 
 ```bash
-mkdir -p infra/secrets
-op read "op://Trade AI/production/GOOGLE_APPLICATION_CREDENTIALS_JSON" > infra/secrets/gcp-pubsub-sa.json
-chmod 600 infra/secrets/gcp-pubsub-sa.json
+mkdir -p /dev/shm/roboinvest
+op read "op://Trade AI/production/GOOGLE_APPLICATION_CREDENTIALS_JSON" > /dev/shm/roboinvest/gcp-pubsub-sa.json
+chmod 600 /dev/shm/roboinvest/gcp-pubsub-sa.json
 ```
 
 `infra/env.production` では container 内 path を指定する。
@@ -50,7 +50,7 @@ chmod 600 infra/secrets/gcp-pubsub-sa.json
 GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/gcp-pubsub-sa.json
 ```
 
-`infra/secrets/gcp-pubsub-sa.json` は `.gitignore` 対象で、起動後の残存確認対象にする。
+`/dev/shm/roboinvest/gcp-pubsub-sa.json` は `.gitignore` 対象で、起動後の残存確認対象にする。
 
 ## 4. Config Validation
 
@@ -154,12 +154,13 @@ volume 削除は本 runbook の範囲外とし、必要な場合はバックア�
 - `OMS_LIVE_ALLOWED_SYMBOLS` は検証銘柄だけに絞る。
 - `OMS_LIVE_MAX_QTY_PER_ORDER` は最小単元から始める。
 - live readiness gate は `docs/adr/0001-implementation-checklist.md` の 9 章を満たしてから実施する。
+- 実売買へ切り替える当日の判定は `docs/runbook/live-go-checklist.md` を使い、`paper GO` → `Weak GO` → `Strong GO` の順で潰す。
 - 問題があれば Dashboard / Supabase の kill switch を止める前提で確認する。
 
 ## 10. Post-Run Checks
 
 - `infra/env.production` に secret 実値が残っていないこと。2026-05-16: raw secret らしき値なしを確認済み。
-- host 上の `infra/secrets/` に一時 materialize した secret が残っていないこと。2026-05-16: `infra/secrets/gcp-pubsub-sa.json` は稼働中 compose が read-only mount 中のため、stack 停止時に削除する。
+- host 上に一時 materialize した secret が残っていないこと。2026-05-16: `/dev/shm/roboinvest/gcp-pubsub-sa.json` は稼働中 compose が read-only mount 中のため、stack 停止時に削除する。
 - `docker compose ... logs` に secret 値が出ていないこと。2026-05-16: Supabase/Gemini/kabu 主要 secret 実値の tail logs 混入なしを確認済み。
 - `PUBSUB_PROJECT_ID` が本番 GCP project を指していること。
 - `SUPABASE_URL` が Supabase Cloud project を指していること。
