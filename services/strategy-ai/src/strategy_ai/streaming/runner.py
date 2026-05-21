@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 from trade_contracts.features import ProcessedFeatures
 from trade_contracts.signal import StrategySignal
 
@@ -19,6 +19,11 @@ from strategy_ai.engine import StrategyAiEngine
 logger = logging.getLogger(__name__)
 
 Sleep = Callable[[float], Awaitable[None]]
+
+
+class RuleSignalTrigger(BaseModel):
+    signal: StrategySignal
+    features: ProcessedFeatures
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,11 +40,11 @@ class BatchStats:
 
 @dataclass(slots=True)
 class StreamRunner:
-    """`processed-features` を pull し、AiStrategy を評価して `strategy-signals-b` に
+    """`strategy-ai-triggers` を pull し、AiStrategy を評価して `strategy-signals-b` に
     publish しつつ Supabase `strategy_logs` (source=AI) に書き込む中核ループ。
 
     責務:
-    - Pub/Sub から pull → `ProcessedFeatures` にパース
+    - Pub/Sub から pull → `RuleSignalTrigger` にパース
     - `StrategyAiEngine.evaluate` で 0..N 件のシグナルを async に生成
     - 各 `StrategySignal` を `strategy-signals-b` に publish (1 メッセージ 1 シグナル)
     - 同じバッチを Supabase `strategy_logs` に upsert
@@ -87,42 +92,46 @@ class StreamRunner:
         signals_emitted = 0
         parse_errors = 0
         process_errors = 0
-        ack_ids: list[str] = []
+        acked = 0
 
         for msg in messages:
             outcome, emitted = await self._handle_message(msg)
             if outcome == "processed":
                 features_processed += 1
                 signals_emitted += emitted
-                ack_ids.append(msg.ack_id)
+                await self.subscriber.acknowledge(
+                    self.settings.pubsub_subscription_features,
+                    [msg.ack_id],
+                )
+                acked += 1
             elif outcome == "parse_error":
                 parse_errors += 1
-                ack_ids.append(msg.ack_id)  # ポイズンは ack して抜け出す
+                await self.subscriber.acknowledge(
+                    self.settings.pubsub_subscription_features,
+                    [msg.ack_id],
+                )
+                acked += 1
             else:  # process_error
                 process_errors += 1
-                # ack しない → 再配信に任せる (Pub/Sub publish / Supabase 障害が主)
-
-        if ack_ids:
-            await self.subscriber.acknowledge(self.settings.pubsub_subscription_features, ack_ids)
 
         return BatchStats(
             received=len(messages),
             features_processed=features_processed,
             signals_emitted=signals_emitted,
-            acked=len(ack_ids),
+            acked=acked,
             parse_errors=parse_errors,
             process_errors=process_errors,
         )
 
     async def _handle_message(self, msg: PulledMessage) -> tuple[str, int]:
-        features = _parse_features(msg.data)
-        if features is None:
+        trigger = _parse_trigger(msg.data)
+        if trigger is None:
             logger.exception("parse failed: message_id=%s len=%d", msg.message_id, len(msg.data))
             return "parse_error", 0
 
         try:
-            signals = await self.engine.evaluate(features)
-            await self._dispatch_signals(features.symbol, signals)
+            signals = await self.engine.evaluate(trigger.features)
+            await self._dispatch_signals(trigger.features.symbol, signals)
         except Exception:
             logger.exception("process failed: message_id=%s", msg.message_id)
             return "process_error", 0
@@ -140,11 +149,8 @@ class StreamRunner:
         await self.writer.insert_strategy_logs(signals)
 
 
-def _parse_features(data: bytes) -> ProcessedFeatures | None:
-    """ペイロード (JSON bytes) を `ProcessedFeatures` にパースする。
-
-    JSON パースや Pydantic バリデーションに失敗したら None。
-    """
+def _parse_trigger(data: bytes) -> RuleSignalTrigger | None:
+    """ペイロード (JSON bytes) を `RuleSignalTrigger` にパースする。"""
     try:
         payload: Any = json.loads(data.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
@@ -152,6 +158,6 @@ def _parse_features(data: bytes) -> ProcessedFeatures | None:
     if not isinstance(payload, dict):
         return None
     try:
-        return ProcessedFeatures.model_validate(payload)
+        return RuleSignalTrigger.model_validate(payload)
     except ValidationError:
         return None

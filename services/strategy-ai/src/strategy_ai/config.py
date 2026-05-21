@@ -20,18 +20,18 @@ class StrategyAiSettings(BaseSettings):
     gemini_model: str = "gemini-2.0-flash"
     gemini_timeout_seconds: float = 30.0
 
-    ai_min_interval_seconds: float = 60.0
+    ai_min_interval_seconds: float = 300.0
     ai_temperature: Decimal = Decimal("0.0")
-    ai_max_output_tokens: int = 512
+    ai_max_output_tokens: int = 256
 
     supabase_url: str = ""
     supabase_secret_key: str = ""
 
     pubsub_project_id: str = ""
     pubsub_emulator_host: str = ""
-    pubsub_subscription_features: str = "strategy-ai-processed-features"
+    pubsub_subscription_features: str = "strategy-ai-rule-signals"
     pubsub_topic_signals: str = "strategy-signals-b"
-    pubsub_pull_max_messages: int = 100
+    pubsub_pull_max_messages: int = 5
     pubsub_ack_deadline_seconds: int = 30
 
     backtest_output_dir: Path = Path("./out/strategy-ai")

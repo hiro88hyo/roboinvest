@@ -20,7 +20,7 @@ from trade_contracts.signal import StrategySignal
 
 Handler = Callable[[httpx.Request], Coroutine[None, None, httpx.Response]]
 
-SUBSCRIPTION = "strategy-ai-processed-features"
+SUBSCRIPTION = "strategy-ai-rule-signals"
 TOPIC = "strategy-signals-b"
 SUPABASE_URL = "https://example.supabase.co"
 
@@ -42,8 +42,31 @@ def _features_payload(
     *,
     price: str = "2500",
     ts: str = "2026-04-20T09:00:00+00:00",
+) -> dict[str, str]:
+    return {"symbol": symbol, "timestamp": ts, "price": price}
+
+
+def _trigger_payload(
+    symbol: str = "7203",
+    *,
+    price: str = "2500",
+    ts: str = "2026-04-20T09:00:00+00:00",
+    action: str = "BUY",
+    confidence: float = 0.9,
 ) -> bytes:
-    return json.dumps({"symbol": symbol, "timestamp": ts, "price": price}).encode("utf-8")
+    return json.dumps(
+        {
+            "signal": {
+                "source": "RULE",
+                "symbol": symbol,
+                "action": action,
+                "confidence": confidence,
+                "reasoning": "rule trigger",
+                "created_at": ts,
+            },
+            "features": _features_payload(symbol=symbol, price=price, ts=ts),
+        }
+    ).encode("utf-8")
 
 
 def _make_pull_response(payloads: list[tuple[str, bytes]]) -> dict[str, Any]:
@@ -189,8 +212,8 @@ async def _with_runner(
         return await run_body(runner)
 
 
-async def test_features_message_publishes_signal_and_logs() -> None:
-    pubsub = _PubSubRouter(pull_batches=[_make_pull_response([("a1", _features_payload())])])
+async def test_trigger_message_publishes_signal_and_logs() -> None:
+    pubsub = _PubSubRouter(pull_batches=[_make_pull_response([("a1", _trigger_payload())])])
     supabase = _SupabaseRouter()
     engine = StrategyAiEngine([_FakeAsyncStrategy("fake_buy", action=Action.BUY)])
 
@@ -234,7 +257,7 @@ async def test_features_message_publishes_signal_and_logs() -> None:
 
 
 async def test_no_signal_acks_without_publish_or_log_write() -> None:
-    pubsub = _PubSubRouter(pull_batches=[_make_pull_response([("a1", _features_payload())])])
+    pubsub = _PubSubRouter(pull_batches=[_make_pull_response([("a1", _trigger_payload())])])
     supabase = _SupabaseRouter()
     engine = StrategyAiEngine([_FakeAsyncStrategy("silent", action=None)])
 
@@ -254,8 +277,36 @@ async def test_no_signal_acks_without_publish_or_log_write() -> None:
     )
 
 
+async def test_acknowledges_each_message_without_waiting_for_batch_end() -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _make_pull_response(
+                [
+                    ("a1", _trigger_payload(symbol="7203")),
+                    ("a2", _trigger_payload(symbol="6758")),
+                ]
+            )
+        ]
+    )
+    supabase = _SupabaseRouter()
+    engine = StrategyAiEngine([_FakeAsyncStrategy("fake_buy", action=Action.BUY)])
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(
+        pubsub_router=pubsub, supabase_router=supabase, engine=engine, run_body=_body
+    )
+    assert stats.received == 2
+    assert stats.features_processed == 2
+    assert stats.acked == 2
+    assert len(pubsub.acked) == 2
+    assert json.loads(pubsub.acked[0].content.decode()) == {"ackIds": ["a1"]}
+    assert json.loads(pubsub.acked[1].content.decode()) == {"ackIds": ["a2"]}
+
+
 async def test_strategy_exception_is_isolated_and_message_acked() -> None:
-    pubsub = _PubSubRouter(pull_batches=[_make_pull_response([("a1", _features_payload())])])
+    pubsub = _PubSubRouter(pull_batches=[_make_pull_response([("a1", _trigger_payload())])])
     supabase = _SupabaseRouter()
     engine = StrategyAiEngine(
         [
@@ -292,7 +343,7 @@ async def test_malformed_json_is_treated_as_poison_and_acked() -> None:
 
 
 async def test_validation_failure_is_acked() -> None:
-    bad = json.dumps({"symbol": "7203"}).encode()  # missing required fields
+    bad = json.dumps({"signal": {"symbol": "7203"}}).encode()
     pubsub = _PubSubRouter(pull_batches=[_make_pull_response([("a1", bad)])])
     supabase = _SupabaseRouter()
     engine = StrategyAiEngine([_FakeAsyncStrategy("fake_buy", action=Action.BUY)])
@@ -308,7 +359,7 @@ async def test_validation_failure_is_acked() -> None:
 
 
 async def test_supabase_failure_prevents_ack_for_redelivery() -> None:
-    pubsub = _PubSubRouter(pull_batches=[_make_pull_response([("a1", _features_payload())])])
+    pubsub = _PubSubRouter(pull_batches=[_make_pull_response([("a1", _trigger_payload())])])
     supabase = _SupabaseRouter(upsert_status=500)
     engine = StrategyAiEngine([_FakeAsyncStrategy("fake_buy", action=Action.BUY)])
 
@@ -348,8 +399,8 @@ async def test_empty_pull_triggers_idle_sleep() -> None:
 async def test_run_with_iterations_collects_stats_per_batch() -> None:
     pubsub = _PubSubRouter(
         pull_batches=[
-            _make_pull_response([("a1", _features_payload())]),
-            _make_pull_response([("a2", _features_payload(symbol="9984"))]),
+            _make_pull_response([("a1", _trigger_payload())]),
+            _make_pull_response([("a2", _trigger_payload(symbol="9984"))]),
         ]
     )
     supabase = _SupabaseRouter()
@@ -366,14 +417,16 @@ async def test_run_with_iterations_collects_stats_per_batch() -> None:
     assert results[1].features_processed == 1
 
 
-def test_parse_features_round_trip() -> None:
-    from strategy_ai.streaming.runner import _parse_features
+def test_parse_trigger_round_trip() -> None:
+    from strategy_ai.streaming.runner import _parse_trigger
 
-    feat = _parse_features(_features_payload())
-    assert isinstance(feat, ProcessedFeatures)
-    assert feat.symbol == "7203"
-    assert feat.price == Decimal("2500")
+    trigger = _parse_trigger(_trigger_payload())
+    assert trigger is not None
+    assert trigger.signal.symbol == "7203"
+    assert trigger.signal.source is SignalSource.RULE
+    assert trigger.features.symbol == "7203"
+    assert trigger.features.price == Decimal("2500")
 
-    assert _parse_features(b"not-json") is None
-    assert _parse_features(b"[1,2,3]") is None
-    assert _parse_features(json.dumps({"symbol": "7203"}).encode()) is None
+    assert _parse_trigger(b"not-json") is None
+    assert _parse_trigger(b"[1,2,3]") is None
+    assert _parse_trigger(json.dumps({"signal": {"symbol": "7203"}}).encode()) is None

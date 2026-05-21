@@ -13,8 +13,11 @@ def test_defaults() -> None:
     settings = StrategyAiSettings(_env_file=None)
     assert settings.llm_provider == "gemini"
     assert settings.gemini_model == "gemini-2.0-flash"
-    assert settings.ai_min_interval_seconds == 60.0
+    assert settings.ai_min_interval_seconds == 300.0
     assert settings.ai_temperature == Decimal("0.0")
+    assert settings.ai_max_output_tokens == 256
+    assert settings.pubsub_pull_max_messages == 5
+    assert settings.pubsub_subscription_features == "strategy-ai-rule-signals"
 
 
 def test_factory_builds_gemini() -> None:
