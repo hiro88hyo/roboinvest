@@ -218,5 +218,11 @@ live までの残りを短く見るための要約。2026-05-19 時点。
 - [x] self-hosted runner から deploy できる（GitHub Actions `Deploy Production` run `25981863922` success、`Deploy on LAN host` job 完走）
 - [x] secrets が平文ファイルとして永続化されない（2026-05-21: GCP service account key は tmpfs `/dev/shm/roboinvest/gcp-pubsub-sa.json` にのみ materialize、repo 配下の永続ファイルは削除済み）
 - [ ] paper trial の E2E と 14:50 closeout が本番構成で確認済み（2026-05-20 paper 日中観測は完了、14:50 closeout は live で実地確認済みだが paper では未再観測）
+
+## 12. Next Action
+
+- [ ] 次回の最優先として、寄り付き後に `gateway` / `oms-live` / kabu の live ログを見て `max_qty_per_order` reject と `Code 21` の減少を確認する
+- [ ] 市場時間外に、runtime SA の Pub/Sub IAM を整理し `scripts/gcp-pubsub-admin.py --smoke-test --cleanup-smoke` を通す
+- [ ] paper `14:50 closeout` の再観測は保留扱いとし、live 運用観測と IAM 整理より優先しない
 - [x] live 初回の最小注文が kabu / Supabase / Dashboard で突合済み（2026-05-21: Strong GO `9432 / 100` を kabu `/orders`、Supabase `trades_live` / `positions(live)`、Dashboard監視手段で確認）
 - [x] rollback / kill switch / reconcile の手順が runbook 化済み（`docs/runbook/adr-0001-github-actions-deploy.md`、`docs/runbook/oms-live-phase3.md`、`scripts/reconcile-positions.py`）
