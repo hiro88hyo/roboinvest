@@ -16,14 +16,16 @@ At-least-once semantics:
   ``system_status.is_trading_allowed = false`` *before* acking. The UPDATE
   is idempotent so a redelivered message after a crash is harmless.
 
-Entry price for BUY lot calculation comes from
-``positions.current_price`` for the same symbol (Feature Engine writes the
-latest tick there). When ``trade_mode=paper`` and no position row exists
-yet, the runner falls back to the latest ``daily_ohlcv.close`` so paper
-e2e runs can fire BUY signals on watchlist-only symbols. Live mode does
-NOT fall back — it stays fail-closed and rejects with ``missing_entry_price``
-to avoid sending real money on stale daily data. SELL never reads the
-price — it closes the existing LONG quantity as-is.
+Entry price for BUY lot calculation prefers
+``UnifiedTradeSignal.price`` carried through from ``ProcessedFeatures.price``.
+This lets live BUY signals for flat positions use a fresh tick price without depending on an
+existing ``positions`` row. When the signal price is missing, the runner
+falls back to ``positions.current_price`` for the same symbol, and in
+``trade_mode=paper`` only it may then fall back to the latest
+``daily_ohlcv.close``. Live mode still does NOT fall back to daily data —
+it stays fail-closed and rejects with ``missing_entry_price`` to avoid
+sending real money on stale prices. SELL never reads the price — it
+closes the existing LONG quantity as-is.
 """
 
 from __future__ import annotations
@@ -37,9 +39,10 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
-from trade_contracts.enums import Action, TradeMode
+from trade_contracts.enums import Action, TradeMode, TradingStyle
 from trade_contracts.signal import UnifiedTradeSignal
 
 from .. import kill_switch, lot_calculator
@@ -153,6 +156,12 @@ class StreamRunner:
             self._log_reject(signal, ks.reason or "kill_switch", trade_mode)
             return _Decision(approved=False, kill_switch_fired=kill_switch_fired)
 
+        if self._is_live_day_session_closed(
+            trade_mode=trade_mode, holding_type=signal.holding_type
+        ):
+            self._log_reject(signal, "market_closed", trade_mode)
+            return _Decision(approved=False, kill_switch_fired=False)
+
         entry_price: Decimal | None = None
         existing_qty: int | None = None
 
@@ -163,8 +172,11 @@ class StreamRunner:
                 symbol=signal.symbol, trade_mode=trade_mode
             )
             if existing_qty == 0:
-                entry_price = await self.supabase.read_latest_price(symbol=signal.symbol)
-                entry_price_source = "positions"
+                entry_price = signal.price
+                entry_price_source = "signal"
+                if entry_price is None:
+                    entry_price = await self.supabase.read_latest_price(symbol=signal.symbol)
+                    entry_price_source = "positions"
                 if entry_price is None and trade_mode is TradeMode.PAPER:
                     entry_price = await self.supabase.read_latest_daily_close(symbol=signal.symbol)
                     if entry_price is not None:
@@ -301,6 +313,19 @@ class StreamRunner:
             )
         return rebudgeted
 
+    def _is_live_day_session_closed(
+        self,
+        *,
+        trade_mode: TradeMode,
+        holding_type: TradingStyle,
+    ) -> bool:
+        if trade_mode is not TradeMode.LIVE or holding_type is not TradingStyle.DAY:
+            return False
+        now = self.wall_clock().astimezone(ZoneInfo(self.settings.day_closeout_timezone))
+        hh, mm = self.settings.day_closeout_time.split(":", 1)
+        close_h, close_m = int(hh), int(mm)
+        return (now.hour, now.minute) >= (close_h, close_m)
+
     def _cap_live_buy_quantity(
         self,
         *,
@@ -337,12 +362,20 @@ class StreamRunner:
 
     def _log_reject(self, signal: UnifiedTradeSignal, reason: str, trade_mode: TradeMode) -> None:
         logger.info(
-            "signal rejected: symbol=%s action=%s reason=%s trade_mode=%s signal_id=%s",
+            (
+                "signal rejected: symbol=%s action=%s reason=%s trade_mode=%s "
+                "signal_id=%s signal_source=%s has_price=%s "
+                "strategy_signal_id_a=%s strategy_signal_id_b=%s"
+            ),
             signal.symbol,
             signal.action.value,
             reason,
             trade_mode.value,
             signal.signal_id,
+            signal.signal_source.value,
+            signal.price is not None,
+            signal.strategy_signal_id_a,
+            signal.strategy_signal_id_b,
         )
 
 

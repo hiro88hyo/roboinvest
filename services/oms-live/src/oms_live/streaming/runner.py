@@ -187,7 +187,7 @@ class StreamRunner:
             )
             return "safety_rejected"
         max_qty = self.settings.oms_live_max_qty_per_order
-        if max_qty is not None and order.quantity > max_qty:
+        if max_qty is not None and order.side.value == "BUY" and order.quantity > max_qty:
             logger.warning(
                 "live order rejected by max_qty_per_order: order_id=%s symbol=%s qty=%d max=%d",
                 order.order_id,
@@ -214,7 +214,10 @@ class StreamRunner:
             account_type=self.settings.kabu_account_type,
         )
         try:
-            send_resp = await self.kabu.send_order(payload)
+            send_resp = await self._call_kabu_with_auth_retry(
+                lambda: self.kabu.send_order(payload),
+                operation=f"sendorder symbol={order.symbol}",
+            )
         except KabuApiError:
             logger.exception(
                 "kabu sendorder failed: symbol=%s signal_id=%s",
@@ -309,7 +312,10 @@ class StreamRunner:
         interval = max(self.settings.order_fill_poll_interval_seconds, 0.0)
         while True:
             try:
-                payload = await self.kabu.get_order(kabu_order_id)
+                payload = await self._call_kabu_with_auth_retry(
+                    lambda: self.kabu.get_order(kabu_order_id),
+                    operation=f"get_order order_id={kabu_order_id}",
+                )
             except KabuApiError:
                 logger.exception("kabu get_order failed: order_id=%s", kabu_order_id)
                 return None
@@ -334,9 +340,12 @@ class StreamRunner:
 
     async def _best_effort_cancel(self, kabu_order_id: str) -> None:
         try:
-            await self.kabu.cancel_order(
-                order_id=kabu_order_id,
-                password=self.settings.kabu_order_password,
+            await self._call_kabu_with_auth_retry(
+                lambda: self.kabu.cancel_order(
+                    order_id=kabu_order_id,
+                    password=self.settings.kabu_order_password,
+                ),
+                operation=f"cancel_order order_id={kabu_order_id}",
             )
         except KabuApiError:
             logger.exception("kabu cancel_order failed: order_id=%s", kabu_order_id)
@@ -464,7 +473,10 @@ class StreamRunner:
             account_type=self.settings.kabu_account_type,
         )
         try:
-            send_resp = await self.kabu.send_order(payload)
+            send_resp = await self._call_kabu_with_auth_retry(
+                lambda: self.kabu.send_order(payload),
+                operation=f"sendorder symbol={order.symbol}",
+            )
         except KabuApiError:
             logger.exception("closeout sendorder failed: symbol=%s", order.symbol)
             return "no_fill"
@@ -506,6 +518,25 @@ class StreamRunner:
         if update.realized_pnl is not None:
             await self.supabase.add_realized_pnl(update.realized_pnl)
         return "filled"
+
+    async def _call_kabu_with_auth_retry(
+        self,
+        call: Callable[[], Awaitable[Any]],
+        *,
+        operation: str,
+    ) -> Any:
+        try:
+            return await call()
+        except KabuApiError as exc:
+            if exc.status_code not in (401, 403):
+                raise
+            logger.warning(
+                "kabu auth lost during %s (status=%s); invalidating token and retrying once",
+                operation,
+                exc.status_code,
+            )
+            self.kabu.invalidate_token()
+            return await call()
 
 
 def _parse_order(msg: PulledMessage) -> OrderRequest | None:

@@ -56,6 +56,7 @@ def _newer(a: StrategySignal, b: StrategySignal) -> StrategySignal:
 def _build_unified(
     *,
     symbol: str,
+    price: Decimal | None,
     action: Action,
     confidence: Decimal,
     signal_source: SignalSource,
@@ -66,6 +67,7 @@ def _build_unified(
 ) -> UnifiedTradeSignal:
     return UnifiedTradeSignal(
         symbol=symbol,
+        price=price,
         action=action,
         confidence=float(confidence),
         signal_source=signal_source,
@@ -105,6 +107,7 @@ def aggregate(
         return None
 
     stamp = now or datetime.now(UTC)
+    latest = _newer(rule, ai) if rule is not None and ai is not None else None
 
     # Only one side present — pass through with that source.
     if rule is None or ai is None:
@@ -114,6 +117,7 @@ def aggregate(
             return None
         return _build_unified(
             symbol=symbol,
+            price=only.price,
             action=only.action,
             confidence=Decimal(str(only.confidence)),
             signal_source=only.source,
@@ -136,6 +140,7 @@ def aggregate(
             return None
         return _build_unified(
             symbol=symbol,
+            price=latest.price if latest is not None else None,
             action=rule.action,
             confidence=blended,
             signal_source=SignalSource.CONSENSUS,
@@ -154,6 +159,7 @@ def aggregate(
         return None
     return _build_unified(
         symbol=symbol,
+        price=winner.price,
         action=winner.action,
         confidence=Decimal(str(winner.confidence)),
         signal_source=winner.source,

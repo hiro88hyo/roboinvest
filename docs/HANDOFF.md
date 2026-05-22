@@ -1,6 +1,6 @@
 # Handoff Memo (for coding AIs)
 
-最終更新: 2026-05-20 / HEAD: `main`
+最終更新: 2026-05-22 / HEAD: `main`
 
 別のコーディング AI（Claude Code 別セッション / Cursor / Copilot 等）がこのリポジトリに着手するときに、最初に目を通すための引き継ぎメモ。詳細は本ファイルではなく各リンク先で確認すること。
 
@@ -154,6 +154,43 @@ uv run python scripts/health-check.py
 - 寄り付き後は `gateway` の数量抑制が効いて `qty>100` が `oms-live` まで流れないこと、`kabu Code 21` が減ることを live ログで確認する。
 - live 観測中は kabu token 競合を避けるため、`paper` 用の切替や追加 probe を挟まない。
 - `paper 14:50 closeout` の再観測は 2026-05-22 の live 確認と切り離し、別枠で実施する。
+
+### 2026-05-22 live blocking issue / fix plan
+
+- 2026-05-22 寄り付き後の live 観測で、`feeder -> feature-engine -> strategy-rule -> aggregator -> gateway` の流れ自体は動作していたが、`gateway` は live 新規 `BUY` をほぼ通せなかった。
+- 主因は `gateway` の `missing_entry_price` reject。現在の実装では live `BUY` かつ既存ポジション `0` の場合、`positions.current_price` からしか `entry_price` を引かない。`paper` では `daily_ohlcv.close` fallback があるが、live は fail-close のため fallback しない。
+- `positions(live)` / kabu 実保有がともに空のとき、watchlist-only 銘柄の live `BUY` は構造的に `missing_entry_price` になり、新規エントリー不能。直近ログでは `missing_entry_price` と `no_position_for_sell` が reject の大半を占め、`trades_live` の当日新規約定は発生しなかった。
+- 次セッションの修正方針:
+  1. live 用の `entry_price` ソースを `positions` 以外に追加する。候補は watchlist 銘柄の直近価格を別ストアへ保持し、`gateway` がそれを参照する経路。
+  2. `daily_ohlcv.close` を live fallback にそのまま使うのは stale price での実発注リスクが高いため避ける。
+  3. `gateway` unit/integration test に「live + flat position + 最新価格ありなら BUY を通す」「live + 最新価格なしなら `missing_entry_price` reject」を追加する。
+  4. 修正後は production compose で再観測し、`gateway` の `missing_entry_price` 偏重が減ること、`trades_live` 当日新規約定が発生しうることを確認する。
+
+### 2026-05-22 live fix / production outcome
+
+- `StrategySignal` / `UnifiedTradeSignal` に `price` を追加し、`strategy-rule` / `strategy-ai` / `aggregator` で `ProcessedFeatures.price` をそのまま引き回すように修正した。これにより `gateway` は live 新規 `BUY` で既存 `positions.current_price` がなくても `signal.price` から数量計算できる。
+- `gateway` には reject 診断ログを追加し、`signal_source` / `has_price` / strategy signal id を残すようにした。production では `missing_entry_price` の大半が `signal_source=RULE` かつ `has_price=False` の backlog signal であることを確認した。新しい経路では `entry_price resolved: source=signal` が出て live `BUY` / `SELL` が実際に約定した。
+- `oms-live` は kabu token 失効で `401 APIキー不一致` に詰まっていたため、`send_order` / `get_order` / `cancel_order` で `401/403` を受けたら token を invalidate して 1 回だけ再試行するように修正した。production では `401 -> invalidating token and retrying once -> 200 OK -> 約定` を確認済み。
+- `oms-live` の `OMS_LIVE_MAX_QTY_PER_ORDER` は exit の `SELL` まで止めていたため、`BUY` にのみ適用するよう修正した。production では `4392 SELL qty=200` が `sendorder 200 -> 約定 -> positions delete -> pnl_delta=22200.00` まで通った。
+- 引け後に `gateway` が `14:50 JST` 以降も live order を publish し続ける設計欠陥が見つかったため、`trade_mode=live` かつ `holding_type=day` では `14:50 Asia/Tokyo` 以降の signal を `reason=market_closed` で fail-close する guard を追加した。production 反映後は `15:44 JST` 以降の live signal が publish されず、すべて `market_closed` reject に変わった。
+- 当日観測できた live 約定例は `4392`、`5074`、`9552`、`3810`、`7162`、`6613`。一方で残課題もあり、`RULE has_price=False` の古い signal による `missing_entry_price`、一部重複決済に起因する kabu `Code 8`、引け後 publish 直前に発生した kabu `Code 5: 正しい有効期限を設定してください` は未解決。
+- `fatal error: concurrent map writes/read and map write` は、少なくとも今回の再現経路では `gateway` コンテナの Python runtime ではなく `docker compose logs` 側の出力にだけ現れた。`docker compose version v5.1.3`。直近 2 時間の `gateway` 生ログには traceback や process restart はなく、service crash の証拠は取れていない。次回は compose CLI 側の既知不具合も疑って切り分ける。
+- 引け後確認時点の `positions(live)` は `3907 x 200 LONG` の 1 件だけ。`opened_at=2026-05-22 05:53:24 UTC` (`2026-05-22 14:53:24 JST`) で closeout 後に建っており、post-close guard 反映後は新しい live 建玉が増えていないことを Supabase で確認済み。さらに kabu `/positions` でも `3907 / 200 / Price=1259 / CurrentPrice=1270` が一致しており、stale row ではなく実ポジション。
+- `3907` の net `200 LONG` は、`2026-05-22 12:42:53 JST` の `BUY 100`、`13:15:45 JST` の `SELL 100` を経た後、`2026-05-22 14:53:24-25 JST` に `BUY 100 x2` が約定してできたもの。対応する `SELL` signal は `2026-05-22 14:54 JST` 以降にしか出ておらず、現在は post-close guard で `market_closed` reject されるため、そのまま週末持ち越しになっている。
+- 実行テスト: `uv run pytest services/gateway/tests/unit/test_stream_runner.py -q` で `22 passed`、`uv run pytest services/oms-live/tests/unit/test_live_stream_runner.py` で `25 passed`。
+- 次セッションの優先確認:
+  1. `3907` 残ポジションを `2026-05-25 月曜日` の寄り前にどう扱うか確認する。
+  2. `RULE has_price=False` backlog を upstream でどう掃除するかの整理。
+  3. kabu `Code 5` の payload 切り分け。
+  4. `gateway` の `concurrent map writes` 再発源の特定。
+
+### 2026-05-21 Night Preflight
+
+- `2026-05-21` 夜に明日用の前準備を実施済み。`docker compose -f infra/docker-compose.prod.yml config` は通過、`health-check.py --check supabase --timeout 30` も `system_status` / `positions` / `strategy_logs` / `aggregator_logs` / `trades_live` / `trades_paper` / `watchlist` / `master_stocks` / `daily_ohlcv` まで `OK` を確認した。
+- production image の事前 build は完了。少なくとも `feeder` / `feature-engine` / `strategy-rule` / `strategy-ai` / `aggregator` / `gateway` / `oms-paper` / `oms-live` は `trade-ai-prod-*` イメージとして build 済み。次回起動時の `up -d --build` はキャッシュが効く見込み。
+- 新しい AI gating 経路用の managed Pub/Sub resource も作成済み。`strategy-ai-triggers` topic と `strategy-ai-rule-signals` subscription を `scripts/gcp-pubsub-admin.py --apply` で追加した。
+- その後の managed Pub/Sub smoke test も `RESULT OK`。`strategy-ai-triggers` / `strategy-ai-rule-signals` を含む production topics/subscriptions と `adr-0001-smoke-test` / `adr-0001-smoke-test-sub` の publish/pull/ack を確認済み。
+- 次回営業日 (`2026-05-25 月曜日`) に残るのは、基本的に `universe-scanner` 実行、Supabase 状態再確認、services 起動、寄り付き後の live ログ観測だけ。
 
 ### 2026-05-20 08:55 JST 市場オープン中テスト再開メモ
 

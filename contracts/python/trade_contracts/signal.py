@@ -13,6 +13,7 @@ class StrategySignal(BaseModel):
     signal_id: UUID = Field(default_factory=uuid4)
     source: SignalSource
     symbol: str
+    price: Decimal | None = None
     action: Action
     confidence: float = Field(ge=0.0, le=1.0)
     reasoning: str | None = None
@@ -24,6 +25,7 @@ class UnifiedTradeSignal(BaseModel):
 
     signal_id: UUID = Field(default_factory=uuid4)
     symbol: str
+    price: Decimal | None = None
     action: Action
     confidence: float = Field(ge=0.0, le=1.0)
     signal_source: SignalSource

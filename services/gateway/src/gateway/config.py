@@ -44,6 +44,8 @@ class GatewaySettings(BaseSettings):
         default=None,
         validation_alias="OMS_LIVE_MAX_QTY_PER_ORDER",
     )
+    day_closeout_time: str = "14:50"
+    day_closeout_timezone: str = "Asia/Tokyo"
 
     backtest_output_dir: Path = Path("./out/gateway")
 

@@ -141,6 +141,7 @@ class _KabuRouter:
     """
 
     sendorder_responses: list[dict[str, Any]] = field(default_factory=list)
+    sendorder_http_statuses: list[int] = field(default_factory=list)
     order_states: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     cancel_response: dict[str, Any] = field(default_factory=lambda: {"Result": 0, "OrderId": ""})
     sendorder_status: int = 200
@@ -157,7 +158,12 @@ class _KabuRouter:
             if not self.sendorder_responses:
                 return httpx.Response(500, json={"Code": 9999, "Message": "no stub"})
             body = self.sendorder_responses.pop(0)
-            return httpx.Response(self.sendorder_status, json=body)
+            status = (
+                self.sendorder_http_statuses.pop(0)
+                if self.sendorder_http_statuses
+                else self.sendorder_status
+            )
+            return httpx.Response(status, json=body)
         if path.endswith("/cancelorder"):
             return httpx.Response(self.cancel_status, json=self.cancel_response)
         if method == "GET" and path.endswith("/orders"):
@@ -429,6 +435,36 @@ async def test_run_once_sendorder_rejected_records_no_fill_and_acks() -> None:
     assert [r for r in supabase.requests if r.method in write_methods] == []
     # ack は飛ぶ
     assert len(pubsub.acked) == 1
+
+
+async def test_run_once_retries_sendorder_after_auth_loss() -> None:
+    order = make_order_request(side=Side.BUY, quantity=100)
+    pubsub = _PubSubRouter(batches=[_pull_response([("a1", order.model_dump_json().encode())])])
+    supabase = _SupabaseRouter()
+    kabu = _KabuRouter(
+        sendorder_http_statuses=[401, 200],
+        sendorder_responses=[
+            {"Code": 4001009, "Message": "APIキー不一致"},
+            {"Result": 0, "OrderId": "OID-RETRY"},
+        ],
+        order_states={
+            "OID-RETRY": [
+                _kabu_order_payload(order_id="OID-RETRY", state=3, cum_qty=100, detail_price=1000)
+            ]
+        },
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, kabu=kabu, run_body=_body)
+
+    assert stats.filled == 1
+    assert stats.no_fills == 0
+    send_calls = [r for r in kabu.requests if r.url.path.endswith("/sendorder")]
+    token_calls = [r for r in kabu.requests if r.url.path.endswith("/token")]
+    assert len(send_calls) == 2
+    assert len(token_calls) == 2
 
 
 async def test_run_once_poll_timeout_calls_cancel_and_acks_no_fill() -> None:
@@ -867,6 +903,43 @@ async def test_run_once_safety_rejects_when_qty_exceeds_max() -> None:
     assert stats.safety_rejected == 1
     assert stats.filled == 0
     assert kabu.requests == []
+
+
+async def test_run_once_sell_over_max_qty_still_sends_order() -> None:
+    """max_qty は exit の SELL には適用しない。"""
+    order = make_order_request(side=Side.SELL, quantity=200)
+    pubsub = _PubSubRouter(batches=[_pull_response([("a1", order.model_dump_json().encode())])])
+    supabase = _SupabaseRouter(
+        live_position_rows=[[_position_row(symbol=order.symbol, quantity=200, entry_price="1000")]],
+        system_status_rows=[_system_status_row(daily_pnl="0", weekly_pnl="0", monthly_pnl="0")],
+    )
+    kabu = _KabuRouter(
+        sendorder_responses=[{"Result": 0, "OrderId": "OID-SELL-CAP"}],
+        order_states={
+            "OID-SELL-CAP": [
+                _kabu_order_payload(
+                    order_id="OID-SELL-CAP",
+                    side="1",
+                    state=3,
+                    cum_qty=200,
+                    order_qty=200,
+                    detail_price=1100,
+                )
+            ]
+        },
+    )
+
+    settings = _settings(oms_live_max_qty_per_order=100)
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(
+        pubsub=pubsub, supabase=supabase, kabu=kabu, settings=settings, run_body=_body
+    )
+    assert stats.safety_rejected == 0
+    assert stats.filled == 1
+    assert any("/sendorder" in req.url.path for req in kabu.requests)
 
 
 async def test_run_once_dry_run_skips_sendorder_and_supabase_writes() -> None:
