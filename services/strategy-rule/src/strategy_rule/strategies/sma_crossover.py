@@ -70,6 +70,7 @@ class SmaCrossoverStrategy:
         return StrategySignal(
             source=SignalSource.RULE,
             symbol=features.symbol,
+            price=features.price,
             action=action,
             confidence=confidence,
             reasoning=(

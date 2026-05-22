@@ -65,6 +65,7 @@ class AiStrategy:
         return StrategySignal(
             source=SignalSource.AI,
             symbol=features.symbol,
+            price=features.price,
             action=decision.action,
             confidence=decision.confidence,
             reasoning=decision.reasoning or None,

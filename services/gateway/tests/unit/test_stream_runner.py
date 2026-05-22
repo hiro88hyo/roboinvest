@@ -45,6 +45,7 @@ def _settings(**overrides: Any) -> GatewaySettings:
 def _unified_payload(
     *,
     symbol: str = "7203",
+    price: str | None = None,
     action: Action = Action.BUY,
     confidence: float = 0.8,
     signal_source: SignalSource = SignalSource.CONSENSUS,
@@ -55,6 +56,7 @@ def _unified_payload(
     body: dict[str, Any] = {
         "signal_id": str(signal_id or uuid4()),
         "symbol": symbol,
+        "price": price,
         "action": action.value,
         "confidence": confidence,
         "signal_source": signal_source.value,
@@ -164,14 +166,15 @@ async def _with_runner(
     settings: GatewaySettings | None = None,
     run_body: Callable[[StreamRunner], Coroutine[None, None, Any]],
     sleep: Callable[[float], Awaitable[None]] | None = None,
+    wall_clock: Callable[[], datetime] | None = None,
 ) -> Any:
     settings = settings or _settings()
 
     async def _noop_sleep(_: float) -> None:
         return None
 
-    def _wall_clock() -> datetime:
-        return datetime(2026, 4, 20, 9, 0, 0, tzinfo=UTC)
+    def _default_wall_clock() -> datetime:
+        return datetime(2026, 4, 20, 0, 0, 0, tzinfo=UTC)
 
     async with (
         PubSubSubscriber(
@@ -202,7 +205,7 @@ async def _with_runner(
             ),
             idle_backoff_seconds=1.0,
             sleep=sleep or _noop_sleep,
-            wall_clock=_wall_clock,
+            wall_clock=wall_clock or _default_wall_clock,
         )
         return await run_body(runner)
 
@@ -442,6 +445,40 @@ async def test_buy_without_latest_price_is_rejected() -> None:
     assert daily_calls == []
 
 
+async def test_live_buy_uses_signal_price_without_position_price_lookup() -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response(
+                [("a1", _unified_payload(action=Action.BUY, price="2500", stop_loss_price="2400"))]
+            )
+        ]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trade_mode="live")],
+        positions_quantity_rows=[[]],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+
+    assert stats.approved == 1
+    assert stats.rejected == 0
+    body = json.loads(pubsub.published[0].content.decode())
+    order = json.loads(base64.b64decode(body["messages"][0]["data"]).decode())
+    assert order["quantity"] == 200
+
+    position_price_calls = [
+        r
+        for r in supabase.requests
+        if r.method == "GET"
+        and r.url.path == "/rest/v1/positions"
+        and (r.url.params.get("select") or "") == "current_price"
+    ]
+    assert position_price_calls == []
+
+
 async def test_paper_buy_falls_back_to_daily_ohlcv_when_no_position() -> None:
     pubsub = _PubSubRouter(
         pull_batches=[
@@ -553,6 +590,33 @@ async def test_paper_buy_prefers_position_price_over_daily_ohlcv() -> None:
     assert daily_calls == []
 
 
+async def test_live_day_signal_is_rejected_after_market_close() -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[_pull_response([("a1", _unified_payload(action=Action.BUY, stop_loss_price="2400"))])]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trade_mode="live", trading_style="day")],
+    )
+
+    def _after_close() -> datetime:
+        return datetime(2026, 4, 20, 5, 50, 0, tzinfo=UTC)
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        wall_clock=_after_close,
+        run_body=_body,
+    )
+
+    assert stats.rejected == 1
+    assert pubsub.published == []
+    position_calls = [r for r in supabase.requests if r.method == "GET" and r.url.path == "/rest/v1/positions"]
+    assert position_calls == []
+
+
 async def test_kill_switch_off_rejects_without_update() -> None:
     pubsub = _PubSubRouter(
         pull_batches=[_pull_response([("a1", _unified_payload(action=Action.BUY))])]
@@ -597,7 +661,7 @@ async def test_daily_loss_limit_flips_kill_switch() -> None:
     assert len(patch_calls) == 1
     body = json.loads(patch_calls[0].content.decode())
     assert body["is_trading_allowed"] is False
-    assert body["updated_at"].startswith("2026-04-20T09:00:00")
+    assert body["updated_at"].startswith("2026-04-20T00:00:00")
     assert pubsub.published == []
 
 

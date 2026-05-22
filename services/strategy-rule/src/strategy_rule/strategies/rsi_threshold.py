@@ -57,6 +57,7 @@ class RsiThresholdStrategy:
         return StrategySignal(
             source=SignalSource.RULE,
             symbol=features.symbol,
+            price=features.price,
             action=action,
             confidence=confidence,
             reasoning=reasoning,
