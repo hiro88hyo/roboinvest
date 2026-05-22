@@ -592,7 +592,9 @@ async def test_paper_buy_prefers_position_price_over_daily_ohlcv() -> None:
 
 async def test_live_day_signal_is_rejected_after_market_close() -> None:
     pubsub = _PubSubRouter(
-        pull_batches=[_pull_response([("a1", _unified_payload(action=Action.BUY, stop_loss_price="2400"))])]
+        pull_batches=[
+            _pull_response([("a1", _unified_payload(action=Action.BUY, stop_loss_price="2400"))])
+        ]
     )
     supabase = _SupabaseRouter(
         system_status_rows=[_system_status_row(trade_mode="live", trading_style="day")],
@@ -613,7 +615,9 @@ async def test_live_day_signal_is_rejected_after_market_close() -> None:
 
     assert stats.rejected == 1
     assert pubsub.published == []
-    position_calls = [r for r in supabase.requests if r.method == "GET" and r.url.path == "/rest/v1/positions"]
+    position_calls = [
+        r for r in supabase.requests if r.method == "GET" and r.url.path == "/rest/v1/positions"
+    ]
     assert position_calls == []
 
 

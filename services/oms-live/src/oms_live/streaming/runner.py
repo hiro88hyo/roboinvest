@@ -187,11 +187,7 @@ class StreamRunner:
             )
             return "safety_rejected"
         max_qty = self.settings.oms_live_max_qty_per_order
-        if (
-            max_qty is not None
-            and order.side.value == "BUY"
-            and order.quantity > max_qty
-        ):
+        if max_qty is not None and order.side.value == "BUY" and order.quantity > max_qty:
             logger.warning(
                 "live order rejected by max_qty_per_order: order_id=%s symbol=%s qty=%d max=%d",
                 order.order_id,
@@ -522,7 +518,6 @@ class StreamRunner:
         if update.realized_pnl is not None:
             await self.supabase.add_realized_pnl(update.realized_pnl)
         return "filled"
-
 
     async def _call_kabu_with_auth_retry(
         self,

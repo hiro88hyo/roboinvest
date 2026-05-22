@@ -156,7 +156,9 @@ class StreamRunner:
             self._log_reject(signal, ks.reason or "kill_switch", trade_mode)
             return _Decision(approved=False, kill_switch_fired=kill_switch_fired)
 
-        if self._is_live_day_session_closed(trade_mode=trade_mode, holding_type=signal.holding_type):
+        if self._is_live_day_session_closed(
+            trade_mode=trade_mode, holding_type=signal.holding_type
+        ):
             self._log_reject(signal, "market_closed", trade_mode)
             return _Decision(approved=False, kill_switch_fired=False)
 
