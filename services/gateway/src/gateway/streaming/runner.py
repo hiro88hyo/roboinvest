@@ -37,9 +37,9 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
-from zoneinfo import ZoneInfo
 from decimal import Decimal
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
 from trade_contracts.enums import Action, TradeMode, TradingStyle
@@ -362,7 +362,11 @@ class StreamRunner:
 
     def _log_reject(self, signal: UnifiedTradeSignal, reason: str, trade_mode: TradeMode) -> None:
         logger.info(
-            "signal rejected: symbol=%s action=%s reason=%s trade_mode=%s signal_id=%s signal_source=%s has_price=%s strategy_signal_id_a=%s strategy_signal_id_b=%s",
+            (
+                "signal rejected: symbol=%s action=%s reason=%s trade_mode=%s "
+                "signal_id=%s signal_source=%s has_price=%s "
+                "strategy_signal_id_a=%s strategy_signal_id_b=%s"
+            ),
             signal.symbol,
             signal.action.value,
             reason,
