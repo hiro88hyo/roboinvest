@@ -174,10 +174,11 @@ uv run python scripts/health-check.py
 - `oms-live` の `OMS_LIVE_MAX_QTY_PER_ORDER` は exit の `SELL` まで止めていたため、`BUY` にのみ適用するよう修正した。production では `4392 SELL qty=200` が `sendorder 200 -> 約定 -> positions delete -> pnl_delta=22200.00` まで通った。
 - 引け後に `gateway` が `14:50 JST` 以降も live order を publish し続ける設計欠陥が見つかったため、`trade_mode=live` かつ `holding_type=day` では `14:50 Asia/Tokyo` 以降の signal を `reason=market_closed` で fail-close する guard を追加した。production 反映後は `15:44 JST` 以降の live signal が publish されず、すべて `market_closed` reject に変わった。
 - 当日観測できた live 約定例は `4392`、`5074`、`9552`、`3810`、`7162`、`6613`。一方で残課題もあり、`RULE has_price=False` の古い signal による `missing_entry_price`、一部重複決済に起因する kabu `Code 8`、引け後 publish 直前に発生した kabu `Code 5: 正しい有効期限を設定してください`、`gateway` の `fatal error: concurrent map writes` は未解決。
-- 引け後確認時点の `positions(live)` は `3907 x 200 LONG` の 1 件だけ。`opened_at=2026-05-22 05:53:24 UTC` (`14:53:24 JST`) で closeout 後に建っており、post-close guard 反映後は新しい live 建玉が増えていないことを Supabase で確認済み。
+- 引け後確認時点の `positions(live)` は `3907 x 200 LONG` の 1 件だけ。`opened_at=2026-05-22 05:53:24 UTC` (`2026-05-22 14:53:24 JST`) で closeout 後に建っており、post-close guard 反映後は新しい live 建玉が増えていないことを Supabase で確認済み。さらに kabu `/positions` でも `3907 / 200 / Price=1259 / CurrentPrice=1270` が一致しており、stale row ではなく実ポジション。
+- `3907` の net `200 LONG` は、`2026-05-22 12:42:53 JST` の `BUY 100`、`13:15:45 JST` の `SELL 100` を経た後、`2026-05-22 14:53:24-25 JST` に `BUY 100 x2` が約定してできたもの。対応する `SELL` signal は `2026-05-22 14:54 JST` 以降にしか出ておらず、現在は post-close guard で `market_closed` reject されるため、そのまま週末持ち越しになっている。
 - 実行テスト: `uv run pytest services/gateway/tests/unit/test_stream_runner.py -q` で `22 passed`、`uv run pytest services/oms-live/tests/unit/test_live_stream_runner.py` で `25 passed`。
 - 次セッションの優先確認:
-  1. `3907` 残ポジションの回収方針確認。
+  1. `3907` 残ポジションを `2026-05-25 月曜日` の寄り前にどう扱うか確認する。
   2. `RULE has_price=False` backlog を upstream でどう掃除するかの整理。
   3. kabu `Code 5` の payload 切り分け。
   4. `gateway` の `concurrent map writes` 再発源の特定。
@@ -185,10 +186,10 @@ uv run python scripts/health-check.py
 ### 2026-05-21 Night Preflight
 
 - `2026-05-21` 夜に明日用の前準備を実施済み。`docker compose -f infra/docker-compose.prod.yml config` は通過、`health-check.py --check supabase --timeout 30` も `system_status` / `positions` / `strategy_logs` / `aggregator_logs` / `trades_live` / `trades_paper` / `watchlist` / `master_stocks` / `daily_ohlcv` まで `OK` を確認した。
-- production image の事前 build は完了。少なくとも `feeder` / `feature-engine` / `strategy-rule` / `strategy-ai` / `aggregator` / `gateway` / `oms-paper` / `oms-live` は `trade-ai-prod-*` イメージとして build 済み。明朝の `up -d --build` はキャッシュが効く見込み。
+- production image の事前 build は完了。少なくとも `feeder` / `feature-engine` / `strategy-rule` / `strategy-ai` / `aggregator` / `gateway` / `oms-paper` / `oms-live` は `trade-ai-prod-*` イメージとして build 済み。次回起動時の `up -d --build` はキャッシュが効く見込み。
 - 新しい AI gating 経路用の managed Pub/Sub resource も作成済み。`strategy-ai-triggers` topic と `strategy-ai-rule-signals` subscription を `scripts/gcp-pubsub-admin.py --apply` で追加した。
 - その後の managed Pub/Sub smoke test も `RESULT OK`。`strategy-ai-triggers` / `strategy-ai-rule-signals` を含む production topics/subscriptions と `adr-0001-smoke-test` / `adr-0001-smoke-test-sub` の publish/pull/ack を確認済み。
-- 明朝に残るのは、基本的に `universe-scanner` 実行、Supabase 状態再確認、services 起動、寄り付き後の live ログ観測だけ。
+- 次回営業日 (`2026-05-25 月曜日`) に残るのは、基本的に `universe-scanner` 実行、Supabase 状態再確認、services 起動、寄り付き後の live ログ観測だけ。
 
 ### 2026-05-20 08:55 JST 市場オープン中テスト再開メモ
 
