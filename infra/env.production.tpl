@@ -40,6 +40,7 @@ TRADE_MODE=paper
 # OMS Live safety knobs. Keep dry-run true until the live readiness gate passes.
 OMS_LIVE_DRY_RUN=true
 OMS_LIVE_MAX_QTY_PER_ORDER=100
+LIVE_SIGNAL_MAX_AGE_SECONDS=300
 OMS_LIVE_ALLOWED_SYMBOLS=7203
 
 # Strategy parameters known from the verified local setup.

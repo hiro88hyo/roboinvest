@@ -52,6 +52,7 @@ def _unified_payload(
     holding_type: TradingStyle = TradingStyle.DAY,
     stop_loss_price: str | None = None,
     signal_id: UUID | None = None,
+    created_at: str = "2026-04-20T09:00:00+00:00",
 ) -> bytes:
     body: dict[str, Any] = {
         "signal_id": str(signal_id or uuid4()),
@@ -67,7 +68,7 @@ def _unified_payload(
         "target_price": None,
         "trailing_stop_pct": None,
         "max_hold_days": None,
-        "created_at": "2026-04-20T09:00:00+00:00",
+        "created_at": created_at,
     }
     return json.dumps(body).encode("utf-8")
 
@@ -619,6 +620,94 @@ async def test_live_day_signal_is_rejected_after_market_close() -> None:
         r for r in supabase.requests if r.method == "GET" and r.url.path == "/rest/v1/positions"
     ]
     assert position_calls == []
+
+
+async def test_live_stale_signal_is_rejected_before_position_reads() -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response(
+                [
+                    (
+                        "a1",
+                        _unified_payload(
+                            action=Action.BUY,
+                            price="2500",
+                            stop_loss_price="2400",
+                            created_at="2026-04-20T09:00:00+00:00",
+                        ),
+                    )
+                ]
+            )
+        ]
+    )
+    supabase = _SupabaseRouter(system_status_rows=[_system_status_row(trade_mode="live")])
+    settings = _settings(live_signal_max_age_seconds=60)
+
+    def _wall_clock() -> datetime:
+        return datetime(2026, 4, 20, 9, 10, 0, tzinfo=UTC)
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        settings=settings,
+        run_body=_body,
+        wall_clock=_wall_clock,
+    )
+
+    assert stats.rejected == 1
+    assert stats.approved == 0
+    assert pubsub.published == []
+    position_calls = [
+        r for r in supabase.requests if r.method == "GET" and r.url.path == "/rest/v1/positions"
+    ]
+    assert position_calls == []
+
+
+async def test_paper_stale_signal_is_not_rejected() -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response(
+                [
+                    (
+                        "a1",
+                        _unified_payload(
+                            action=Action.BUY,
+                            price="2500",
+                            stop_loss_price="2400",
+                            created_at="2026-04-20T09:00:00+00:00",
+                        ),
+                    )
+                ]
+            )
+        ]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trade_mode="paper")],
+        positions_quantity_rows=[[]],
+    )
+    settings = _settings(live_signal_max_age_seconds=60)
+
+    def _wall_clock() -> datetime:
+        return datetime(2026, 4, 20, 9, 10, 0, tzinfo=UTC)
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        settings=settings,
+        run_body=_body,
+        wall_clock=_wall_clock,
+    )
+
+    assert stats.approved == 1
+    assert stats.rejected == 0
+    assert len(pubsub.published) == 1
+    assert pubsub.published[0].url.path.endswith(f"/topics/{PAPER_TOPIC}:publish")
 
 
 async def test_kill_switch_off_rejects_without_update() -> None:

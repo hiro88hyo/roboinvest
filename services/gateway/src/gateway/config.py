@@ -44,6 +44,7 @@ class GatewaySettings(BaseSettings):
         default=None,
         validation_alias="OMS_LIVE_MAX_QTY_PER_ORDER",
     )
+    live_signal_max_age_seconds: float | None = 300.0
     day_closeout_time: str = "14:50"
     day_closeout_timezone: str = "Asia/Tokyo"
 
