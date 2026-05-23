@@ -144,6 +144,7 @@ class StreamRunner:
     async def _process(self, signal: UnifiedTradeSignal) -> _Decision:
         state = await self.supabase.read_system_status()
         trade_mode = state.trade_mode
+        now = self.wall_clock()
 
         # Kill-switch first — cheapest reject, and avoids price/position reads
         # when trading is already off or a pnl limit has been breached.
@@ -151,10 +152,14 @@ class StreamRunner:
         if not ks.passed:
             kill_switch_fired = False
             if ks.reason in _PNL_LIMIT_REASONS:
-                await self.supabase.disable_trading(now=self.wall_clock())
+                await self.supabase.disable_trading(now=now)
                 kill_switch_fired = True
             self._log_reject(signal, ks.reason or "kill_switch", trade_mode)
             return _Decision(approved=False, kill_switch_fired=kill_switch_fired)
+
+        if self._is_stale_live_signal(signal=signal, trade_mode=trade_mode, now=now):
+            self._log_reject(signal, "stale_signal", trade_mode)
+            return _Decision(approved=False, kill_switch_fired=False)
 
         if self._is_live_day_session_closed(
             trade_mode=trade_mode, holding_type=signal.holding_type
@@ -237,7 +242,7 @@ class StreamRunner:
             signal=signal,
             quantity=quantity,
             trade_mode=trade_mode,
-            created_at=self.wall_clock(),
+            created_at=now,
         )
         topic = resolve_topic(trade_mode, self.routing)
         await self.publisher.publish(
@@ -313,6 +318,21 @@ class StreamRunner:
             )
         return rebudgeted
 
+    def _signal_age_seconds(self, *, signal: UnifiedTradeSignal, now: datetime) -> float:
+        return max(0.0, (now - signal.created_at).total_seconds())
+
+    def _is_stale_live_signal(
+        self,
+        *,
+        signal: UnifiedTradeSignal,
+        trade_mode: TradeMode,
+        now: datetime,
+    ) -> bool:
+        max_age = self.settings.live_signal_max_age_seconds
+        if trade_mode is not TradeMode.LIVE or max_age is None:
+            return False
+        return self._signal_age_seconds(signal=signal, now=now) > max_age
+
     def _is_live_day_session_closed(
         self,
         *,
@@ -364,7 +384,7 @@ class StreamRunner:
         logger.info(
             (
                 "signal rejected: symbol=%s action=%s reason=%s trade_mode=%s "
-                "signal_id=%s signal_source=%s has_price=%s "
+                "signal_id=%s signal_source=%s has_price=%s age_seconds=%.3f "
                 "strategy_signal_id_a=%s strategy_signal_id_b=%s"
             ),
             signal.symbol,
@@ -374,6 +394,7 @@ class StreamRunner:
             signal.signal_id,
             signal.signal_source.value,
             signal.price is not None,
+            self._signal_age_seconds(signal=signal, now=self.wall_clock()),
             signal.strategy_signal_id_a,
             signal.strategy_signal_id_b,
         )

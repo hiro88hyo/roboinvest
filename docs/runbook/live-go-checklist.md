@@ -54,6 +54,7 @@
 - [ ] `infra/env.production` または live 起動 env で `KABU_DEFAULT_EXCHANGE=9` を確認
 - [ ] `OMS_LIVE_ALLOWED_SYMBOLS` が対象銘柄のみに絞られている
 - [ ] `OMS_LIVE_MAX_QTY_PER_ORDER` が最小単元相当になっている
+- [ ] `LIVE_SIGNAL_MAX_AGE_SECONDS` が意図どおり (default 300) であることを確認
 - [ ] `OMS_LIVE_DRY_RUN` の現在値を把握している
 - [ ] `KABU_API_PASSWORD` と `KABU_ORDER_PASSWORD` が正しい組で、別 field 管理になっている
 - [ ] kill switch の操作場所を把握している

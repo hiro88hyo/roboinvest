@@ -45,6 +45,7 @@ infra/supabase/.temp/
 
 # Claude Code session state
 .claude/
+.antigravitycli/
 
 # Private runbook (non-distributable; keep out of git)
 docs/runbook/private/
