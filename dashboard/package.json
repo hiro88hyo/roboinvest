@@ -17,22 +17,22 @@
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "@supabase/ssr": "^0.10.3",
-    "@supabase/supabase-js": "^2.46.0"
+    "@supabase/supabase-js": "^2.106.1"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.15",
     "@tailwindcss/postcss": "^4.3.0",
     "@testing-library/jest-dom": "^6.5.0",
     "@testing-library/react": "^16.0.0",
-    "@types/node": "^25.6.2",
-    "@types/react": "^19.0.0",
+    "@types/node": "^25.9.1",
+    "@types/react": "^19.2.15",
     "@types/react-dom": "^19.0.0",
-    "@vitejs/plugin-react": "^6.0.1",
+    "@vitejs/plugin-react": "^6.0.2",
     "jsdom": "^29.1.1",
     "tailwindcss": "^4.0.0",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.5",
-    "vite": "^8.0.0"
+    "vitest": "^4.1.7",
+    "vite": "^8.0.14"
   },
   "volta": {
     "node": "24.15.0",
