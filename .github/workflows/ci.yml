@@ -151,7 +151,7 @@ jobs:
           echo "SUPABASE_SECRET_KEY=$service_key" >> "$GITHUB_ENV"
 
       - name: pytest -m integration
-        run: uv run pytest -m integration -v
+        run: uv run pytest -m integration -v --durations=20
 
       - name: Dump Pub/Sub emulator logs on failure
         if: failure()
