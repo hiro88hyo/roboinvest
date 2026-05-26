@@ -167,6 +167,14 @@ class StreamRunner:
             self._log_reject(signal, "market_closed", trade_mode)
             return _Decision(approved=False, kill_switch_fired=False)
 
+        if self._is_live_day_late_buy(signal=signal, trade_mode=trade_mode, now=now):
+            self._log_reject(signal, "late_live_buy", trade_mode)
+            return _Decision(approved=False, kill_switch_fired=False)
+
+        if await self._has_live_sell_today(signal=signal, trade_mode=trade_mode, now=now):
+            self._log_reject(signal, "same_day_reentry_after_sell", trade_mode)
+            return _Decision(approved=False, kill_switch_fired=False)
+
         entry_price: Decimal | None = None
         existing_qty: int | None = None
 
@@ -345,6 +353,42 @@ class StreamRunner:
         hh, mm = self.settings.day_closeout_time.split(":", 1)
         close_h, close_m = int(hh), int(mm)
         return (now.hour, now.minute) >= (close_h, close_m)
+
+    def _is_live_day_late_buy(
+        self,
+        *,
+        signal: UnifiedTradeSignal,
+        trade_mode: TradeMode,
+        now: datetime,
+    ) -> bool:
+        if (
+            trade_mode is not TradeMode.LIVE
+            or signal.holding_type is not TradingStyle.DAY
+            or signal.action is not Action.BUY
+        ):
+            return False
+        local_now = now.astimezone(ZoneInfo(self.settings.day_closeout_timezone))
+        hh, mm = self.settings.live_day_new_buy_cutoff_time.split(":", 1)
+        cutoff_h, cutoff_m = int(hh), int(mm)
+        return (local_now.hour, local_now.minute) >= (cutoff_h, cutoff_m)
+
+    async def _has_live_sell_today(
+        self,
+        *,
+        signal: UnifiedTradeSignal,
+        trade_mode: TradeMode,
+        now: datetime,
+    ) -> bool:
+        if (
+            trade_mode is not TradeMode.LIVE
+            or signal.holding_type is not TradingStyle.DAY
+            or signal.action is not Action.BUY
+        ):
+            return False
+        tz = ZoneInfo(self.settings.day_closeout_timezone)
+        local_now = now.astimezone(tz)
+        day_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC)
+        return await self.supabase.has_live_sell_since(symbol=signal.symbol, since=day_start)
 
     def _cap_live_buy_quantity(
         self,

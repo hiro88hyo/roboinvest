@@ -277,6 +277,39 @@ class SupabaseClient:
         wait=wait_exponential(multiplier=1, min=1, max=10),
         retry=retry_if_exception_type((httpx.HTTPError, SupabaseError)),
     )
+    async def has_live_sell_since(self, *, symbol: str, since: datetime) -> bool:
+        """Return True when ``trades_live`` has a SELL for ``symbol`` since ``since``."""
+        assert self._client is not None
+        resp = await self._client.get(
+            "/rest/v1/trades_live",
+            params={
+                "select": "trade_id",
+                "symbol": f"eq.{symbol}",
+                "side": "eq.SELL",
+                "executed_at": f"gte.{since.isoformat()}",
+                "limit": "1",
+            },
+        )
+        if resp.status_code >= 500:
+            raise SupabaseError(
+                f"transient error: table=trades_live status={resp.status_code} "
+                f"body={resp.text[:200]}"
+            )
+        if resp.status_code >= 300:
+            raise SupabaseError(
+                f"read failed: table=trades_live status={resp.status_code} body={resp.text[:200]}"
+            )
+        rows = resp.json()
+        if not isinstance(rows, list):
+            raise SupabaseError(f"unexpected trades_live payload: {type(rows).__name__}")
+        return bool(rows)
+
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((httpx.HTTPError, SupabaseError)),
+    )
     async def disable_trading(self, *, now: datetime | None = None) -> None:
         """Flip ``system_status.is_trading_allowed`` to ``false`` (kill-switch firing).
 

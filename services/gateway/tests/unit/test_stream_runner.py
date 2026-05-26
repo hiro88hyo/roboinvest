@@ -136,6 +136,7 @@ class _SupabaseRouter:
     positions_quantity_rows: list[list[dict[str, Any]]] = field(default_factory=list)
     positions_price_rows: list[list[dict[str, Any]]] = field(default_factory=list)
     daily_ohlcv_rows: list[list[dict[str, Any]]] = field(default_factory=list)
+    trades_live_rows: list[list[dict[str, Any]]] = field(default_factory=list)
     disable_status: int = 204
     requests: list[httpx.Request] = field(default_factory=list)
 
@@ -154,6 +155,9 @@ class _SupabaseRouter:
             return httpx.Response(200, json=rows)
         if request.method == "GET" and path == "/rest/v1/daily_ohlcv":
             rows = self.daily_ohlcv_rows.pop(0) if self.daily_ohlcv_rows else []
+            return httpx.Response(200, json=rows)
+        if request.method == "GET" and path == "/rest/v1/trades_live":
+            rows = self.trades_live_rows.pop(0) if self.trades_live_rows else []
             return httpx.Response(200, json=rows)
         if request.method == "PATCH" and path == "/rest/v1/system_status":
             return httpx.Response(self.disable_status)
@@ -620,6 +624,67 @@ async def test_live_day_signal_is_rejected_after_market_close() -> None:
         r for r in supabase.requests if r.method == "GET" and r.url.path == "/rest/v1/positions"
     ]
     assert position_calls == []
+
+
+async def test_live_day_buy_is_rejected_after_new_buy_cutoff() -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response([("a1", _unified_payload(action=Action.BUY, stop_loss_price="2400"))])
+        ]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trade_mode="live", trading_style="day")],
+    )
+
+    def _at_cutoff() -> datetime:
+        return datetime(2026, 4, 20, 5, 30, 0, tzinfo=UTC)
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        wall_clock=_at_cutoff,
+        run_body=_body,
+    )
+
+    assert stats.rejected == 1
+    assert pubsub.published == []
+    assert [r for r in supabase.requests if r.url.path == "/rest/v1/positions"] == []
+
+
+async def test_live_day_buy_is_rejected_after_same_day_sell() -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response([("a1", _unified_payload(action=Action.BUY, stop_loss_price="2400"))])
+        ]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trade_mode="live", trading_style="day")],
+        trades_live_rows=[[{"trade_id": "t1"}]],
+    )
+
+    def _before_cutoff() -> datetime:
+        return datetime(2026, 4, 20, 1, 0, 0, tzinfo=UTC)
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        wall_clock=_before_cutoff,
+        run_body=_body,
+    )
+
+    assert stats.rejected == 1
+    assert pubsub.published == []
+    trades_calls = [
+        r for r in supabase.requests if r.method == "GET" and r.url.path == "/rest/v1/trades_live"
+    ]
+    assert len(trades_calls) == 1
+    assert [r for r in supabase.requests if r.url.path == "/rest/v1/positions"] == []
 
 
 async def test_live_stale_signal_is_rejected_before_position_reads() -> None:
