@@ -31,7 +31,7 @@ jobs:
     steps:
       - name: Resolve ref
         id: resolve
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const ref = context.payload.inputs.ref;
@@ -44,7 +44,7 @@ jobs:
             core.setOutput('sha', response.data.object.sha);
 
       - name: Require successful CI
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         env:
           TARGET_SHA: ${{ steps.resolve.outputs.sha }}
         with:
