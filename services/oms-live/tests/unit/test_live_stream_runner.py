@@ -814,6 +814,108 @@ async def test_run_closeout_read_system_status_failure_returns_skipped() -> None
     assert result.skipped_reason == "read_system_status_failed"
 
 
+async def test_run_closeout_uses_closeout_timeout_before_cancel() -> None:
+    pubsub = _PubSubRouter()
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trading_style="day")],
+        list_position_rows=[[_position_row(symbol="7203", quantity=100, entry_price="1000")]],
+    )
+    kabu = _KabuRouter(
+        sendorder_responses=[{"Result": 0, "OrderId": "OID-CO-TIMEOUT"}],
+        order_states={
+            "OID-CO-TIMEOUT": [
+                _kabu_order_payload(
+                    order_id="OID-CO-TIMEOUT",
+                    side="1",
+                    state=3,
+                    cum_qty=0,
+                    order_qty=100,
+                )
+            ]
+        },
+    )
+    settings = _settings(closeout_order_fill_timeout_seconds=0.0)
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_closeout()
+
+    result = await _with_runner(
+        pubsub=pubsub, supabase=supabase, kabu=kabu, settings=settings, run_body=_body
+    )
+    assert result.triggered is True
+    assert result.closed == 0
+    assert result.no_fills == 1
+    assert any(req.url.path.endswith("/cancelorder") for req in kabu.requests)
+
+
+async def test_run_closeout_processes_multiple_positions_in_one_batch() -> None:
+    pubsub = _PubSubRouter()
+    supabase = _SupabaseRouter(
+        system_status_rows=[
+            _system_status_row(trading_style="day"),
+            _system_status_row(trading_style="day"),
+            _system_status_row(trading_style="day"),
+        ],
+        list_position_rows=[
+            [
+                _position_row(symbol="7203", quantity=100, entry_price="1000"),
+                _position_row(symbol="9984", quantity=100, entry_price="2000"),
+            ]
+        ],
+        live_position_rows=[
+            [_position_row(symbol="7203", quantity=100, entry_price="1000")],
+            [_position_row(symbol="9984", quantity=100, entry_price="2000")],
+        ],
+    )
+    kabu = _KabuRouter(
+        sendorder_responses=[
+            {"Result": 0, "OrderId": "OID-CO-1"},
+            {"Result": 0, "OrderId": "OID-CO-2"},
+        ],
+        order_states={
+            "OID-CO-1": [
+                _kabu_order_payload(
+                    order_id="OID-CO-1",
+                    symbol="7203",
+                    side="1",
+                    state=3,
+                    cum_qty=100,
+                    order_qty=100,
+                    detail_price=1100,
+                )
+            ],
+            "OID-CO-2": [
+                _kabu_order_payload(
+                    order_id="OID-CO-2",
+                    symbol="9984",
+                    side="1",
+                    state=3,
+                    cum_qty=100,
+                    order_qty=100,
+                    detail_price=2100,
+                )
+            ],
+        },
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_closeout()
+
+    result = await _with_runner(pubsub=pubsub, supabase=supabase, kabu=kabu, run_body=_body)
+    assert result.triggered is True
+    assert result.positions_seen == 2
+    assert result.closed == 2
+    assert result.no_fills == 0
+    assert sum(1 for req in kabu.requests if req.url.path.endswith("/sendorder")) == 2
+    pnl_updates = [
+        req
+        for req in supabase.requests
+        if req.method == "PATCH" and req.url.path == "/rest/v1/system_status"
+    ]
+    assert len(pnl_updates) == 1
+    assert json.loads(pnl_updates[0].content.decode())["daily_pnl"] == "20000.00"
+
+
 # --- partial fill ---------------------------------------------------------
 
 

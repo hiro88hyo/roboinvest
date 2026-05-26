@@ -41,6 +41,12 @@ class OmsLiveSettings(BaseSettings):
 
     order_fill_poll_interval_seconds: float = 1.0
     order_fill_timeout_seconds: float = 30.0
+    closeout_order_fill_timeout_seconds: float = 2400.0
+    """14:50 closeout 注文の約定監視タイムアウト。
+
+    通常注文と同じ短い timeout で市場売りを取り消すと持ち越しにつながるため、
+    closeout だけは大引け付近まで待てる長めの値にする。
+    """
 
     # --- Phase 3 safety knobs ---
     # Gateway がリスク検証の主責務だが、本番投入前のセーフティネットとして OMS Live

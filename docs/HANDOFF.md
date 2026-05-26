@@ -1,6 +1,6 @@
 # Handoff Memo (for coding AIs)
 
-最終更新: 2026-05-22 / HEAD: `main`
+最終更新: 2026-05-25 / HEAD: `main`
 
 別のコーディング AI（Claude Code 別セッション / Cursor / Copilot 等）がこのリポジトリに着手するときに、最初に目を通すための引き継ぎメモ。詳細は本ファイルではなく各リンク先で確認すること。
 
@@ -179,10 +179,47 @@ uv run python scripts/health-check.py
 - `3907` の net `200 LONG` は、`2026-05-22 12:42:53 JST` の `BUY 100`、`13:15:45 JST` の `SELL 100` を経た後、`2026-05-22 14:53:24-25 JST` に `BUY 100 x2` が約定してできたもの。対応する `SELL` signal は `2026-05-22 14:54 JST` 以降にしか出ておらず、現在は post-close guard で `market_closed` reject されるため、そのまま週末持ち越しになっている。
 - 実行テスト: `uv run pytest services/gateway/tests/unit/test_stream_runner.py -q` で `22 passed`、`uv run pytest services/oms-live/tests/unit/test_live_stream_runner.py` で `25 passed`。
 - 次セッションの優先確認:
-  1. `3907` 残ポジションを `2026-05-25 月曜日` の寄り前にどう扱うか確認する。
-  2. `RULE has_price=False` backlog を upstream でどう掃除するかの整理。
-  3. kabu `Code 5` の payload 切り分け。
-  4. `gateway` の `concurrent map writes` 再発源の特定。
+  1. `3907` 残ポジションを `2026-05-25 月曜日` の寄り前にどう扱うか確認する。（月曜朝の判断事項）
+
+### 2026-05-25 live closeout incident / follow-up
+
+- 2026-05-25 の live 運用では、14:50 JST closeout が走ったものの `2693` と `3907` が持ち越しになった。引け後の `scripts/reconcile-positions.py` dry-run では kabu `/positions` と Supabase `positions(live)` が一致し、`3907` / `2693` は stale row ではなく実建玉であることを確認済み。
+- closeout 対象は当時 `3907 x200`、`6217 x100`、`2693 x100`。`6217` は `20260525A02N64672246` が約定し、Supabase から削除済み。
+- `3907` closeout 注文 `20260525A02N64672205` は `14:50:00 JST` に SELL 200 を受付/発注したが、`CumQty=0` のまま OMS 側が 30 秒で poll timeout し、`14:50:30 JST` に cancelorder。kabu board は `CurrentPrice=null`、`OpeningPrice=null`、`TradingVolume=null`、気配 `1570`、`PreviousClose=1270` で、寄らずストップ高気配のため即時約定しなかったと判断。
+- `2693` closeout 注文 `20260525A02N64672252` は `14:50:32 JST` に SELL 100 を受付/発注したが、`CumQty=0` のまま OMS 側が 30 秒で poll timeout し、`14:51:03 JST` に cancelorder。こちらは当日出来高 `2,815,300`、終値 `447` で寄らずではないが、終盤板が薄く 30 秒では約定確認できなかった。
+- 直接原因は市場要因だけでなく、closeout が通常注文と同じ `ORDER_FILL_TIMEOUT_SECONDS=30` を使い、未約定の成行SELLを30秒で取り消していたこと。複数銘柄も直列処理だったため、1銘柄の待ちが次銘柄を遅らせていた。
+- 修正済み: `services/oms-live/src/oms_live/config.py` に `closeout_order_fill_timeout_seconds` を追加し、`infra/env.production` / `infra/env.production.tpl` に `CLOSEOUT_ORDER_FILL_TIMEOUT_SECONDS=2400` を追加。`run_closeout` は closeout 注文を並列処理し、closeout だけ長い timeout で引け付近まで約定/配分を待つ。通常注文の `ORDER_FILL_TIMEOUT_SECONDS=30` は維持。
+- 修正反映: `oms-live` を rebuild/recreate 済み。`op run --env-file infra/env.production -- docker compose ... exec oms-live .venv/bin/python ...` で `closeout_order_fill_timeout_seconds=2400.0` を確認。`oms-live` は Up、直近エラーなし。注意: compose を `op run` なしで起動すると `PUBSUB_PROJECT_ID=op://...` のまま入り起動失敗するため、production recreate は必ず `set -a; . infra/.op.service-account.env; set +a; op run --env-file infra/env.production -- docker compose --env-file infra/env.production -f infra/docker-compose.prod.yml ...` で行う。
+- 実行テスト: `uv run pytest services/oms-live/tests/unit/test_live_stream_runner.py` は `27 passed`。`uv run ruff check services/oms-live/src/oms_live/streaming/runner.py services/oms-live/src/oms_live/config.py services/oms-live/tests/unit/test_live_stream_runner.py` は `All checks passed`。
+- 次営業日の重点監視: 寄り前/寄り後に `3907` と `2693` の実ポジション、板、約定可否を確認する。特に `3907` は寄らずストップ高が継続する可能性があるため、通常 signal 経路だけでなく closeout/手動決済判断を明示する。
+- 残課題: closeout 後に `positions(live)` が残った場合の強いアラート、kabu 注文詳細 (`RecType=6` など) の構造化ログ、持ち越し銘柄の翌営業日 pre-open チェックを運用手順化する。
+
+### 2026-05-26 live close / follow-up fixes
+
+- 2026-05-26 の live 運用は `trades_live` 49 件、`system_status.daily_pnl=44321.0` で終了。ただし `3907 x100` が残ポジションとして持ち越しになった。引け後の `scripts/reconcile-positions.py` では kabu `/positions` と Supabase `positions(live)` は一致し、orphan / quantity mismatch はなし。
+- `3907` は朝に持ち越し分 `200` を SELL した後、`14:31 JST` に `100` を再 BUY。`14:50 JST` closeout の SELL は `kabu Code 21: 可能額が不足しております` で sendorder 失敗。現物同一銘柄の「持ち越し売却後の当日再 BUY → 当日再 SELL」が差金決済規制系の制約に当たった可能性が高い。
+- 対策済み: `gateway` は live/day BUY に対して、当日 `trades_live` に同一銘柄 SELL がある場合 `same_day_reentry_after_sell` で reject する。さらに `LIVE_DAY_NEW_BUY_CUTOFF_TIME=14:30` 以降の live/day BUY は `late_live_buy` で reject する。
+- closeout 並列化に伴い `system_status.daily_pnl` の read-modify-write が競合しうるため、`oms-live` の closeout は各銘柄 worker では PnL 加算せず、全 closeout 約定の `realized_pnl` を合算して最後に 1 回だけ `add_realized_pnl` するよう修正した。通常注文経路は従来どおり 1 約定ごとに加算。
+- production 反映済み: `gateway` / `oms-live` を `op run --env-file infra/env.production -- docker compose --env-file infra/env.production -f infra/docker-compose.prod.yml up -d --build --no-deps gateway oms-live` で rebuild/recreate 済み。`gateway` は `live_day_new_buy_cutoff_time=14:30`、`oms-live` は `closeout_order_fill_timeout_seconds=2400.0` をコンテナ内で確認済み。
+- 実行テスト: `uv run pytest services/gateway/tests/unit/test_stream_runner.py services/oms-live/tests/unit/test_live_stream_runner.py` は `53 passed`。`uv run ruff check ...` は `All checks passed`。
+
+### 2026-05-26 pre-open check notes
+
+- Universe Scanner は本来 `systemd --user` timer の `roboinvest-universe-scanner.timer` が `07:55 JST` に起動する。寄り前チェックで最初に手動実行するのではなく、まず `systemctl --user status roboinvest-universe-scanner.timer --no-pager` / `systemctl --user list-timers roboinvest-universe-scanner.timer --all --no-pager` / `journalctl --user -u roboinvest-universe-scanner.service -n 100 --no-pager` で前回/次回/当日実行状況を見る。
+- 2026-05-26 は `07:46 JST` 頃に寄り前チェック側で `bash scripts/run-production-universe-scanner.sh` を手動実行してしまった。これは自動起動失敗ではなく、`07:55 JST` の定時発火を待たずに先行実行したもの。手動実行は成功し、`done: valid_date=2026-05-26 watchlist_size=30`、Supabase health OK、`feeder` は watchlist 30 件を拾った。
+- その後 `roboinvest-universe-scanner.timer` は予定通り `2026-05-26 07:55:08 JST` に発火し、同じ scanner が定時実行としてもう一度走った。手動実行は `07:51:09 JST` に完了しており、`07:55:08 JST` の timer 実行とは同時起動ではなかった。`/tmp/roboinvest-universe-scanner.lock` は同時起動防止であり、完了後の同日2回目実行は防がない。今後、07:55 前に寄り前チェックを始める場合は timer を待つか、明示的に timer を止める判断をしてから手動実行する。
+- 手動実行時の副作用として、batch 後の post 処理で `OMS_LIVE_ALLOWED_SYMBOLS` が当日 watchlist 30 銘柄へ同期され、稼働中の `oms-live` が recreate された。現在の production env は `TRADE_MODE=live` / `OMS_LIVE_DRY_RUN=false` なので、paper 手順として扱わないこと。
+- 手元の sandbox では `bash scripts/run-production-universe-scanner.sh` が `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted` で失敗したため、実運用コマンドは sandbox 外で再実行した。寄り前の systemd/journal 確認も sandbox 制限で失敗することがあるため、その場合は権限付きで再確認する。
+- Pub/Sub check-only は `op run --env-file infra/env.production -- uv run python scripts/gcp-pubsub-admin.py --check` ではなく、`--project-id "$PUBSUB_PROJECT_ID"` が必要。またローカル host から実行する場合、`GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/gcp-pubsub-sa.json` はコンテナ内パスなので失敗する。`GOOGLE_APPLICATION_CREDENTIALS="$GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH"` に差し替えて実行すること。
+- `feeder` は watchlist 30 件取得後に一度 kabu `/register` が `401 Unauthorized` になったが、token invalidate -> `/token` 200 -> `/unregister/all` 200 -> 次回 poll で `/register` 200 OK まで復帰した。再接続サイクルは watchlist poll interval 60 秒を待つため、401 直後に即座に register 成功ログが出ない。
+
+### 2026-05-23 JST Weekend Preflight / Purge Done
+
+- **インフラ/DB疎通確認**: `docker compose config` / Supabase tables (`health-check.py`) / GCP Pub/Sub smoke test (`gcp-pubsub-admin.py --smoke-test`) はすべて正常（`RESULT OK`）。
+- **Pub/Sub バックログのパージ**: 旧コードの `RULE has_price=False` などの残存スタールシグナルを一掃するため、`scripts/seek-subscriptions.py` を新規作成・実行し、全サブスクリプションを現在のタイムスタンプまでシークした。これにより月曜朝はバックログなしでクリーンに開始可能。
+- **課題3（kabu Code 5）の整理**: `ExpireDay: 0`（当日中注文）の送信が引け後（14:50以降）に行われていたことが原因。金曜夕方に追加した gateway の 14:50 ポストクローズガードにより、以降は時間外の publish が発生しないため解決済み。
+- **課題4（gateway concurrent map writes）の整理**: Go製の `docker compose logs` 側が出力した Go runtime panic であり、Python製の `gateway` サービスそのものの不具合やクラッシュではないことを確認。
+
 
 ### 2026-05-21 Night Preflight
 

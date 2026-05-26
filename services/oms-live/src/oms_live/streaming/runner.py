@@ -24,7 +24,8 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from decimal import Decimal
+from typing import Any, cast
 
 from pydantic import ValidationError
 from trade_contracts.enums import TradingStyle
@@ -300,7 +301,9 @@ class StreamRunner:
         )
         return "filled"
 
-    async def _poll_until_filled(self, kabu_order_id: str) -> FillResult | None:
+    async def _poll_until_filled(
+        self, kabu_order_id: str, *, timeout_seconds: float | None = None
+    ) -> FillResult | None:
         """終端 (filled / partial / cancelled) までポーリング。タイムアウトで ``None``。
 
         kabu State の実態は ``order_parser.py`` の docstring 参照:
@@ -308,7 +311,10 @@ class StreamRunner:
         ``state==3`` 単独で break してはならない。``to_fill_result`` の reason のみで
         終端判定する。
         """
-        deadline = self.monotonic() + self.settings.order_fill_timeout_seconds
+        timeout = (
+            self.settings.order_fill_timeout_seconds if timeout_seconds is None else timeout_seconds
+        )
+        deadline = self.monotonic() + timeout
         interval = max(self.settings.order_fill_poll_interval_seconds, 0.0)
         while True:
             try:
@@ -329,10 +335,11 @@ class StreamRunner:
                 return fill
             if self.monotonic() >= deadline:
                 logger.warning(
-                    "kabu order poll timeout: order_id=%s last_state=%d cum_qty=%d",
+                    "kabu order poll timeout: order_id=%s last_state=%d cum_qty=%d timeout=%s",
                     kabu_order_id,
                     state.state,
                     state.cum_qty,
+                    timeout,
                 )
                 return None
             if interval > 0:
@@ -433,21 +440,46 @@ class StreamRunner:
         now = self.wall_clock()
         orders = build_closeout_orders(positions=positions, created_at=now)
 
+        existing_by_symbol = {p.symbol: p for p in positions}
+        tasks = [
+            self._process_closeout_order(
+                order=order,
+                existing=existing_by_symbol.get(order.symbol),
+            )
+            for order in orders
+        ]
+        outcomes = await asyncio.gather(*tasks, return_exceptions=True)
+
         closed = 0
         no_fills = 0
         write_errors = 0
-        for order in orders:
-            existing = next((p for p in positions if p.symbol == order.symbol), None)
-            try:
-                outcome = await self._process_closeout_order(order=order, existing=existing)
-            except SupabaseError:
-                logger.exception("closeout: write failure symbol=%s", order.symbol)
+        realized_pnl_total = Decimal("0")
+        for order, outcome in zip(orders, outcomes, strict=True):
+            if isinstance(outcome, SupabaseError):
+                logger.exception(
+                    "closeout: write failure symbol=%s", order.symbol, exc_info=outcome
+                )
                 write_errors += 1
                 continue
-            if outcome == "filled":
+            if isinstance(outcome, Exception):
+                logger.exception(
+                    "closeout: unexpected failure symbol=%s", order.symbol, exc_info=outcome
+                )
+                no_fills += 1
+                continue
+            status, realized_pnl = cast(tuple[str, Decimal], outcome)
+            if status == "filled":
                 closed += 1
+                realized_pnl_total += realized_pnl
             else:
                 no_fills += 1
+
+        if realized_pnl_total != Decimal("0"):
+            try:
+                await self.supabase.add_realized_pnl(realized_pnl_total)
+            except SupabaseError:
+                logger.exception("closeout: aggregate pnl update failed")
+                write_errors += 1
 
         return CloseoutStats(
             triggered=True,
@@ -460,7 +492,7 @@ class StreamRunner:
 
     async def _process_closeout_order(
         self, *, order: OrderRequest, existing: LivePosition | None
-    ) -> str:
+    ) -> tuple[str, Decimal]:
         """closeout 1 件分。実発注 → 約定確認 → Supabase 書込。
 
         通常の ``_process_order`` とほぼ同じだが、``existing.holding_type`` を
@@ -479,22 +511,25 @@ class StreamRunner:
             )
         except KabuApiError:
             logger.exception("closeout sendorder failed: symbol=%s", order.symbol)
-            return "no_fill"
+            return "no_fill", Decimal("0")
         if int(send_resp.get("Result", -1)) != 0:
             logger.warning(
                 "closeout sendorder rejected: symbol=%s body=%s", order.symbol, send_resp
             )
-            return "no_fill"
+            return "no_fill", Decimal("0")
         kabu_order_id = str(send_resp.get("OrderId") or "")
         if not kabu_order_id:
-            return "no_fill"
+            return "no_fill", Decimal("0")
 
-        fill = await self._poll_until_filled(kabu_order_id)
+        fill = await self._poll_until_filled(
+            kabu_order_id,
+            timeout_seconds=self.settings.closeout_order_fill_timeout_seconds,
+        )
         if fill is None:
             await self._best_effort_cancel(kabu_order_id)
-            return "no_fill"
+            return "no_fill", Decimal("0")
         if fill.filled_quantity == 0 or fill.fill_price is None:
-            return "no_fill"
+            return "no_fill", Decimal("0")
 
         holding_type = existing.holding_type if existing else TradingStyle.DAY
         update = apply_fill(
@@ -508,16 +543,14 @@ class StreamRunner:
             logger.warning(
                 "closeout apply_fill error: symbol=%s error=%s", order.symbol, update.error
             )
-            return "no_fill"
+            return "no_fill", Decimal("0")
         record = build_fill_record(order=order, fill=fill, executed_at=order.created_at)
         if record is None:
-            return "no_fill"
+            return "no_fill", Decimal("0")
 
         await self.supabase.insert_trade_live(record)
         await self._write_position_change(existing=existing, update=update, symbol=order.symbol)
-        if update.realized_pnl is not None:
-            await self.supabase.add_realized_pnl(update.realized_pnl)
-        return "filled"
+        return "filled", update.realized_pnl or Decimal("0")
 
     async def _call_kabu_with_auth_retry(
         self,
