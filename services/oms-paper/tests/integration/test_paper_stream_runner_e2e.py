@@ -36,6 +36,7 @@ pytestmark = pytest.mark.integration
 
 PAPER_ORDERS_TOPIC = "paper-orders"
 RAW_MARKET_DATA_TOPIC = "raw-market-data"
+TEST_PUBSUB_TIMEOUT_SECONDS = 2.0
 
 
 # --- env / health fixtures --------------------------------------------------
@@ -376,6 +377,7 @@ async def _drain_until_filled(
         PubSubSubscriber(
             project_id=settings.pubsub_project_id,
             emulator_host=settings.pubsub_emulator_host,
+            timeout_seconds=TEST_PUBSUB_TIMEOUT_SECONDS,
         ) as subscriber,
         SupabaseClient(
             url=settings.supabase_url,
@@ -406,6 +408,7 @@ async def _drain_until_swing(
         PubSubSubscriber(
             project_id=settings.pubsub_project_id,
             emulator_host=settings.pubsub_emulator_host,
+            timeout_seconds=TEST_PUBSUB_TIMEOUT_SECONDS,
         ) as subscriber,
         SupabaseClient(
             url=settings.supabase_url,

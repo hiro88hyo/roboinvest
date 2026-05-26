@@ -35,6 +35,7 @@ pytestmark = pytest.mark.integration
 TRADE_SIGNALS_TOPIC = "trade-signals"
 LIVE_ORDERS_TOPIC = "live-orders"
 PAPER_ORDERS_TOPIC = "paper-orders"
+TEST_PUBSUB_TIMEOUT_SECONDS = 2.0
 
 
 async def _ensure_subscription(
@@ -244,6 +245,7 @@ async def _run_one_iteration(
         PubSubSubscriber(
             project_id=settings.pubsub_project_id,
             emulator_host=settings.pubsub_emulator_host,
+            timeout_seconds=TEST_PUBSUB_TIMEOUT_SECONDS,
         ) as subscriber,
         PubSubPublisher(
             project_id=settings.pubsub_project_id,
@@ -333,6 +335,7 @@ async def test_paper_mode_buy_signal_routes_to_paper_orders(
         async with PubSubSubscriber(
             project_id=pubsub_project_id,
             emulator_host=pubsub_emulator_host,
+            timeout_seconds=TEST_PUBSUB_TIMEOUT_SECONDS,
         ) as subscriber:
             received = await subscriber.pull(
                 provisioned_subs["paper_orders_sub"], max_messages=5, return_immediately=True
@@ -410,6 +413,7 @@ async def test_daily_loss_limit_flips_is_trading_allowed(
     async with PubSubSubscriber(
         project_id=pubsub_project_id,
         emulator_host=pubsub_emulator_host,
+        timeout_seconds=TEST_PUBSUB_TIMEOUT_SECONDS,
     ) as subscriber:
         live_msgs = await subscriber.pull(
             provisioned_subs["live_orders_sub"], max_messages=5, return_immediately=True
@@ -483,6 +487,7 @@ async def test_paper_buy_falls_back_to_daily_ohlcv_when_no_position(
         async with PubSubSubscriber(
             project_id=pubsub_project_id,
             emulator_host=pubsub_emulator_host,
+            timeout_seconds=TEST_PUBSUB_TIMEOUT_SECONDS,
         ) as subscriber:
             received = await subscriber.pull(
                 provisioned_subs["paper_orders_sub"], max_messages=5, return_immediately=True
