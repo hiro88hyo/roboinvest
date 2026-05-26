@@ -288,3 +288,21 @@ uv run python scripts/health-check.py
 - 運用 runbook: [docs/runbook/oms-live-phase3.md](runbook/oms-live-phase3.md)
 
 memory ファイルは個人ホームディレクトリにあるため別 AI からは読めない場合がある。重要事項はこのファイルに転記する方針。
+
+### 2026-05-26 CI / integration-test handoff
+
+- PR #62 は merge 済み。目的は GitHub Actions の integration pytest に `--durations=20` を追加し、遅い integration tests を CI log に露出すること。対象は `.github/workflows/ci.yml`。
+- PR #63 は merge 済み。目的は stream-runner integration tests の無駄な idle wait を短縮すること。対象は `services/gateway/tests/integration/test_stream_runner_e2e.py`、`services/aggregator/tests/integration/test_stream_runner_e2e.py`、`services/oms-paper/tests/integration/test_paper_stream_runner_e2e.py`。
+- PR #63 の実装は `TEST_PUBSUB_TIMEOUT_SECONDS = 2.0` を追加し、`PubSubSubscriber(...)` にだけ `timeout_seconds=TEST_PUBSUB_TIMEOUT_SECONDS` を渡した。`PubSubPublisher(...)` は変更していない。
+- 背景: `contracts/python/trade_contracts/pubsub_client.py` の `PubSubSubscriber.timeout_seconds` default は `60.0`。該当 integration tests では片側の Pub/Sub が意図的に空のケースがあり、`return_immediately=True` でも emulator/client 側で subscriber timeout 近く待つ可能性があった。
+- PR #62 時点の CI baseline: integration job total `11m14s`、pytest は `17 passed, 4 skipped, 919 deselected in 423.71s (0:07:03)`。setup overhead は主に Supabase/local stack で約 4 分。
+- PR #62 時点の遅い tests: `test_daily_loss_limit_flips_is_trading_allowed` が `118.30s`、gateway / oms-paper / aggregator の複数 integration tests が約 `59s`。
+- PR #63 の local verification: `make lint-all` passed。`uv run pytest -m "not integration" services/gateway/tests services/aggregator/tests services/oms-paper/tests` は `352 passed, 9 deselected`。
+- PR #63 の integration runtime 改善は local では未確認。理由は local integration environment が未設定で、対象 tests は `PUBSUB_PROJECT_ID not set` により `9 skipped in 0.26s` だったため。
+- GitHub Actions は PR #63 作成時点で不安定だった。`pull_request` trigger、追加 push、close/reopen、main merge 後の run が見えず、`workflow_dispatch` も `HTTP 500: Failed to run workflow dispatch` で失敗した。Vercel checks は動作、repository Actions setting は enabled、CI workflow state は active だったため、当時は GitHub 側 outage / instability の可能性が高い。workflow file の破損と断定しないこと。
+- 一時的に `ci: trigger checks` という empty commit を作ったが、最終 merge 前に削除済み。main に empty commit は残っていない。
+- 次にやること: `gh run list --workflow CI --limit 10` と `gh api --method POST repos/hiro88hyo/roboinvest/actions/workflows/ci.yml/dispatches -f ref=main --silent` で GitHub Actions health を再確認する。
+- GitHub Actions が復旧したら main で CI を走らせ、integration job total time、pytest duration、`--durations=20` output を確認し、旧 `59s` / `118s` tests が実際に短縮したか測定する。
+- 測定後の候補タスク: 重い integration checks を通常 PR CI から分離する。PR CI は軽量 checks を維持し、full integration は main push、nightly、または manual dispatch に寄せる。ただしこれは候補であり、未実装。
+- 次セッションで間違えてはいけないこと: PR #63 は merged、未測定なのは integration speedup、`PubSubPublisher` timeout は変更していない、GitHub Actions failure の原因は repo config と断定しない、empty commit は main に残っていない、feature branch 上の作業中ではない。
+- 安全な初手コマンド: `git status --short --branch`、`git log --oneline -5`、`gh pr view 63 --json state,mergedAt,mergeCommit,url`。

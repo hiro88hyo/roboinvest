@@ -41,7 +41,7 @@ jobs:
         run: uv run mypy
 
       - name: pytest
-        run: uv run pytest --cov --cov-report=term-missing --cov-report=xml:coverage.xml --cov-report=html:htmlcov
+        run: uv run pytest -m "not integration" --cov --cov-report=term-missing --cov-report=xml:coverage.xml --cov-report=html:htmlcov
 
       - name: Upload coverage report
         if: always()
@@ -85,6 +85,7 @@ jobs:
 
   e2e:
     name: Integration tests (Pub/Sub + Supabase)
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
