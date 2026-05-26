@@ -33,6 +33,7 @@ pytestmark = pytest.mark.integration
 SIGNALS_A_TOPIC = "strategy-signals-a"
 SIGNALS_B_TOPIC = "strategy-signals-b"
 TRADE_SIGNALS_TOPIC = "trade-signals"
+TEST_PUBSUB_TIMEOUT_SECONDS = 2.0
 
 
 async def _ensure_subscription(
@@ -224,10 +225,12 @@ async def test_paired_ab_flows_to_trade_signals_and_supabase(
         PubSubSubscriber(
             project_id=pubsub_project_id,
             emulator_host=pubsub_emulator_host,
+            timeout_seconds=TEST_PUBSUB_TIMEOUT_SECONDS,
         ) as sub_a,
         PubSubSubscriber(
             project_id=pubsub_project_id,
             emulator_host=pubsub_emulator_host,
+            timeout_seconds=TEST_PUBSUB_TIMEOUT_SECONDS,
         ) as sub_b,
         PubSubPublisher(
             project_id=pubsub_project_id,
@@ -256,6 +259,7 @@ async def test_paired_ab_flows_to_trade_signals_and_supabase(
     async with PubSubSubscriber(
         project_id=pubsub_project_id,
         emulator_host=pubsub_emulator_host,
+        timeout_seconds=TEST_PUBSUB_TIMEOUT_SECONDS,
     ) as subscriber:
         received = await subscriber.pull(
             provisioned_subs["trade_signals_sub"], max_messages=5, return_immediately=True
@@ -344,10 +348,12 @@ async def test_single_source_emits_after_window_timeout(
         PubSubSubscriber(
             project_id=pubsub_project_id,
             emulator_host=pubsub_emulator_host,
+            timeout_seconds=TEST_PUBSUB_TIMEOUT_SECONDS,
         ) as sub_a,
         PubSubSubscriber(
             project_id=pubsub_project_id,
             emulator_host=pubsub_emulator_host,
+            timeout_seconds=TEST_PUBSUB_TIMEOUT_SECONDS,
         ) as sub_b,
         PubSubPublisher(
             project_id=pubsub_project_id,
@@ -369,6 +375,7 @@ async def test_single_source_emits_after_window_timeout(
     async with PubSubSubscriber(
         project_id=pubsub_project_id,
         emulator_host=pubsub_emulator_host,
+        timeout_seconds=TEST_PUBSUB_TIMEOUT_SECONDS,
     ) as subscriber:
         received = await subscriber.pull(
             provisioned_subs["trade_signals_sub"], max_messages=5, return_immediately=True
