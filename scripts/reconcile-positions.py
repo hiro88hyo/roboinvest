@@ -26,6 +26,7 @@ env (必須):
       uv run python scripts/reconcile-positions.py            # dry-run
 
   ... uv run python scripts/reconcile-positions.py --apply    # 取り込み実行
+  ... uv run python scripts/reconcile-positions.py --fix-quantity-mismatch --symbol 5031
 
 OMS Live と並行起動しないこと (write path 競合を避ける)。kabu ``/positions`` は GET
 なので市場時間外でも叩ける。
@@ -43,6 +44,7 @@ from datetime import UTC, datetime
 from oms_live.clients.supabase import SupabaseClient
 from oms_live.kabu_client import KabuLiveClient
 from oms_live.reconciler import (
+    apply_quantity_mismatch_fixes,
     apply_reconcile_actions,
     compute_position_diff,
     parse_kabu_positions,
@@ -65,6 +67,19 @@ def parse_args() -> argparse.Namespace:
             "デフォルトは dry-run (warning ログのみ)。"
             "quantity_mismatch / supabase_orphans は --apply 指定時も触らない。"
         ),
+    )
+    p.add_argument(
+        "--fix-quantity-mismatch",
+        action="store_true",
+        help=(
+            "quantity_mismatch を kabu 実残に合わせて PATCH する明示 opt-in。"
+            "安全のため --symbol で対象を絞ることを推奨。"
+        ),
+    )
+    p.add_argument(
+        "--symbol",
+        action="append",
+        help="--fix-quantity-mismatch の対象 symbol。複数指定可。未指定なら全 mismatch 対象。",
     )
     p.add_argument(
         "--product",
@@ -164,12 +179,24 @@ async def _run(args: argparse.Namespace) -> int:
             apply_imports=args.apply,
             holding_type=holding_type,
         )
+        fixed = 0
+        if args.fix_quantity_mismatch:
+            target_symbols = set(args.symbol) if args.symbol else None
+            fixed = await apply_quantity_mismatch_fixes(
+                actions,
+                supabase,
+                symbols=target_symbols,
+            )
 
         print("", flush=True)
-        if args.apply:
-            print(f"applied: imported {inserted} positions", flush=True)
+        if args.apply or args.fix_quantity_mismatch:
+            print(f"applied: imported {inserted} positions, fixed {fixed} mismatches", flush=True)
         else:
-            print("dry-run: no Supabase write (rerun with --apply to import)", flush=True)
+            print(
+                "dry-run: no Supabase write "
+                "(rerun with --apply to import, or --fix-quantity-mismatch to patch mismatches)",
+                flush=True,
+            )
 
     return 0
 

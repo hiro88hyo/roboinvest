@@ -40,6 +40,7 @@ from ..models import FillResult, LivePosition, PositionUpdate
 from ..order_builder import build_sendorder_payload
 from ..order_parser import parse_order_state, to_fill_result
 from ..position_updater import apply_fill, build_fill_record
+from ..reconciler import ReconcileActions, compute_position_diff, parse_kabu_positions
 
 logger = logging.getLogger(__name__)
 
@@ -332,14 +333,19 @@ class StreamRunner:
                 return None
             fill = to_fill_result(state)
             if fill.reason in {"filled", "partial", "cancelled"}:
+                logger.info(
+                    "kabu order poll terminal: order_id=%s reason=%s summary=%s",
+                    kabu_order_id,
+                    fill.reason,
+                    _summarize_order_state(state),
+                )
                 return fill
             if self.monotonic() >= deadline:
                 logger.warning(
-                    "kabu order poll timeout: order_id=%s last_state=%d cum_qty=%d timeout=%s",
+                    "kabu order poll timeout: order_id=%s timeout=%s summary=%s",
                     kabu_order_id,
-                    state.state,
-                    state.cum_qty,
                     timeout,
+                    _summarize_order_state(state),
                 )
                 return None
             if interval > 0:
@@ -427,6 +433,29 @@ class StreamRunner:
             )
 
         positions = await self.supabase.list_live_positions()
+        precheck = await self._check_closeout_position_drift(
+            supabase_positions=positions,
+            phase="precheck",
+        )
+        if precheck is None:
+            return CloseoutStats(
+                triggered=False,
+                skipped_reason="position_check_failed",
+                positions_seen=len(positions),
+                closed=0,
+                no_fills=0,
+                write_errors=0,
+            )
+        if precheck.has_drift:
+            logger.critical("closeout: blocked by position drift before sendorder")
+            return CloseoutStats(
+                triggered=False,
+                skipped_reason="position_drift",
+                positions_seen=len(positions),
+                closed=0,
+                no_fills=0,
+                write_errors=0,
+            )
         if not positions:
             return CloseoutStats(
                 triggered=True,
@@ -481,6 +510,8 @@ class StreamRunner:
                 logger.exception("closeout: aggregate pnl update failed")
                 write_errors += 1
 
+        await self._log_closeout_remaining_positions()
+
         return CloseoutStats(
             triggered=True,
             skipped_reason=None,
@@ -488,6 +519,70 @@ class StreamRunner:
             closed=closed,
             no_fills=no_fills,
             write_errors=write_errors,
+        )
+
+    async def _check_closeout_position_drift(
+        self,
+        *,
+        supabase_positions: list[LivePosition],
+        phase: str,
+    ) -> ReconcileActions | None:
+        """closeout 前後の kabu/Supabase 建玉差分を強いログで可視化する。"""
+        try:
+            kabu_rows = await self._call_kabu_with_auth_retry(
+                lambda: self.kabu.list_positions(product=1),
+                operation=f"list_positions closeout {phase}",
+            )
+            kabu_positions = parse_kabu_positions(kabu_rows)
+        except KabuApiError:
+            logger.exception("closeout: %s failed reading kabu positions", phase)
+            return None
+
+        actions = compute_position_diff(kabu_positions, supabase_positions)
+        if not actions.has_drift:
+            logger.info("closeout: %s positions matched symbols=%s", phase, list(actions.matched))
+            return actions
+
+        logger.critical(
+            "closeout: %s position drift supabase=%s kabu=%s matched=%s "
+            "to_import=%s mismatches=%s supabase_orphans=%s",
+            phase,
+            [f"{p.symbol}:{p.quantity}@{p.entry_price}" for p in supabase_positions],
+            [f"{p.symbol}:{p.quantity}@{p.average_price}" for p in kabu_positions],
+            list(actions.matched),
+            [f"{p.symbol}:{p.quantity}@{p.average_price}" for p in actions.to_import],
+            [
+                f"{m.symbol}:kabu={m.kabu_quantity}@{m.kabu_average_price},"
+                f"supabase={m.supabase_quantity}@{m.supabase_entry_price}"
+                for m in actions.quantity_mismatches
+            ],
+            [f"{p.symbol}:{p.quantity}@{p.entry_price}" for p in actions.supabase_orphans],
+        )
+        return actions
+
+    async def _log_closeout_remaining_positions(self) -> None:
+        """closeout 後に残った live 建玉を強いログで可視化する。"""
+        try:
+            supabase_positions = await self.supabase.list_live_positions()
+        except SupabaseError:
+            logger.exception("closeout: post-check failed reading Supabase positions")
+            return
+        if not supabase_positions:
+            try:
+                kabu_rows = await self._call_kabu_with_auth_retry(
+                    lambda: self.kabu.list_positions(product=1),
+                    operation="list_positions closeout postcheck",
+                )
+                kabu_positions = parse_kabu_positions(kabu_rows)
+            except KabuApiError:
+                logger.exception("closeout: postcheck failed reading kabu positions")
+                return
+            if not kabu_positions:
+                logger.info("closeout: postcheck clear (no live positions remain)")
+                return
+        await self._check_closeout_position_drift(
+            supabase_positions=supabase_positions,
+            phase="postcheck",
         )
 
     async def _process_closeout_order(
@@ -570,6 +665,27 @@ class StreamRunner:
             )
             self.kabu.invalidate_token()
             return await call()
+
+
+def _summarize_order_state(state: Any) -> dict[str, Any]:
+    return {
+        "symbol": state.symbol,
+        "side": state.side.value,
+        "state": state.state,
+        "order_state": state.order_state,
+        "order_qty": state.order_qty,
+        "cum_qty": state.cum_qty,
+        "price": str(state.price),
+        "details": [
+            {
+                "rec_type": d.rec_type,
+                "qty": d.quantity,
+                "price": str(d.price),
+                "execution_time": d.execution_time.isoformat(),
+            }
+            for d in state.details
+        ],
+    }
 
 
 def _parse_order(msg: PulledMessage) -> OrderRequest | None:

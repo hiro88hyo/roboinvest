@@ -249,6 +249,45 @@ class SupabaseClient:
         wait=wait_exponential(multiplier=1, min=1, max=10),
         retry=retry_if_exception_type((httpx.HTTPError, SupabaseError)),
     )
+    async def update_live_position_reconciled(
+        self,
+        *,
+        symbol: str,
+        quantity: int,
+        entry_price: str,
+        current_price: str | None = None,
+        unrealized_pnl: str | None = None,
+    ) -> None:
+        """reconcile 用に live position を kabu 実残へ明示補正する。"""
+        assert self._client is not None
+        payload: dict[str, Any] = {"quantity": quantity, "entry_price": entry_price}
+        if current_price is not None:
+            payload["current_price"] = current_price
+        if unrealized_pnl is not None:
+            payload["unrealized_pnl"] = unrealized_pnl
+        resp = await self._client.patch(
+            "/rest/v1/positions",
+            params={"symbol": f"eq.{symbol}", "trade_type": "eq.live"},
+            headers={"Prefer": "return=minimal"},
+            json=payload,
+        )
+        self._raise_for_status(resp, table="positions", op="update")
+        logger.warning(
+            "supabase reconcile update: positions(live) symbol=%s qty=%d entry=%s "
+            "current=%s pnl=%s",
+            symbol,
+            quantity,
+            entry_price,
+            current_price,
+            unrealized_pnl,
+        )
+
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((httpx.HTTPError, SupabaseError)),
+    )
     async def delete_live_position(self, *, symbol: str) -> None:
         """``(symbol, trade_type='live')`` の行を DELETE。冪等。"""
         assert self._client is not None

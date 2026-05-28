@@ -144,6 +144,7 @@ class _KabuRouter:
     sendorder_http_statuses: list[int] = field(default_factory=list)
     order_states: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     cancel_response: dict[str, Any] = field(default_factory=lambda: {"Result": 0, "OrderId": ""})
+    position_rows: list[dict[str, Any]] = field(default_factory=list)
     sendorder_status: int = 200
     cancel_status: int = 200
     requests: list[httpx.Request] = field(default_factory=list)
@@ -174,6 +175,8 @@ class _KabuRouter:
             payload = queue.pop(0) if len(queue) > 1 else queue[0]
             # 最後の 1 件は repeat 想定 (poll が継続したら同じ状態を返す)
             return httpx.Response(200, json=[payload])
+        if method == "GET" and path.endswith("/positions"):
+            return httpx.Response(200, json=self.position_rows)
         return httpx.Response(404, text=f"unmocked: {method} {path}")
 
 
@@ -213,6 +216,23 @@ def _position_row(**overrides: Any) -> dict[str, Any]:
     }
     row.update(overrides)
     return row
+
+
+def _kabu_position_row(
+    *,
+    symbol: str = "7203",
+    quantity: int = 100,
+    price: str = "1000",
+) -> dict[str, Any]:
+    return {
+        "Symbol": symbol,
+        "Side": "2",
+        "LeavesQty": quantity,
+        "HoldQty": 0,
+        "Price": price,
+        "CurrentPrice": price,
+        "ProfitLoss": "0",
+    }
 
 
 def _kabu_order_payload(
@@ -734,7 +754,27 @@ async def test_run_closeout_no_positions_returns_triggered_with_zero_closed() ->
     assert result.skipped_reason is None
     assert result.positions_seen == 0
     assert result.closed == 0
-    assert kabu.requests == []
+    assert not any(req.url.path.endswith("/sendorder") for req in kabu.requests)
+
+
+async def test_run_closeout_blocks_when_kabu_has_position_not_in_supabase() -> None:
+    pubsub = _PubSubRouter()
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trading_style="day")],
+        list_position_rows=[[]],
+    )
+    kabu = _KabuRouter(
+        position_rows=[_kabu_position_row(symbol="5031", quantity=100, price="791")],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_closeout()
+
+    result = await _with_runner(pubsub=pubsub, supabase=supabase, kabu=kabu, run_body=_body)
+    assert result.triggered is False
+    assert result.skipped_reason == "position_drift"
+    assert result.positions_seen == 0
+    assert not any(req.url.path.endswith("/sendorder") for req in kabu.requests)
 
 
 async def test_run_closeout_sells_each_position_and_writes_trade_and_pnl() -> None:
@@ -748,6 +788,7 @@ async def test_run_closeout_sells_each_position_and_writes_trade_and_pnl() -> No
     )
     kabu = _KabuRouter(
         sendorder_responses=[{"Result": 0, "OrderId": "OID-CO-1"}],
+        position_rows=[_kabu_position_row(symbol="7203", quantity=100, price="1000")],
         order_states={
             "OID-CO-1": [
                 _kabu_order_payload(
@@ -783,7 +824,10 @@ async def test_run_closeout_handles_sendorder_rejected_as_no_fill() -> None:
         system_status_rows=[_system_status_row(trading_style="day")],
         list_position_rows=[[_position_row(symbol="7203", quantity=100, entry_price="1000")]],
     )
-    kabu = _KabuRouter(sendorder_responses=[{"Result": 4, "Message": "no liquidity"}])
+    kabu = _KabuRouter(
+        sendorder_responses=[{"Result": 4, "Message": "no liquidity"}],
+        position_rows=[_kabu_position_row(symbol="7203", quantity=100, price="1000")],
+    )
 
     async def _body(runner: StreamRunner) -> Any:
         return await runner.run_closeout()
@@ -822,6 +866,7 @@ async def test_run_closeout_uses_closeout_timeout_before_cancel() -> None:
     )
     kabu = _KabuRouter(
         sendorder_responses=[{"Result": 0, "OrderId": "OID-CO-TIMEOUT"}],
+        position_rows=[_kabu_position_row(symbol="7203", quantity=100, price="1000")],
         order_states={
             "OID-CO-TIMEOUT": [
                 _kabu_order_payload(
@@ -848,6 +893,59 @@ async def test_run_closeout_uses_closeout_timeout_before_cancel() -> None:
     assert any(req.url.path.endswith("/cancelorder") for req in kabu.requests)
 
 
+async def test_run_closeout_logs_critical_when_position_remains(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    pubsub = _PubSubRouter()
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trading_style="day")],
+        list_position_rows=[
+            [_position_row(symbol="5031", quantity=100, entry_price="791")],
+            [_position_row(symbol="5031", quantity=100, entry_price="791")],
+        ],
+    )
+    kabu = _KabuRouter(
+        sendorder_responses=[{"Result": 0, "OrderId": "OID-CO-REMAIN"}],
+        order_states={
+            "OID-CO-REMAIN": [
+                _kabu_order_payload(
+                    order_id="OID-CO-REMAIN",
+                    symbol="5031",
+                    side="1",
+                    state=5,
+                    cum_qty=0,
+                    order_qty=100,
+                )
+            ]
+        },
+        position_rows=[
+            {
+                "Symbol": "5031",
+                "Side": "2",
+                "LeavesQty": 200,
+                "HoldQty": 0,
+                "Price": 791,
+                "CurrentPrice": 630,
+                "ProfitLoss": -32200,
+            }
+        ],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        with caplog.at_level("CRITICAL"):
+            return await runner.run_closeout()
+
+    result = await _with_runner(pubsub=pubsub, supabase=supabase, kabu=kabu, run_body=_body)
+    assert result.triggered is False
+    assert result.skipped_reason == "position_drift"
+    assert result.closed == 0
+    assert result.no_fills == 0
+    assert not any(req.url.path.endswith("/sendorder") for req in kabu.requests)
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("precheck position drift" in m for m in messages)
+    assert any("blocked by position drift" in m for m in messages)
+
+
 async def test_run_closeout_processes_multiple_positions_in_one_batch() -> None:
     pubsub = _PubSubRouter()
     supabase = _SupabaseRouter(
@@ -871,6 +969,10 @@ async def test_run_closeout_processes_multiple_positions_in_one_batch() -> None:
         sendorder_responses=[
             {"Result": 0, "OrderId": "OID-CO-1"},
             {"Result": 0, "OrderId": "OID-CO-2"},
+        ],
+        position_rows=[
+            _kabu_position_row(symbol="7203", quantity=100, price="1000"),
+            _kabu_position_row(symbol="9984", quantity=100, price="2000"),
         ],
         order_states={
             "OID-CO-1": [

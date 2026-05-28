@@ -18,6 +18,7 @@ from oms_live.clients.supabase import SupabaseClient
 from oms_live.reconciler import (
     KabuPositionSnapshot,
     QuantityMismatch,
+    apply_quantity_mismatch_fixes,
     apply_reconcile_actions,
     build_imported_position,
     compute_position_diff,
@@ -55,7 +56,11 @@ def _kabu_row(
 def test_parse_kabu_position_buy_ntt_2000() -> None:
     snap = parse_kabu_position(_kabu_row())
     assert snap == KabuPositionSnapshot(
-        symbol="9432", quantity=2000, average_price=Decimal("153.0")
+        symbol="9432",
+        quantity=2000,
+        average_price=Decimal("153.0"),
+        current_price=Decimal("151.5"),
+        unrealized_pnl=Decimal("-3000.0"),
     )
 
 
@@ -91,6 +96,7 @@ def test_parse_kabu_position_uses_string_decimal_for_float_precision() -> None:
     snap = parse_kabu_position(_kabu_row(price=151.45))
     assert snap is not None
     assert snap.average_price == Decimal("151.45")
+    assert snap.current_price == Decimal("149.95")
 
 
 def test_parse_kabu_positions_filters_none_rows() -> None:
@@ -319,3 +325,43 @@ async def test_apply_imports_does_not_touch_orphans_or_mismatches(
     messages = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
     assert any("position quantity mismatch" in m for m in messages)
     assert any("supabase position not in kabu" in m for m in messages)
+
+
+@pytest.mark.asyncio
+async def test_apply_quantity_mismatch_fixes_patches_only_explicit_symbol() -> None:
+    patches: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "PATCH"
+        assert request.url.path == "/rest/v1/positions"
+        patches.append(json.loads(request.content))
+        return httpx.Response(204)
+
+    actions = compute_position_diff(
+        [
+            KabuPositionSnapshot(
+                symbol="5031",
+                quantity=200,
+                average_price=Decimal("791"),
+                current_price=Decimal("630"),
+                unrealized_pnl=Decimal("-32200"),
+            ),
+            _snap("7203", 200, "1010"),
+        ],
+        [
+            make_live_position(symbol="5031", quantity=100, entry_price=Decimal("791")),
+            make_live_position(symbol="7203", quantity=100, entry_price=Decimal("1000")),
+        ],
+    )
+    async with _make_supabase_client(httpx.MockTransport(handler)) as supabase:
+        fixed = await apply_quantity_mismatch_fixes(actions, supabase, symbols={"5031"})
+
+    assert fixed == 1
+    assert patches == [
+        {
+            "quantity": 200,
+            "entry_price": "791",
+            "current_price": "630",
+            "unrealized_pnl": "-32200",
+        }
+    ]
