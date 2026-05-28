@@ -189,6 +189,23 @@ def test_to_fill_result_uses_state_price_when_details_missing() -> None:
     assert fill.fill_price == Decimal("987.5")
 
 
+def test_parse_order_state_detail_accepts_transact_time() -> None:
+    payload = make_kabu_order_payload(
+        details=[
+            {
+                "ExecutionID": "ID-1",
+                "TransactTime": "2026-05-28T15:30:01+09:00",
+                "Price": 0,
+                "Qty": 0,
+                "RecType": 6,
+            }
+        ],
+    )
+    state = parse_order_state(payload)
+    assert state.details[0].execution_time.isoformat() == "2026-05-28T15:30:01+09:00"
+    assert state.details[0].rec_type == 6
+
+
 def test_parse_order_state_sell_side_maps_correctly() -> None:
     payload = make_kabu_order_payload(side="1")
     state = parse_order_state(payload)

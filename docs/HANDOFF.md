@@ -298,11 +298,113 @@ memory ファイルは個人ホームディレクトリにあるため別 AI か
 - PR #62 時点の CI baseline: integration job total `11m14s`、pytest は `17 passed, 4 skipped, 919 deselected in 423.71s (0:07:03)`。setup overhead は主に Supabase/local stack で約 4 分。
 - PR #62 時点の遅い tests: `test_daily_loss_limit_flips_is_trading_allowed` が `118.30s`、gateway / oms-paper / aggregator の複数 integration tests が約 `59s`。
 - PR #63 の local verification: `make lint-all` passed。`uv run pytest -m "not integration" services/gateway/tests services/aggregator/tests services/oms-paper/tests` は `352 passed, 9 deselected`。
-- PR #63 の integration runtime 改善は local では未確認。理由は local integration environment が未設定で、対象 tests は `PUBSUB_PROJECT_ID not set` により `9 skipped in 0.26s` だったため。
+- PR #63 の integration runtime 改善は GitHub Actions 復旧後に確認済み。`3831580` push の CI run `26449550245` は success、integration job total は `4m12s`。PR #62 baseline `11m14s` から大幅短縮した。local integration environment は未設定のため、local では対象 tests は `PUBSUB_PROJECT_ID not set` で skip する。
 - GitHub Actions は PR #63 作成時点で不安定だった。`pull_request` trigger、追加 push、close/reopen、main merge 後の run が見えず、`workflow_dispatch` も `HTTP 500: Failed to run workflow dispatch` で失敗した。Vercel checks は動作、repository Actions setting は enabled、CI workflow state は active だったため、当時は GitHub 側 outage / instability の可能性が高い。workflow file の破損と断定しないこと。
 - 一時的に `ci: trigger checks` という empty commit を作ったが、最終 merge 前に削除済み。main に empty commit は残っていない。
-- 次にやること: `gh run list --workflow CI --limit 10` と `gh api --method POST repos/hiro88hyo/roboinvest/actions/workflows/ci.yml/dispatches -f ref=main --silent` で GitHub Actions health を再確認する。
-- GitHub Actions が復旧したら main で CI を走らせ、integration job total time、pytest duration、`--durations=20` output を確認し、旧 `59s` / `118s` tests が実際に短縮したか測定する。
-- 測定後の候補タスク: 重い integration checks を通常 PR CI から分離する。PR CI は軽量 checks を維持し、full integration は main push、nightly、または manual dispatch に寄せる。ただしこれは候補であり、未実装。
-- 次セッションで間違えてはいけないこと: PR #63 は merged、未測定なのは integration speedup、`PubSubPublisher` timeout は変更していない、GitHub Actions failure の原因は repo config と断定しない、empty commit は main に残っていない、feature branch 上の作業中ではない。
+- GitHub Actions は復旧確認済み。`3831580` push で CI run `26449550245` が作成され、Python `3m36s`、Dashboard `33s`、Integration `4m12s`、total `4m17s` で success。
+- 重い integration checks の PR CI 分離は実装済み。`.github/workflows/ci.yml` の Python pytest は `-m "not integration"` を明示し、`e2e` job は `if: github.event_name != 'pull_request'` にした。PR では軽量 checks、main push / workflow_dispatch では full integration を走らせる。
+- Dependabot 残 PR は片付け済み。#46、#59、#60 を merge し、open PR は 0 件。最終 main CI run `26449902531` は success、Python `3m38s`、Dashboard `39s`、Integration `4m20s`。
+- 次セッションで間違えてはいけないこと: PR #63 は merged、integration speedup は GitHub Actions 上で確認済み、`PubSubPublisher` timeout は変更していない、GitHub Actions failure の原因は repo config と断定しない、empty commit は main に残っていない、feature branch 上の作業中ではない。
 - 安全な初手コマンド: `git status --short --branch`、`git log --oneline -5`、`gh pr view 63 --json state,mergedAt,mergeCommit,url`。
+
+
+### 2026-05-27 pre-open / live test checklist
+
+目的: 2026-05-26 の live close / follow-up fixes が翌営業日の実運用で効くことを確認する。特に `3907 x100` 持ち越し、`same_day_reentry_after_sell`、`late_live_buy`、`kabu Code 21`、14:50 closeout を重点監視する。
+
+寄り前に確認すること:
+
+- Local / GitHub state: `git status --short --branch` が `main...origin/main` であること。open PR は 0 件。最新 main CI は run `26449902531` success。
+- CI workflow: PR CI は integration を除外済み。full integration は main push / `workflow_dispatch` で走る。明日の運用前に CI 修正作業を追加で行う必要はない。
+- Universe Scanner: 07:55 JST 前に手動実行しない。まず `systemctl --user status roboinvest-universe-scanner.timer --no-pager`、`systemctl --user list-timers roboinvest-universe-scanner.timer --all --no-pager`、`journalctl --user -u roboinvest-universe-scanner.service -n 100 --no-pager` で前回 / 次回 / 当日実行状況を見る。
+- Scanner 結果: 当日 `watchlist` が 30 件前後あること、`daily_ohlcv` が空でないこと、`feeder` が当日 watchlist を拾っていることを確認する。
+- Production env: `TRADE_MODE=live`、`OMS_LIVE_DRY_RUN=false`、`KABU_DEFAULT_EXCHANGE=9`、`LIVE_DAY_NEW_BUY_CUTOFF_TIME=14:30`、`CLOSEOUT_ORDER_FILL_TIMEOUT_SECONDS=2400`、`OMS_LIVE_ALLOWED_SYMBOLS` が当日 watchlist と整合することを確認する。
+- Credentials: GCP service account は tmpfs `/dev/shm/roboinvest/gcp-pubsub-sa.json` 前提。host から `gcp-pubsub-admin.py` を実行する場合は `GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/...` ではなく `GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH` 側を使う。
+- Production compose: `op run --env-file infra/env.production -- docker compose --env-file infra/env.production -f infra/docker-compose.prod.yml ...` 経由で操作する。`op run` なしで起動すると `op://...` が展開されず失敗する。
+- Health check: Supabase は `uv run python scripts/health-check.py --check supabase --timeout 30`。managed Pub/Sub は runtime SA の最小権限で `scripts/gcp-pubsub-admin.py --check` / smoke を確認する。
+- Kabu token: `feeder` / `oms-live` / probe が同時に `/token` を再発行しないようにする。Strong GO 的な one-shot 実発注を再実施する場合は `feeder` と probe を止める。
+
+寄り付き後に監視すること:
+
+- `3907 x100` の実ポジション、kabu board、Supabase `positions(live)` が一致していること。寄らず / 差金決済制約 / closeout 可否を明示的に見る。
+- `gateway` が live `BUY qty>100` を `oms-live` に流していないこと。`OMS_LIVE_MAX_QTY_PER_ORDER=100` reject が減っていること。
+- `kabu Code 21: 可能額が不足しております` が減っていること。発生した場合は銘柄、時刻、直前の同日 SELL / BUY、positions、注文 payload を残す。
+- 同日 SELL 後の同一銘柄 live/day BUY が `same_day_reentry_after_sell` で reject されること。
+- 14:30 JST 以降の live/day BUY が `late_live_buy` で reject されること。
+- 14:50 JST 以降の live signal が `market_closed` で fail-close し、live order publish が発生しないこと。
+- `strategy-rule` / `strategy-ai` / `aggregator` / `gateway` の流れが詰まっていないこと。reject が `missing_entry_price` に偏っていないこと。
+
+14:50 closeout で確認すること:
+
+- `oms-live` closeout が発火すること。
+- closeout 注文が銘柄ごとに並列処理されること。
+- closeout 注文だけ `CLOSEOUT_ORDER_FILL_TIMEOUT_SECONDS=2400` で待つこと。通常注文の `ORDER_FILL_TIMEOUT_SECONDS=30` は維持。
+- closeout 後に `positions(live)` が残らないこと。残った場合は kabu `/positions` と `scripts/reconcile-positions.py --dry-run` で stale row か実建玉かを切り分ける。
+- closeout の realized PnL は worker ごとではなく合算後 1 回だけ `system_status.daily_pnl` に加算されること。
+
+引け後に残すメモ:
+
+- `trades_live` 件数、`system_status.daily_pnl`、`positions(live)` 残有無。
+- `3907` の処理結果。SELL 成功 / 失敗、Code 21 有無、持ち越し継続有無。
+- reject 理由の分布: `same_day_reentry_after_sell`、`late_live_buy`、`market_closed`、`missing_entry_price`、`already_long`、`no_position_for_sell`。
+- kabu エラーの有無: Code 21、Code 5、Code 8、401 / 403 token retry。
+- closeout 成否と未約定 / cancel / RecType details。
+- `scripts/reconcile-positions.py --dry-run` の結果。必要なら内容確認後に `--apply`。
+- 次営業日の TODO と残課題をこの `docs/HANDOFF.md` に追記する。
+
+### 2026-05-28 live close / fix queue
+
+本日の live 運用は `system_status.daily_pnl=11050.0`、`trades_live=33` で終了。ただし `5031` が売れず持ち越しになった。Supabase 表示では `5031 x100 @791 / current=630 / unrealized=-16100` だが、引け後の kabu 照合では実残が `5031 x200 @791`、Supabase は `x100` で quantity mismatch。評価損益込みは Supabase 表示ベースで `-5050`、kabu 実残ベースではさらに `-16100` 悪化する可能性がある。
+
+5031 closeout の事実関係:
+
+- closeout は `2026-05-28 14:50:00 JST` に発火し、注文 `20260528A02N70384146` を送信した。
+- 注文詳細は `Symbol=5031`、`Side=1`、`Exchange=9`、`Price=0`、`Details RecType=1/4` まで進み、約定 detail `RecType=8` は無し。
+- OMS は closeout timeout `2400s` で `15:30:01 JST` まで poll したが `CumQty=0` のまま timeout。その後 cancelorder は HTTP 200。
+- 引け後の注文詳細は `State=5`、`OrderState=5`、`CumQty=0`、`Details` に `RecType=6` があり、最終的に約定なしで終端。
+- 5031 board は `CurrentPrice=630`、`PreviousClose=780`、`OpeningPrice=640`、`LowPrice=630`、`TradingVolume=1371300`。`Sell1=630 x 67900`、買い側は実質 0 と見え、ストップ安で買いがなく成行 SELL が約定しなかった可能性が高い。
+
+次セッションから順番に直すこと:
+
+1. **5031 の数量不一致を最優先で補正する**
+   - kabu 実残: `5031 x200 @791`
+   - Supabase `positions(live)`: `5031 x100 @791`
+   - `scripts/reconcile-positions.py --apply` は quantity mismatch を自動修正しない。手動 SQL/RPC で `positions.quantity=200`、評価損益も実残ベースに合わせる。
+   - 補正前に kabu GUI または `/positions` で `5031 x200` と未約定注文なしを再確認する。
+
+2. **closeout 後に live positions が残った場合の強いログを追加する**
+   - `run_closeout()` 完了後に Supabase `positions(live)` と kabu `/positions` の残を確認し、残があれば `CRITICAL` ログを出す。
+   - 残ポジが stale row か実建玉かをログで区別できるようにする。
+   - Slack / メール / Dashboard への明示通知は将来機能扱いで、この修正範囲には含めない。
+
+3. **closeout 注文詳細の構造化ログを増やす**
+   - 現状ログは HTTP 200 と timeout だけで、`/orders` 本文が残らない。
+   - closeout poll の終端時と timeout 時に `symbol`、`order_id`、`State`、`OrderState`、`OrderQty`、`CumQty`、`Side`、`Price`、`Details[].RecType`、`Details[].Qty`、`Details[].TransactTime` を要約ログに残す。
+   - これにより「拒否」「市場に出たが未約定」「失効/取消」「部分約定」を後から API probe なしで判断できるようにする。
+
+4. **closeout 数量の信頼元を見直す**
+   - 現状 closeout は Supabase `positions(live)` を元に注文を作るため、今日のような mismatch では `x100` しか売りに行けない。
+   - closeout 直前に kabu `/positions` と Supabase を突合し、quantity mismatch があれば警告を出す。
+   - 安全側の案: closeout では kabu 実残数量を優先して売却対象にする。ただし Supabase 書き込みとの整合、個人手動保有の巻き込み、holding_type の扱いを先に設計する。
+
+5. **reconciler の mismatch 修復手段を用意する**
+   - 現行 `reconcile-positions.py --apply` は `to_import` だけを取り込み、quantity mismatch は warning のみ。
+   - 運用用に `--fix-quantity-mismatch` のような明示 opt-in、または専用 SQL/RPC を用意する。
+   - 自動補正は危険なので、対象 symbol と kabu/Supabase 差分を表示し、明示オプションなしでは実行しない。
+
+6. **5031 持ち越しの翌営業日 pre-open チェックを追加する**
+   - 明朝は通常の watchlist より先に `5031 x200` の実残、未約定注文、板状態、Supabase 補正済みかを確認する。
+   - `5031` が再びストップ安気配なら、自動 closeout だけに任せず手動判断もできるようにする。
+   - `same_day_reentry_after_sell` / `late_live_buy` / `market_closed` guard は今日も効いていたので、明日は持ち越し処理と数量整合を重点監視する。
+
+
+#### 2026-05-28 20:33 UTC follow-up
+
+- `scripts/reconcile-positions.py` に `--fix-quantity-mismatch` を追加したが、production dry-run 時点では補正は実行していない。
+- `op run --env-file infra/env.production -- uv run python scripts/reconcile-positions.py --log-level INFO` の結果、kabu / Supabase ともに `5031` は一致していた。
+- 明細確認では kabu `5031 qty=100 avg=791.0 current=630.0 pnl=-16100.0`、Supabase `5031 qty=100 entry=791.0 holding=day`。handoff 上の `x200` mismatch は現時点では再現しないため、`--fix-quantity-mismatch --symbol 5031` は打たないこと。
+- OMS Live closeout は、発注前 `precheck` と完了後 `postcheck` の両方で kabu / Supabase positions drift を `CRITICAL` ログに出すよう修正済み。closeout 数量そのものは引き続き Supabase `positions(live)` をソースにし、kabu 実残への自動切替は未実装。
+- production `oms-live` は `op run --env-file infra/env.production -- docker compose --env-file infra/env.production -f infra/docker-compose.prod.yml up -d --build --no-deps oms-live` で rebuild/recreate 済み。コンテナ内設定は `OMS_LIVE_DRY_RUN=false`、`CLOSEOUT_ORDER_FILL_TIMEOUT_SECONDS=2400.0`、`ORDER_FILL_TIMEOUT_SECONDS=30.0`、`KABU_DEFAULT_EXCHANGE=9`、allowed symbols 30 件。直近ログは scheduler 待機のみで起動エラーなし。
+- `docs/runbook/live-go-checklist.md` に「carry position がある翌営業日の pre-open procedure」を追加済み。通知系（Slack / メール / Dashboard 明示表示）は将来機能扱いで、この修正範囲には含めない。
+- closeout 数量ソース方針は fail-close に決定。OMS Live は closeout precheck で kabu / Supabase position drift を検出した場合、sendorder 前に `skipped_reason=position_drift` で closeout を止める。kabu 実残数量への自動切替は実装しない。
+- production `oms-live` は fail-close 版も rebuild/recreate 済み。直近ログは scheduler 待機のみで起動エラーなし。

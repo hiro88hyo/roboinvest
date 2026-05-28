@@ -44,6 +44,8 @@ class KabuPositionSnapshot:
     symbol: str
     quantity: int
     average_price: Decimal
+    current_price: Decimal | None = None
+    unrealized_pnl: Decimal | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +55,8 @@ class QuantityMismatch:
     supabase_quantity: int
     kabu_average_price: Decimal
     supabase_entry_price: Decimal
+    kabu_current_price: Decimal | None = None
+    kabu_unrealized_pnl: Decimal | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +94,8 @@ def parse_kabu_position(row: dict[str, Any]) -> KabuPositionSnapshot | None:
             logger.warning("kabu position skipped (no Price): symbol=%s", symbol)
             return None
         average_price = Decimal(str(price_raw))
+        current_price = _optional_decimal(row.get("CurrentPrice"))
+        unrealized_pnl = _optional_decimal(row.get("ProfitLoss"))
     except (KeyError, TypeError, ValueError, ArithmeticError):
         logger.exception("kabu position parse failed: row=%r", row)
         return None
@@ -108,7 +114,22 @@ def parse_kabu_position(row: dict[str, Any]) -> KabuPositionSnapshot | None:
         )
         return None
 
-    return KabuPositionSnapshot(symbol=symbol, quantity=quantity, average_price=average_price)
+    return KabuPositionSnapshot(
+        symbol=symbol,
+        quantity=quantity,
+        average_price=average_price,
+        current_price=current_price,
+        unrealized_pnl=unrealized_pnl,
+    )
+
+
+def _optional_decimal(value: Any) -> Decimal | None:
+    if value is None:
+        return None
+    try:
+        return Decimal(str(value))
+    except (TypeError, ValueError, ArithmeticError):
+        return None
 
 
 def parse_kabu_positions(rows: Iterable[dict[str, Any]]) -> list[KabuPositionSnapshot]:
@@ -152,6 +173,8 @@ def compute_position_diff(
                     supabase_quantity=sup.quantity,
                     kabu_average_price=kabu.average_price,
                     supabase_entry_price=sup.entry_price,
+                    kabu_current_price=kabu.current_price,
+                    kabu_unrealized_pnl=kabu.unrealized_pnl,
                 )
             )
             continue
@@ -263,10 +286,50 @@ async def apply_reconcile_actions(
     return inserted
 
 
+async def apply_quantity_mismatch_fixes(
+    actions: ReconcileActions,
+    supabase: SupabaseClient,
+    *,
+    symbols: set[str] | None = None,
+) -> int:
+    """quantity mismatch を明示 opt-in で Supabase 側へ反映する。
+
+    ``scripts/reconcile-positions.py --fix-quantity-mismatch`` からのみ使う運用補助。
+    kabu 実残を信頼して ``quantity`` / ``entry_price`` を合わせ、kabu が返す場合は
+    ``current_price`` / ``unrealized_pnl`` も同時に更新する。orphan DELETE はしない。
+    """
+    fixed = 0
+    for mismatch in actions.quantity_mismatches:
+        if symbols is not None and mismatch.symbol not in symbols:
+            continue
+        await supabase.update_live_position_reconciled(
+            symbol=mismatch.symbol,
+            quantity=mismatch.kabu_quantity,
+            entry_price=str(mismatch.kabu_average_price),
+            current_price=str(mismatch.kabu_current_price)
+            if mismatch.kabu_current_price is not None
+            else None,
+            unrealized_pnl=str(mismatch.kabu_unrealized_pnl)
+            if mismatch.kabu_unrealized_pnl is not None
+            else None,
+        )
+        logger.warning(
+            "fixed quantity mismatch from kabu: symbol=%s qty %d->%d entry %s->%s",
+            mismatch.symbol,
+            mismatch.supabase_quantity,
+            mismatch.kabu_quantity,
+            mismatch.supabase_entry_price,
+            mismatch.kabu_average_price,
+        )
+        fixed += 1
+    return fixed
+
+
 __all__ = [
     "KabuPositionSnapshot",
     "QuantityMismatch",
     "ReconcileActions",
+    "apply_quantity_mismatch_fixes",
     "apply_reconcile_actions",
     "build_imported_position",
     "compute_position_diff",

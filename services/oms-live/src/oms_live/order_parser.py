@@ -114,7 +114,9 @@ _REC_TYPE_FILL = 8
 def _parse_detail(payload: dict[str, Any]) -> ExecutionDetail:
     return ExecutionDetail(
         execution_id=str(payload.get("ExecutionID") or payload.get("ID") or ""),
-        execution_time=_parse_kabu_datetime(payload.get("ExecutionTime"))
+        execution_time=_parse_kabu_datetime(
+            payload.get("ExecutionTime") or payload.get("TransactTime")
+        )
         or datetime.fromtimestamp(0, tz=UTC),
         price=_to_decimal(payload.get("Price", 0)),
         quantity=int(payload.get("Qty", 0)),

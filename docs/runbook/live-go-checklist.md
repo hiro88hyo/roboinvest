@@ -102,7 +102,77 @@ Weak GO の上に、最小サイズの実発注 e2e を完了させる。
 
 ここまで完了で **Strong GO**。
 
-## 6. Recommended Sequence
+## 6. Manual Live-Go After Incident
+
+障害対応や guard 修正の翌営業日に、人間が通常 live 運用を継続してよいか判断する場合の基準。初回 Strong GO の代替ではなく、既に Strong GO 済みの本番運用を再開・継続するための追加確認として使う。
+
+### 6.1 Go Conditions
+
+次をすべて満たすなら、ロジック面は **条件付き GO** と判断できる。
+
+- [ ] 前営業日の問題に対する修正が本番 `gateway` / `oms-live` に反映済み
+- [ ] 15:00 JST 以降に新規 live order publish / `POST /sendorder` が発生していない
+- [ ] 14:50 JST 以降の live signal が `market_closed` で reject されている
+- [ ] 14:30 JST 以降の live/day BUY が `late_live_buy` で reject されている
+- [ ] 同日 SELL 後の同一銘柄 live/day BUY が `same_day_reentry_after_sell` で reject されている
+- [ ] `kabu Code 21` など、同じ原因の実発注 reject が再発していない
+- [ ] closeout が発火し、対象銘柄ごとの並列発注と `CLOSEOUT_ORDER_FILL_TIMEOUT_SECONDS` の長時間待機が確認できている
+- [ ] `trades_live`、`positions(live)`、`system_status.daily_pnl` の整合を確認済み
+
+### 6.2 Conditional Go With Carry Position
+
+closeout 未約定などで `positions(live)` が残っている場合、live 運用自体は **条件付き GO** に留める。翌営業日の寄り前に次を完了してから最終判断する。
+
+- [ ] kabu 実保有と Supabase `positions(live)` が一致している
+- [ ] 残ポジションの板・気配・寄付き見込みを確認している
+- [ ] 寄り成り、寄り後、または手動決済しない、の方針を明示している
+- [ ] 未約定注文が残っていない
+- [ ] `OMS_LIVE_DRY_RUN=false`、`TRADE_MODE=live`、サービス稼働状態、kabu token 共有状態を確認済み
+
+### 6.3 Pre-Open Procedure With Carry Position
+
+前営業日の closeout 未約定などで live/day position が残った翌営業日は、Universe Scanner や通常サービス起動より先に残ポジションを確認する。
+
+1. kabu / Supabase の数量整合を dry-run で確認する。
+
+```bash
+set -a && . infra/.op.service-account.env && set +a
+op run --env-file infra/env.production -- \
+  uv run python scripts/reconcile-positions.py --log-level INFO
+```
+
+2. `quantity_mismatch` が出た場合は、対象 symbol と kabu GUI の実残・未約定注文を確認してから、必要な symbol だけ明示補正する。
+
+```bash
+op run --env-file infra/env.production -- \
+  uv run python scripts/reconcile-positions.py --fix-quantity-mismatch --symbol <SYMBOL>
+```
+
+3. kabu GUI または API で未約定注文が残っていないことを確認する。残っている場合は通常 live 運用へ進まず、取消または約定状況を整理する。
+
+4. 残ポジションごとに板・気配・寄付き見込みを確認し、次のどれにするかを記録する。
+
+- 寄り成りまたは寄り後に手動決済する
+- 通常 signal / closeout に任せる
+- 流動性や規制上の理由で決済しない
+
+5. 方針、確認時刻、対象 symbol、数量、kabu / Supabase の一致状況を `docs/HANDOFF.md` または当日の運用メモに残す。
+
+補足: OMS Live closeout は kabu / Supabase の position drift を検出した場合、発注前に `position_drift` で fail-close する。drift がある日は自動 closeout に進まず、先に整合と方針を確定する。
+
+
+### 6.4 No-Go Conditions After Incident
+
+次のどれかがある場合は、手動 live-go を出さない。
+
+- 15:00 JST 以降に closeout 由来ではない新規発注がある
+- `market_closed` / `late_live_buy` / `same_day_reentry_after_sell` の guard が期待どおり効いていない
+- kabu 実保有と Supabase `positions(live)` が説明できない形でズレている
+- closeout 未約定ポジションの翌営業日方針が決まっていない
+- closeout precheck で kabu / Supabase position drift が出ている
+- OMS Live / Gateway ログに未整理の `critical` / `sendorder` エラーが残っている
+
+## 7. Recommended Sequence
 
 実務上は次の順で潰す。
 
@@ -111,7 +181,7 @@ Weak GO の上に、最小サイズの実発注 e2e を完了させる。
 3. `oms-live-phase3.md` を最小サイズで実施して `Strong GO`
 4. 初めて通常の `trade_mode=live` 運用へ進む
 
-## 7. Record Template
+## 8. Record Template
 
 実施ごとに最低限これを残す。
 
