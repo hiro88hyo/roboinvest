@@ -179,7 +179,7 @@ async def _with_runner(
         return None
 
     def _default_wall_clock() -> datetime:
-        return datetime(2026, 4, 20, 0, 0, 0, tzinfo=UTC)
+        return datetime(2026, 4, 20, 1, 0, 0, tzinfo=UTC)
 
     async with (
         PubSubSubscriber(
@@ -654,6 +654,74 @@ async def test_live_day_buy_is_rejected_after_new_buy_cutoff() -> None:
     assert [r for r in supabase.requests if r.url.path == "/rest/v1/positions"] == []
 
 
+async def test_live_day_buy_is_rejected_before_new_buy_start() -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response(
+                [
+                    (
+                        "a1",
+                        _unified_payload(
+                            action=Action.BUY,
+                            price="2500",
+                            stop_loss_price="2400",
+                        ),
+                    )
+                ]
+            )
+        ]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trade_mode="live", trading_style="day")],
+    )
+
+    def _before_start() -> datetime:
+        return datetime(2026, 4, 20, 0, 4, 0, tzinfo=UTC)
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        wall_clock=_before_start,
+        run_body=_body,
+    )
+
+    assert stats.rejected == 1
+    assert pubsub.published == []
+    assert [r for r in supabase.requests if r.url.path == "/rest/v1/positions"] == []
+
+
+async def test_live_day_sell_is_not_blocked_before_new_buy_start() -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[_pull_response([("a1", _unified_payload(action=Action.SELL))])]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trade_mode="live", trading_style="day")],
+        positions_quantity_rows=[[{"quantity": 300, "side": "LONG"}]],
+    )
+
+    def _before_start() -> datetime:
+        return datetime(2026, 4, 20, 0, 4, 0, tzinfo=UTC)
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        wall_clock=_before_start,
+        run_body=_body,
+    )
+
+    assert stats.approved == 1
+    body = json.loads(pubsub.published[0].content.decode())
+    order = json.loads(base64.b64decode(body["messages"][0]["data"]).decode())
+    assert order["side"] == "SELL"
+    assert order["quantity"] == 300
+
+
 async def test_live_day_buy_is_rejected_after_same_day_sell() -> None:
     pubsub = _PubSubRouter(
         pull_batches=[
@@ -819,7 +887,7 @@ async def test_daily_loss_limit_flips_kill_switch() -> None:
     assert len(patch_calls) == 1
     body = json.loads(patch_calls[0].content.decode())
     assert body["is_trading_allowed"] is False
-    assert body["updated_at"].startswith("2026-04-20T00:00:00")
+    assert body["updated_at"].startswith("2026-04-20T01:00:00")
     assert pubsub.published == []
 
 

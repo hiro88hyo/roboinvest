@@ -171,6 +171,10 @@ class StreamRunner:
             self._log_reject(signal, "late_live_buy", trade_mode)
             return _Decision(approved=False, kill_switch_fired=False)
 
+        if self._is_live_day_opening_buy(signal=signal, trade_mode=trade_mode, now=now):
+            self._log_reject(signal, "opening_live_buy", trade_mode)
+            return _Decision(approved=False, kill_switch_fired=False)
+
         if await self._has_live_sell_today(signal=signal, trade_mode=trade_mode, now=now):
             self._log_reject(signal, "same_day_reentry_after_sell", trade_mode)
             return _Decision(approved=False, kill_switch_fired=False)
@@ -371,6 +375,24 @@ class StreamRunner:
         hh, mm = self.settings.live_day_new_buy_cutoff_time.split(":", 1)
         cutoff_h, cutoff_m = int(hh), int(mm)
         return (local_now.hour, local_now.minute) >= (cutoff_h, cutoff_m)
+
+    def _is_live_day_opening_buy(
+        self,
+        *,
+        signal: UnifiedTradeSignal,
+        trade_mode: TradeMode,
+        now: datetime,
+    ) -> bool:
+        if (
+            trade_mode is not TradeMode.LIVE
+            or signal.holding_type is not TradingStyle.DAY
+            or signal.action is not Action.BUY
+        ):
+            return False
+        local_now = now.astimezone(ZoneInfo(self.settings.day_closeout_timezone))
+        hh, mm = self.settings.live_day_new_buy_start_time.split(":", 1)
+        start_h, start_m = int(hh), int(mm)
+        return (local_now.hour, local_now.minute) < (start_h, start_m)
 
     async def _has_live_sell_today(
         self,

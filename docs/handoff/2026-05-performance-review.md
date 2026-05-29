@@ -269,6 +269,34 @@ Universe Scanner と Gateway / Aggregator は、同じタイミングで大き�
 
 この順序なら、最初の実験では watchlist を固定したまま「売買判断の品質」を測れる。その後、Universe Scanner を変えた実験では「入口の品質改善」を別に評価できる。
 
+## 2026-05-29 Gateway / Aggregator 修正進捗
+
+ブランチ `fix/gateway-aggregator-risk-guards` で、最初の実験単位として Gateway / Aggregator 側の小さな guard を実装した。
+
+実装済み:
+
+- production compose / template の `AI_MAX_OUTPUT_TOKENS` デフォルトを `2048` に変更。
+- `gateway` に `LIVE_DAY_NEW_BUY_START_TIME` を追加し、live/day の新規 `BUY` は `09:05 JST` より前に `opening_live_buy` で reject する。
+- opening guard は `SELL`、paper mode、swing signal には適用しない。
+- `aggregator` は同一 source 内で `BUY` / `SELL` が混在した場合、その source を conflict として無効化する。
+- RULE 内 conflict だけで AI が有効な場合は、AI 単独 signal として扱う。
+
+検証済み:
+
+- `uv run pytest services/aggregator/tests/unit/test_consensus.py services/gateway/tests/unit/test_config.py services/gateway/tests/unit/test_stream_runner.py -q`
+  - `50 passed`
+- `uv run ruff check services/aggregator/src/aggregator/consensus.py services/aggregator/tests/unit/test_consensus.py services/gateway/src/gateway/config.py services/gateway/src/gateway/streaming/runner.py services/gateway/tests/unit/test_config.py services/gateway/tests/unit/test_stream_runner.py`
+  - `All checks passed!`
+
+残タスク:
+
+- production 反映後、`strategy-ai` の JSON 出力、AI signal publish、`strategy_logs` / `aggregator_logs` / `gateway` 到達を確認する。
+- 数営業日、Universe Scanner は変えずに Gateway / Aggregator guard の効果を見る。
+- 観測指標は trade 数、reject reason 分布、09:00-09:15 の損益、missed profit、`RULE` / `AI` / `CONSENSUS` 比率。
+- source 別 confidence threshold は今回は未実装。guard の効果測定後に判断する。
+- price-based stop-loss exit と `MAX_HOLD_MINUTES` closeout は未実装。次の安全性改善候補として残す。
+- Universe Scanner の `min_volatility` / momentum penalty / `top_n` 可変化は、Gateway / Aggregator 実験後に別ブランチで扱う。
+
 ## Source
 
 詳細分析は元アーティファクト `brain/f2b491b0-d9b8-43c8-bf17-0873c80e7b52/investment_review_may_2026.md` に記録されている。
