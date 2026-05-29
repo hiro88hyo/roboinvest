@@ -28,8 +28,12 @@ class ConsensusConfig:
 
 
 def _pick_dominant(signals: Iterable[StrategySignal]) -> StrategySignal | None:
+    candidates = list(signals)
+    if len({s.action for s in candidates}) > 1:
+        return None
+
     best: StrategySignal | None = None
-    for s in signals:
+    for s in candidates:
         if best is None or s.confidence > best.confidence:
             best = s
     return best

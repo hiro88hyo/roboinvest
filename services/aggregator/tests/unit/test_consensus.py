@@ -130,6 +130,24 @@ def test_same_source_picks_highest_confidence(signal_factory) -> None:  # type: 
     assert unified.confidence == pytest.approx(0.75)
 
 
+def test_same_rule_source_conflict_returns_none(signal_factory) -> None:  # type: ignore[no-untyped-def]
+    buy = signal_factory(source=SignalSource.RULE, action=Action.BUY, confidence=0.8)
+    sell = signal_factory(source=SignalSource.RULE, action=Action.SELL, confidence=0.9)
+    assert aggregate([buy, sell], config=_cfg()) is None
+
+
+def test_same_rule_source_conflict_allows_ai_only(signal_factory) -> None:  # type: ignore[no-untyped-def]
+    rule_buy = signal_factory(source=SignalSource.RULE, action=Action.BUY, confidence=0.8)
+    rule_sell = signal_factory(source=SignalSource.RULE, action=Action.SELL, confidence=0.9)
+    ai = signal_factory(source=SignalSource.AI, action=Action.BUY, confidence=0.7)
+    unified = aggregate([rule_buy, rule_sell, ai], config=_cfg())
+    assert unified is not None
+    assert unified.signal_source is SignalSource.AI
+    assert unified.action is Action.BUY
+    assert unified.strategy_signal_id_a is None
+    assert unified.strategy_signal_id_b == ai.signal_id
+
+
 def test_holding_type_follows_config(signal_factory) -> None:  # type: ignore[no-untyped-def]
     rule = signal_factory(source=SignalSource.RULE, action=Action.BUY, confidence=0.8)
     unified = aggregate([rule], config=_cfg(default_holding_type=TradingStyle.SWING))
