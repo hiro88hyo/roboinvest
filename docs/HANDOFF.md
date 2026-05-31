@@ -51,6 +51,16 @@
 
 優先度が高い順:
 
+0. **Cloud Logging branch はレビュー待ち。ユーザー判断までマージしない**
+   - 作業ブランチ: `codex/cloud-logging-json`。
+   - 目的: Python サービスログを 1 行 JSON 化し、OpenTelemetry Collector 経由で Cloud Logging `logName:"roboinvest"` へ集約する。
+   - 実装済み: `trade_contracts.logging`、全 Python service entrypoint の `configure_logging` 化、Gateway `signal_rejected` / `order_published` の構造化 event、`infra/otel-collector/config.yml`、`observability` compose profile、parse fixture、`docs/runbook/cloud-logging.md`。
+   - Collector は `service` と `event` を持つアプリ JSON だけを送る。plain text / 他基盤ログは drop し、Console では `logName:"roboinvest"` と `jsonPayload.service` / `jsonPayload.event` で見る。
+   - 検証済み: `roles/logging.logWriter` 付与後の SA `entries:write` probe HTTP 200、Collector parse fixture OK、production Collector config validate OK、`observability` profile で Collector だけ起動し `collector_cloud_probe` が Google Cloud Console に到達。
+   - 注意: Collector は検証後停止済み。既存サービスはこのブランチで rebuild/restart していないため、現行 production containers はまだ旧 logging の可能性がある。
+   - チェック済み: `make lint-all`、`make test-all` (`937 passed, 21 skipped`; dashboard `47 passed`)。
+   - 次の候補: 差分レビュー → commit / PR 作成。マージはユーザー明示判断まで行わない。
+
 1. **翌営業日寄り前に one-command pre-open check を再実行する**
    - kabu station / Windows proxy 起動後に `op run --env-file infra/env.production -- uv run python scripts/production-preopen-check.py --timeout 30` を実行する。
    - 2026-05-31 は token cache 削除 + `feeder` / `oms-live` restart 後に `OK 60 / WARN 0 / NG 0` まで復帰済み。

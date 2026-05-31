@@ -113,3 +113,15 @@ Status: Draft
 5. 主要イベントだけ構造化フィールドを付与する
 6. runbook に確認手順と障害時の見る場所を書く
 7. 必要なら次段でログベースメトリクス / Alerting を分離して設計する
+
+## 14. 実装メモ
+
+- 2026-05-31: `trade_contracts.logging` に `configure_logging` / `JsonFormatter` / `event_extra` を追加した
+- 各 Python サービスの entrypoint はデフォルトで stdout/stderr に 1 行 JSON を出力する
+- 手元で従来のテキスト形式に戻したい場合は `JSON_LOGS=false` を指定する
+- `environment` は `APP_ENV`, `ENVIRONMENT`, `NODE_ENV` の順に読み、未指定時は `dev` とする
+- 最初の構造化イベントとして Gateway の `signal_rejected` / `order_published` に検索用フィールドを付与した
+- production compose に OpenTelemetry Collector を `observability` profile で追加した
+- Collector は `service` と `event` を持つアプリ JSON だけを Cloud Logging へ送る
+- `roles/logging.logWriter` 付与後、SA の `entries:write` probe が HTTP 200 になることを確認した
+- `observability` profile で Collector だけを起動し、Docker log 経由の probe が Google Cloud Console に流れることを確認した

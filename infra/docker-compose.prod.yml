@@ -2,6 +2,8 @@ name: trade-ai-prod
 
 x-common-env: &common-env
   TZ: ${TZ:-Asia/Tokyo}
+  APP_ENV: ${APP_ENV:-production}
+  JSON_LOGS: ${JSON_LOGS:-true}
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
   SUPABASE_URL: ${SUPABASE_URL:?SUPABASE_URL is required}
   SUPABASE_SECRET_KEY: ${SUPABASE_SECRET_KEY:?SUPABASE_SECRET_KEY is required}
@@ -215,8 +217,27 @@ services:
       DAY_CLOSEOUT_TIME: ${DAY_CLOSEOUT_TIME:-14:50}
       DAY_CLOSEOUT_TIMEZONE: ${DAY_CLOSEOUT_TIMEZONE:-Asia/Tokyo}
 
+  otel-collector:
+    image: ${OTEL_COLLECTOR_IMAGE:-otel/opentelemetry-collector-contrib:0.153.0}
+    profiles: ["observability"]
+    restart: unless-stopped
+    user: "0:0"
+    command: ["--config=/etc/otelcol/config.yml"]
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-/run/secrets/gcp-pubsub-sa.json}
+      GOOGLE_CLOUD_PROJECT: ${PUBSUB_PROJECT_ID:?PUBSUB_PROJECT_ID is required}
+    volumes:
+      - ./otel-collector/config.yml:/etc/otelcol/config.yml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - otel-collector-state:/var/lib/otelcol
+      - ${GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH:-/dev/shm/roboinvest/gcp-pubsub-sa.json}:/run/secrets/gcp-pubsub-sa.json:ro
+    ports:
+      - "127.0.0.1:13133:13133"
+
 volumes:
   kabu-token-cache:
   feature-warm-data:
   feature-cold-data:
   trade-ai-logs:
+  otel-collector-state:

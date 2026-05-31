@@ -17,6 +17,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from trade_contracts.kabu_token import KabuTokenCache
+from trade_contracts.logging import configure_logging
 
 from .clients.pubsub import PubSubSubscriber
 from .clients.supabase import SupabaseClient, SupabaseError
@@ -57,10 +58,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 async def _run_stream_cmd(*, iterations: int | None, no_closeout: bool) -> int:
     settings = OmsLiveSettings()
-    logging.basicConfig(
-        level=settings.log_level,
-        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
-    )
+    configure_logging(service="oms-live", level=settings.log_level)
     if not settings.pubsub_project_id:
         logger.error("PUBSUB_PROJECT_ID must be set for stream mode")
         return 2

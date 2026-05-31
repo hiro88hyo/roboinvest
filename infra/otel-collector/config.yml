@@ -1,0 +1,103 @@
+receivers:
+  file_log/docker:
+    include:
+      - /var/lib/docker/containers/*/*-json.log
+    exclude:
+      - /var/lib/docker/containers/${env:HOSTNAME}/${env:HOSTNAME}-json.log
+    start_at: end
+    include_file_path: true
+    include_file_name: false
+    storage: file_storage/docker_offsets
+    retry_on_failure:
+      enabled: true
+      initial_interval: 1s
+      max_interval: 30s
+      max_elapsed_time: 5m
+    operators:
+      - id: parse_docker_json
+        type: json_parser
+        parse_from: body
+        parse_to: attributes.docker
+        timestamp:
+          parse_from: attributes.docker.time
+          layout_type: gotime
+          layout: "2006-01-02T15:04:05.999999999Z07:00"
+      - id: move_docker_log_to_body
+        type: move
+        from: attributes.docker.log
+        to: body
+      - id: move_docker_stream
+        type: move
+        from: attributes.docker.stream
+        to: attributes.docker_stream
+      - id: drop_non_json_body
+        type: filter
+        expr: 'body matches "^\\s*\\{" == false'
+      - id: parse_app_json
+        type: json_parser
+        parse_from: body
+        parse_to: body
+        on_error: send
+        timestamp:
+          parse_from: body.timestamp
+          layout_type: gotime
+          layout: "2006-01-02T15:04:05.999999Z07:00"
+        severity:
+          parse_from: body.severity
+      - id: cleanup_docker_envelope
+        type: remove
+        field: attributes.docker
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 256
+    spike_limit_mib: 64
+  batch:
+    timeout: 5s
+    send_batch_size: 1000
+    send_batch_max_size: 1000
+  resource/roboinvest:
+    attributes:
+      - key: service.namespace
+        value: roboinvest
+        action: upsert
+      - key: deployment.environment
+        value: ${env:APP_ENV}
+        action: upsert
+  filter/roboinvest_app_json:
+    error_mode: ignore
+    logs:
+      log_record:
+        - 'body["service"] == nil or body["event"] == nil'
+
+exporters:
+  googlecloud:
+    log:
+      default_log_name: roboinvest
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+  file_storage/docker_offsets:
+    directory: /var/lib/otelcol/file_storage
+    create_directory: true
+
+service:
+  extensions:
+    - health_check
+    - file_storage/docker_offsets
+  pipelines:
+    logs:
+      receivers:
+        - file_log/docker
+      processors:
+        - memory_limiter
+        - filter/roboinvest_app_json
+        - resource/roboinvest
+        - batch
+      exporters:
+        - googlecloud
+  telemetry:
+    logs:
+      level: info

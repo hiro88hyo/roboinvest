@@ -5,6 +5,8 @@
 # Keep only op:// references or placeholders here. Do not commit materialized secrets.
 
 TZ=Asia/Tokyo
+APP_ENV=production
+JSON_LOGS=true
 LOG_LEVEL=INFO
 
 # Managed GCP Pub/Sub. Do not set PUBSUB_EMULATOR_HOST in production.
@@ -12,6 +14,9 @@ PUBSUB_PROJECT_ID=op://Trade AI/production/PUBSUB_PROJECT_ID
 GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/gcp-pubsub-sa.json
 GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH=/dev/shm/roboinvest/gcp-pubsub-sa.json
 # Materialize op://Trade AI/production/GOOGLE_APPLICATION_CREDENTIALS_JSON to /dev/shm/roboinvest/gcp-pubsub-sa.json before compose up.
+
+# Cloud Logging collector. Enable with docker compose --profile observability.
+OTEL_COLLECTOR_IMAGE=otel/opentelemetry-collector-contrib:0.153.0
 
 # Supabase Cloud
 SUPABASE_URL=op://Trade AI/production/SUPABASE_URL
