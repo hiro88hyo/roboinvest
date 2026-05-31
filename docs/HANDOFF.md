@@ -59,12 +59,13 @@
    - Collector は `service` と `event` を持つアプリ JSON だけを Cloud Logging `logName:"roboinvest"` へ送る。plain text / 他基盤ログは drop する。
    - 検証済み: `make lint-all`、`make test-all` (`937 passed, 21 skipped`; dashboard `47 passed`)、Collector parse fixture OK、SA `entries:write` probe HTTP 200、production pre-open check `OK 60 / WARN 0 / NG 0`。
    - 注意: このホストに `gcloud` がないため CLI での Cloud Logging read は未実施。SA は write 権限のみで read probe は 403。
-   - 次の候補: 翌営業日の market data で `jsonPayload.event="signal_rejected"` / `order_published` を Cloud Logging Console から確認する。
+   - Cloud Logging Console へのログ到達はユーザーが確認済み。保存クエリ名と rollback 手順は [docs/runbook/cloud-logging.md](runbook/cloud-logging.md) を参照。
+   - 次の候補: 2026-06-01 の market data で `jsonPayload.event="signal_rejected"` / `order_published` を Cloud Logging Console から確認する。
 
 1. **翌営業日寄り前に one-command pre-open check を再実行する**
    - kabu station / Windows proxy 起動後に `op run --env-file infra/env.production -- uv run python scripts/production-preopen-check.py --timeout 30` を実行する。
    - 2026-05-31 は Cloud Logging 反映後の全 service rebuild/restart 後に `OK 60 / WARN 0 / NG 0` を確認済み。
-   - 明朝は `feeder` が `Up`、`feeder kabu` が `token 200` または `unregister/all 200`、`positions(live)` が空であることを再確認する。
+   - 2026-06-01 はスケジュール発火後に watchlist / daily_ohlcv を確認し、`feeder` が `Up`、`feeder kabu` が `token 200` または `unregister/all 200`、`positions(live)` が空であることを再確認する。
 
 2. **AI 戦略の復旧を production で観測する**
    - PR #66 で `AI_MAX_OUTPUT_TOKENS` のデフォルトを `2048` へ変更済み。

@@ -126,7 +126,19 @@ jsonPayload.event="order_published"
 jsonPayload.destination_topic=~"orders"
 ```
 
-## 6. Stop Collector
+## 6. Saved Queries
+
+Cloud Logging Console には以下の名前で保存しておく。
+
+| Name | Query |
+| --- | --- |
+| `roboinvest-errors` | `logName:"roboinvest"`<br>`severity>=ERROR` |
+| `roboinvest-gateway-rejections` | `logName:"roboinvest"`<br>`jsonPayload.service="gateway"`<br>`jsonPayload.event="signal_rejected"` |
+| `roboinvest-order-published` | `logName:"roboinvest"`<br>`jsonPayload.event="order_published"` |
+| `roboinvest-oms-live-warnings` | `logName:"roboinvest"`<br>`jsonPayload.service="oms-live"`<br>`severity>=WARNING` |
+| `roboinvest-opening-buy-guard` | `logName:"roboinvest"`<br>`jsonPayload.service="gateway"`<br>`jsonPayload.event="signal_rejected"`<br>`jsonPayload.reason="opening_live_buy"` |
+
+## 7. Stop Collector
 
 ```bash
 op run --env-file infra/env.production -- \
@@ -136,7 +148,36 @@ op run --env-file infra/env.production -- \
 `otel-collector-state` volume には Docker log の読み取り offset が残る。
 重複送信を避けるため、検証中に理由なく volume を削除しない。
 
-## 7. 注意点
+## 8. Rollback
+
+Cloud Logging への転送だけ止める場合:
+
+```bash
+op run --env-file infra/env.production -- \
+  docker compose --env-file infra/env.production -f infra/docker-compose.prod.yml --profile observability stop otel-collector
+```
+
+Python サービスのログ形式を旧テキスト形式へ戻す場合:
+
+1. `infra/env.production` で `JSON_LOGS=false` にする。
+2. 影響範囲を小さくするため、サービスを段階的に recreate する。
+
+```bash
+op run --env-file infra/env.production -- \
+  docker compose --env-file infra/env.production -f infra/docker-compose.prod.yml up -d --no-deps \
+  feature-engine strategy-rule strategy-ai aggregator
+
+op run --env-file infra/env.production -- \
+  docker compose --env-file infra/env.production -f infra/docker-compose.prod.yml up -d --no-deps feeder
+
+op run --env-file infra/env.production -- \
+  docker compose --env-file infra/env.production -f infra/docker-compose.prod.yml up -d --no-deps \
+  gateway oms-paper oms-live
+```
+
+戻した後は `scripts/production-preopen-check.py --timeout 30` を実行する。
+
+## 9. 注意点
 
 - `/var/lib/docker/containers` を read-only mount するため、host の Docker log directory が標準位置であることを確認する。
 - Collector は Docker log file 読み取りと offset volume 書き込みのため root user で起動する。
