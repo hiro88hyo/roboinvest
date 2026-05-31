@@ -77,6 +77,9 @@ def _consensus_config_from(settings: AggregatorSettings) -> ConsensusConfig:
         weight_rule=settings.source_weight_rule,
         weight_ai=settings.source_weight_ai,
         min_confidence=settings.consensus_min_confidence,
+        min_confidence_rule_only=settings.min_confidence_rule_only,
+        min_confidence_ai_only=settings.min_confidence_ai_only,
+        min_confidence_consensus=settings.min_confidence_consensus,
         conflict_policy=settings.conflict_policy,
         default_holding_type=settings.default_holding_type,
     )

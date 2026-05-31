@@ -23,8 +23,20 @@ class ConsensusConfig:
     weight_rule: Decimal = Decimal("1.0")
     weight_ai: Decimal = Decimal("1.0")
     min_confidence: Decimal = Decimal("0.3")
+    min_confidence_rule_only: Decimal = Decimal("0.5")
+    min_confidence_ai_only: Decimal = Decimal("0.5")
+    min_confidence_consensus: Decimal = Decimal("0.3")
     conflict_policy: ConflictPolicy = "skip"
     default_holding_type: TradingStyle = TradingStyle.DAY
+
+    def threshold_for(self, source: SignalSource) -> Decimal:
+        if source is SignalSource.RULE:
+            return self.min_confidence_rule_only
+        if source is SignalSource.AI:
+            return self.min_confidence_ai_only
+        if source is SignalSource.CONSENSUS:
+            return self.min_confidence_consensus
+        return self.min_confidence
 
 
 def _pick_dominant(signals: Iterable[StrategySignal]) -> StrategySignal | None:
@@ -93,7 +105,7 @@ def aggregate(
     Returns None when:
       - the input is empty,
       - both inputs conflict and policy is "skip",
-      - the resulting confidence is below ``min_confidence``.
+      - the resulting confidence is below the threshold for its source.
     """
 
     cfg = config or ConsensusConfig()
@@ -117,13 +129,14 @@ def aggregate(
     if rule is None or ai is None:
         only = rule if rule is not None else ai
         assert only is not None  # narrow for mypy
-        if Decimal(str(only.confidence)) < cfg.min_confidence:
+        confidence = Decimal(str(only.confidence))
+        if confidence < cfg.threshold_for(only.source):
             return None
         return _build_unified(
             symbol=symbol,
             price=only.price,
             action=only.action,
-            confidence=Decimal(str(only.confidence)),
+            confidence=confidence,
             signal_source=only.source,
             rule=rule,
             ai=ai,
@@ -140,7 +153,7 @@ def aggregate(
             Decimal(str(rule.confidence)) * cfg.weight_rule
             + Decimal(str(ai.confidence)) * cfg.weight_ai
         ) / total_weight
-        if blended < cfg.min_confidence:
+        if blended < cfg.threshold_for(SignalSource.CONSENSUS):
             return None
         return _build_unified(
             symbol=symbol,
@@ -159,13 +172,14 @@ def aggregate(
         return None
 
     winner = rule if cfg.conflict_policy == "prefer_rule" else ai
-    if Decimal(str(winner.confidence)) < cfg.min_confidence:
+    confidence = Decimal(str(winner.confidence))
+    if confidence < cfg.threshold_for(winner.source):
         return None
     return _build_unified(
         symbol=symbol,
         price=winner.price,
         action=winner.action,
-        confidence=Decimal(str(winner.confidence)),
+        confidence=confidence,
         signal_source=winner.source,
         rule=rule,
         ai=ai,
