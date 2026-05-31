@@ -106,6 +106,35 @@ Weak GO の上に、最小サイズの実発注 e2e を完了させる。
 
 障害対応や guard 修正の翌営業日に、人間が通常 live 運用を継続してよいか判断する場合の基準。初回 Strong GO の代替ではなく、既に Strong GO 済みの本番運用を再開・継続するための追加確認として使う。
 
+### 6.0 One-Command Pre-Open Check
+
+寄り前の production 反映・Supabase・managed Pub/Sub・主要サービス状態は次のスクリプトでまとめて確認できる。
+
+```bash
+set -a && . infra/.op.service-account.env && set +a
+op run --env-file infra/env.production -- \
+  uv run python scripts/production-preopen-check.py
+```
+
+kabuステーション / Windows proxy を意図的に止めている休日・夜間は、feeder の kabu 接続エラーだけを WARN 扱いにする。
+
+```bash
+op run --env-file infra/env.production -- \
+  uv run python scripts/production-preopen-check.py --kabu-offline
+```
+
+期待値:
+
+- `AI_MAX_OUTPUT_TOKENS=2048`
+- `LIVE_DAY_NEW_BUY_START_TIME=09:15`
+- `MIN_CONFIDENCE_RULE_ONLY=0.5`
+- `MIN_CONFIDENCE_AI_ONLY=0.5`
+- `MIN_CONFIDENCE_CONSENSUS=0.3`
+- Supabase 主要 9 tables が OK
+- managed Pub/Sub topics / subscriptions と smoke publish/pull/ack が OK
+- `positions(live)` が空、または残ポジションの方針が明確
+- 通常寄り前は feeder が `Up` で、`--kabu-offline` なしでも NG が 0
+
 ### 6.1 Go Conditions
 
 次をすべて満たすなら、ロジック面は **条件付き GO** と判断できる。
