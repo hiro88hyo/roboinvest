@@ -18,7 +18,7 @@ def test_settings_defaults() -> None:
     assert s.pubsub_topic_paper_orders == "paper-orders"
     assert s.oms_live_max_qty_per_order is None
     assert s.live_signal_max_age_seconds == 300.0
-    assert s.live_day_new_buy_start_time == "09:05"
+    assert s.live_day_new_buy_start_time == "09:15"
     assert s.live_day_new_buy_cutoff_time == "14:30"
 
 

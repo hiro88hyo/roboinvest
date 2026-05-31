@@ -27,7 +27,7 @@ class GeminiClient:
     model: str = "gemini-2.0-flash"
     timeout_seconds: float = 30.0
     temperature: Decimal = Decimal("0.0")
-    max_output_tokens: int = 256
+    max_output_tokens: int = 2048
     client: Any = None  # google.genai.Client (lazy)
 
     def _ensure_client(self) -> Any:
