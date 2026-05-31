@@ -51,19 +51,19 @@
 
 優先度が高い順:
 
-0. **Cloud Logging branch はレビュー待ち。ユーザー判断までマージしない**
-   - 作業ブランチ: `codex/cloud-logging-json`。
-   - 目的: Python サービスログを 1 行 JSON 化し、OpenTelemetry Collector 経由で Cloud Logging `logName:"roboinvest"` へ集約する。
-   - 実装済み: `trade_contracts.logging`、全 Python service entrypoint の `configure_logging` 化、Gateway `signal_rejected` / `order_published` の構造化 event、`infra/otel-collector/config.yml`、`observability` compose profile、parse fixture、`docs/runbook/cloud-logging.md`。
-   - Collector は `service` と `event` を持つアプリ JSON だけを送る。plain text / 他基盤ログは drop し、Console では `logName:"roboinvest"` と `jsonPayload.service` / `jsonPayload.event` で見る。
-   - 検証済み: `roles/logging.logWriter` 付与後の SA `entries:write` probe HTTP 200、Collector parse fixture OK、production Collector config validate OK、`observability` profile で Collector だけ起動し `collector_cloud_probe` が Google Cloud Console に到達。
-   - 注意: Collector は検証後停止済み。既存サービスはこのブランチで rebuild/restart していないため、現行 production containers はまだ旧 logging の可能性がある。
-   - チェック済み: `make lint-all`、`make test-all` (`937 passed, 21 skipped`; dashboard `47 passed`)。
-   - 次の候補: 差分レビュー → commit / PR 作成。マージはユーザー明示判断まで行わない。
+0. **Cloud Logging は main マージ済み / production 段階反映済み**
+   - PR #71 `Add structured Cloud Logging pipeline` を 2026-05-31 に main へマージ済み (`1244060`)。
+   - Python サービスログは 1 行 JSON 化済み。`JSON_LOGS=false` で旧テキスト形式に戻せる。
+   - OpenTelemetry Collector は `observability` profile で production 起動済み。health check `127.0.0.1:13133` は OK。
+   - production では Collector 単体起動後、非発注系 (`feature-engine`, `strategy-rule`, `strategy-ai`, `aggregator`) → `feeder` → `gateway` / `oms-paper` / `oms-live` の順に rebuild/restart 済み。
+   - Collector は `service` と `event` を持つアプリ JSON だけを Cloud Logging `logName:"roboinvest"` へ送る。plain text / 他基盤ログは drop する。
+   - 検証済み: `make lint-all`、`make test-all` (`937 passed, 21 skipped`; dashboard `47 passed`)、Collector parse fixture OK、SA `entries:write` probe HTTP 200、production pre-open check `OK 60 / WARN 0 / NG 0`。
+   - 注意: このホストに `gcloud` がないため CLI での Cloud Logging read は未実施。SA は write 権限のみで read probe は 403。
+   - 次の候補: 翌営業日の market data で `jsonPayload.event="signal_rejected"` / `order_published` を Cloud Logging Console から確認する。
 
 1. **翌営業日寄り前に one-command pre-open check を再実行する**
    - kabu station / Windows proxy 起動後に `op run --env-file infra/env.production -- uv run python scripts/production-preopen-check.py --timeout 30` を実行する。
-   - 2026-05-31 は token cache 削除 + `feeder` / `oms-live` restart 後に `OK 60 / WARN 0 / NG 0` まで復帰済み。
+   - 2026-05-31 は Cloud Logging 反映後の全 service rebuild/restart 後に `OK 60 / WARN 0 / NG 0` を確認済み。
    - 明朝は `feeder` が `Up`、`feeder kabu` が `token 200` または `unregister/all 200`、`positions(live)` が空であることを再確認する。
 
 2. **AI 戦略の復旧を production で観測する**
