@@ -10,6 +10,7 @@ from .enums import (
     TradingStyle,
 )
 from .features import ProcessedFeatures
+from .logging import JsonFormatter, configure_logging, event_extra
 from .market import OrderBookSnapshot, PriceLevel, TickData
 from .order import OrderRequest, OrderResult
 from .risk import KillSwitchState, RiskCheck
@@ -17,6 +18,7 @@ from .signal import StrategySignal, UnifiedTradeSignal
 
 __all__ = [
     "Action",
+    "JsonFormatter",
     "KillSwitchState",
     "OrderBookSnapshot",
     "OrderRequest",
@@ -35,4 +37,6 @@ __all__ = [
     "TradeType",
     "TradingStyle",
     "UnifiedTradeSignal",
+    "configure_logging",
+    "event_extra",
 ]

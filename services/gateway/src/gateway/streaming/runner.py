@@ -43,6 +43,7 @@ from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
 from trade_contracts.enums import Action, TradeMode, TradingStyle
+from trade_contracts.logging import event_extra
 from trade_contracts.signal import UnifiedTradeSignal
 
 from .. import kill_switch, lot_calculator
@@ -274,6 +275,17 @@ class StreamRunner:
             order.quantity,
             order.trade_mode.value,
             signal.signal_id,
+            extra=event_extra(
+                "order_published",
+                trade_mode=order.trade_mode.value,
+                symbol=order.symbol,
+                order_id=str(order.order_id),
+                signal_id=str(signal.signal_id),
+                side=order.side.value,
+                quantity=order.quantity,
+                destination_topic=topic,
+                source=order.signal_source.value,
+            ),
         )
         return _Decision(approved=True, kill_switch_fired=False)
 
@@ -463,6 +475,17 @@ class StreamRunner:
             self._signal_age_seconds(signal=signal, now=self.wall_clock()),
             signal.strategy_signal_id_a,
             signal.strategy_signal_id_b,
+            extra=event_extra(
+                "signal_rejected",
+                trade_mode=trade_mode.value,
+                symbol=signal.symbol,
+                signal_id=str(signal.signal_id),
+                reason=reason,
+                source=signal.signal_source.value,
+                holding_type=signal.holding_type.value,
+                action=signal.action.value,
+                has_price=signal.price is not None,
+            ),
         )
 
 

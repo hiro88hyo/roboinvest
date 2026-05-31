@@ -10,6 +10,7 @@ import sys
 from decimal import Decimal
 from pathlib import Path
 
+from trade_contracts.logging import configure_logging
 from trade_contracts.risk import KillSwitchState
 
 from .backtest import iter_unified_signals, run_backtest, write_jsonl
@@ -121,10 +122,7 @@ def _run_backtest_cmd(
     capital: Decimal | None,
 ) -> int:
     settings = GatewaySettings()
-    logging.basicConfig(
-        level=settings.log_level,
-        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
-    )
+    configure_logging(service="gateway", level=settings.log_level)
 
     if not input_path.exists():
         logger.error("input not found: %s", input_path)
@@ -174,10 +172,7 @@ def _run_backtest_cmd(
 
 async def _run_stream_cmd(*, iterations: int | None) -> int:
     settings = GatewaySettings()
-    logging.basicConfig(
-        level=settings.log_level,
-        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
-    )
+    configure_logging(service="gateway", level=settings.log_level)
 
     if not settings.supabase_url or not settings.supabase_secret_key:
         logger.error("SUPABASE_URL / SUPABASE_SECRET_KEY が未設定です")

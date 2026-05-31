@@ -8,6 +8,8 @@ import logging
 import sys
 from pathlib import Path
 
+from trade_contracts.logging import configure_logging
+
 from .backtest import iter_signals, run_backtest, write_jsonl
 from .clients.pubsub import PubSubPublisher, PubSubSubscriber
 from .clients.supabase import SupabaseWriter
@@ -93,10 +95,7 @@ def _run_backtest_cmd(
     bucket_ms: int | None,
 ) -> int:
     settings = AggregatorSettings()
-    logging.basicConfig(
-        level=settings.log_level,
-        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
-    )
+    configure_logging(service="aggregator", level=settings.log_level)
 
     if not input_a.exists():
         logger.error("input-a not found: %s", input_a)
@@ -131,10 +130,7 @@ def _run_backtest_cmd(
 
 async def _run_stream_cmd(*, iterations: int | None) -> int:
     settings = AggregatorSettings()
-    logging.basicConfig(
-        level=settings.log_level,
-        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
-    )
+    configure_logging(service="aggregator", level=settings.log_level)
 
     if not settings.supabase_url or not settings.supabase_secret_key:
         logger.error("SUPABASE_URL / SUPABASE_SECRET_KEY が未設定です")

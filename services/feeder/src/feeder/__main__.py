@@ -16,6 +16,8 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from trade_contracts.logging import configure_logging
+
 from .clients.pubsub import PubSubPublisher
 from .config import FeederSettings
 from .streaming.runner import build_publish_sink, run_replay, run_stream
@@ -66,10 +68,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 async def _run_stream_cmd(*, iterations: int | None) -> int:
     settings = FeederSettings()
-    logging.basicConfig(
-        level=settings.log_level,
-        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
-    )
+    configure_logging(service="feeder", level=settings.log_level)
     try:
         results = await run_stream(settings, iterations=iterations)
     except RuntimeError as exc:
@@ -81,10 +80,7 @@ async def _run_stream_cmd(*, iterations: int | None) -> int:
 
 async def _run_replay_cmd(*, input_path: Path, sink_kind: str) -> int:
     settings = FeederSettings()
-    logging.basicConfig(
-        level=settings.log_level,
-        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
-    )
+    configure_logging(service="feeder", level=settings.log_level)
     if not input_path.exists():
         logger.error("replay input not found: %s", input_path)
         return 2

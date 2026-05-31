@@ -1,0 +1,9 @@
+name: trade-ai-observability-test
+
+services:
+  otel-collector-parse-fixture:
+    image: ${OTEL_COLLECTOR_IMAGE:-otel/opentelemetry-collector-contrib:0.153.0}
+    command: ["--config=/etc/otelcol/config.yml"]
+    volumes:
+      - ./otel-collector/config.parse-fixture.yml:/etc/otelcol/config.yml:ro
+      - ./otel-collector/fixtures:/fixtures:ro

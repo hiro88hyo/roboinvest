@@ -10,6 +10,8 @@ from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from trade_contracts.logging import configure_logging
+
 from .backtest import run_backtest, write_jsonl, write_parquet
 from .clients.pubsub import PubSubPublisher, PubSubSubscriber
 from .clients.supabase import SupabaseReader, SupabaseWriter
@@ -103,10 +105,7 @@ async def _run_backtest_cmd(
     output_dir: Path | None,
 ) -> int:
     settings = FeatureEngineSettings()
-    logging.basicConfig(
-        level=settings.log_level,
-        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
-    )
+    configure_logging(service="feature-engine", level=settings.log_level)
 
     if not settings.supabase_url or not settings.supabase_secret_key:
         logger.error("SUPABASE_URL / SUPABASE_SECRET_KEY が未設定です")
@@ -171,10 +170,7 @@ async def _run_stream_cmd(
     warm_flush_interval: float,
 ) -> int:
     settings = FeatureEngineSettings()
-    logging.basicConfig(
-        level=settings.log_level,
-        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
-    )
+    configure_logging(service="feature-engine", level=settings.log_level)
 
     if not settings.supabase_url or not settings.supabase_secret_key:
         logger.error("SUPABASE_URL / SUPABASE_SECRET_KEY が未設定です")

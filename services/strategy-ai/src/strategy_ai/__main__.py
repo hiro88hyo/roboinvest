@@ -7,6 +7,8 @@ import logging
 import sys
 from pathlib import Path
 
+from trade_contracts.logging import configure_logging
+
 from .backtest import iter_features, run_backtest, write_jsonl
 from .clients.pubsub import PubSubPublisher, PubSubSubscriber
 from .clients.supabase import SupabaseWriter
@@ -141,10 +143,7 @@ def _build_strategy(
 
 async def _run_backtest_cmd(args: argparse.Namespace) -> int:
     settings = StrategyAiSettings()
-    logging.basicConfig(
-        level=settings.log_level,
-        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
-    )
+    configure_logging(service="strategy-ai", level=settings.log_level)
 
     if not args.input_path.exists():
         logger.error("input not found: %s", args.input_path)
@@ -174,10 +173,7 @@ async def _run_backtest_cmd(args: argparse.Namespace) -> int:
 
 async def _run_stream_cmd(args: argparse.Namespace) -> int:
     settings = StrategyAiSettings()
-    logging.basicConfig(
-        level=settings.log_level,
-        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
-    )
+    configure_logging(service="strategy-ai", level=settings.log_level)
 
     if not settings.supabase_url or not settings.supabase_secret_key:
         logger.error("SUPABASE_URL / SUPABASE_SECRET_KEY が未設定です")

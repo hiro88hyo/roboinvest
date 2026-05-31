@@ -6,6 +6,8 @@ import logging
 import sys
 from pathlib import Path
 
+from trade_contracts.logging import configure_logging
+
 from .backtest import iter_features, run_backtest, write_jsonl
 from .clients.pubsub import PubSubPublisher, PubSubSubscriber
 from .clients.supabase import SupabaseWriter
@@ -60,10 +62,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _run_backtest_cmd(*, input_path: Path, output_path: Path | None) -> int:
     settings = StrategyRuleSettings()
-    logging.basicConfig(
-        level=settings.log_level,
-        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
-    )
+    configure_logging(service="strategy-rule", level=settings.log_level)
 
     register_builtin()
     strategies = build_strategies(settings)
@@ -96,10 +95,7 @@ def _run_backtest_cmd(*, input_path: Path, output_path: Path | None) -> int:
 
 async def _run_stream_cmd(*, iterations: int | None) -> int:
     settings = StrategyRuleSettings()
-    logging.basicConfig(
-        level=settings.log_level,
-        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
-    )
+    configure_logging(service="strategy-rule", level=settings.log_level)
 
     register_builtin()
     strategies = build_strategies(settings)

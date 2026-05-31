@@ -7,6 +7,8 @@ import sys
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
+from trade_contracts.logging import configure_logging
+
 from .config import ScannerSettings
 from .pipeline import EmptyWatchlistError, run_pipeline
 
@@ -36,10 +38,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 async def _amain(target_date: date) -> int:
     settings = ScannerSettings()
-    logging.basicConfig(
-        level=settings.log_level,
-        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
-    )
+    configure_logging(service="universe-scanner", level=settings.log_level)
     try:
         result = await run_pipeline(settings=settings, target_date=target_date)
     except EmptyWatchlistError as e:
