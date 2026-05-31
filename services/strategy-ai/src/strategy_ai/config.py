@@ -22,7 +22,7 @@ class StrategyAiSettings(BaseSettings):
 
     ai_min_interval_seconds: float = 300.0
     ai_temperature: Decimal = Decimal("0.0")
-    ai_max_output_tokens: int = 256
+    ai_max_output_tokens: int = 2048
 
     supabase_url: str = ""
     supabase_secret_key: str = ""

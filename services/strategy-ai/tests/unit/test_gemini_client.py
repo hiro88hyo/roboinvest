@@ -78,6 +78,7 @@ async def test_complete_sets_json_schema_and_disables_afc() -> None:
     config = fake_client.aio.models.kwargs["config"]
     assert config.response_mime_type == "application/json"
     assert config.response_schema is DecisionSchema
+    assert config.max_output_tokens == 2048
     assert config.automatic_function_calling is not None
     assert config.automatic_function_calling.disable is True
 

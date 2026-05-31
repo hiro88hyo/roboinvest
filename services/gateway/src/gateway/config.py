@@ -45,7 +45,7 @@ class GatewaySettings(BaseSettings):
         validation_alias="OMS_LIVE_MAX_QTY_PER_ORDER",
     )
     live_signal_max_age_seconds: float | None = 300.0
-    live_day_new_buy_start_time: str = "09:05"
+    live_day_new_buy_start_time: str = "09:15"
     live_day_new_buy_cutoff_time: str = "14:30"
     day_closeout_time: str = "14:50"
     day_closeout_timezone: str = "Asia/Tokyo"
