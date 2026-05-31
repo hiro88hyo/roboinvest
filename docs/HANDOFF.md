@@ -62,6 +62,13 @@
    - Cloud Logging Console へのログ到達はユーザーが確認済み。保存クエリ名と rollback 手順は [docs/runbook/cloud-logging.md](runbook/cloud-logging.md) を参照。
    - 次の候補: 2026-06-01 の market data で `jsonPayload.event="signal_rejected"` / `order_published` を Cloud Logging Console から確認する。
 
+0.1. **Cloud Monitoring を一次監視基盤にする方針**
+   - サービスメトリクス、トレードメトリクス、インフラメトリクスを Google Cloud Monitoring に集約する方針。
+   - Cloud Logging は詳細調査、Cloud Monitoring は数値化された状態・ダッシュボード・アラートに使う。
+   - Vercel Dashboard は Supabase Realtime ベースの取引オペレーション画面とし、監視基盤そのものにはしない。
+   - PnL / 建玉数 / 注文数などは、Supabase を正として `metrics-exporter` が定期集計し、Cloud Monitoring custom metrics に送る案が有力。
+   - 詳細メモは [docs/runbook/cloud-monitoring.md](runbook/cloud-monitoring.md) を参照。
+
 1. **翌営業日寄り前に one-command pre-open check を再実行する**
    - kabu station / Windows proxy 起動後に `op run --env-file infra/env.production -- uv run python scripts/production-preopen-check.py --timeout 30` を実行する。
    - 2026-05-31 は Cloud Logging 反映後の全 service rebuild/restart 後に `OK 60 / WARN 0 / NG 0` を確認済み。
