@@ -446,10 +446,33 @@ def check_feeder_logs(reporter: Reporter, args: argparse.Namespace) -> None:
         )
         return
     text = proc.stdout + proc.stderr
-    if "HTTP 502" in text or "Bad Gateway" in text:
-        reporter.emit("WARN" if args.kabu_offline else "NG", "kabu websocket", "HTTP 502")
-    elif "Traceback" in text:
-        reporter.emit("WARN" if args.kabu_offline else "NG", "feeder logs", "traceback present")
+    latest_status = ""
+    latest_detail = ""
+    for line in text.splitlines():
+        if "kabusapi/token" in line and '"HTTP/1.1 200 OK"' in line:
+            latest_status = "OK"
+            latest_detail = "token 200"
+        elif "kabusapi/unregister/all" in line and '"HTTP/1.1 200 OK"' in line:
+            latest_status = "OK"
+            latest_detail = "unregister/all 200"
+        elif "HTTP 502" in line or "Bad Gateway" in line:
+            latest_status = "BAD_GATEWAY"
+            latest_detail = "HTTP 502"
+        elif "HTTP/1.1 401" in line or "APIキー不一致" in line:
+            latest_status = "AUTH"
+            latest_detail = "HTTP 401"
+        elif "Traceback" in line:
+            latest_status = "TRACEBACK"
+            latest_detail = "traceback present"
+
+    if latest_status == "OK":
+        reporter.emit("OK", "feeder kabu", latest_detail)
+    elif latest_status == "BAD_GATEWAY":
+        reporter.emit("WARN" if args.kabu_offline else "NG", "kabu websocket", latest_detail)
+    elif latest_status == "AUTH":
+        reporter.emit("WARN" if args.kabu_offline else "NG", "kabu auth", latest_detail)
+    elif latest_status == "TRACEBACK":
+        reporter.emit("WARN" if args.kabu_offline else "NG", "feeder logs", latest_detail)
     else:
         reporter.emit("OK", "feeder logs", "no recent kabu error")
 
