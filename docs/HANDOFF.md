@@ -1,6 +1,6 @@
 # Handoff Memo (for coding AIs)
 
-最終更新: 2026-05-29 / HEAD: `main`
+最終更新: 2026-05-31 / HEAD: `main`
 
 このファイルは、次の coding AI が最初に読むための短い索引です。日次の長い運用ログはここに積まず、必要な詳細だけリンク先で確認してください。
 
@@ -19,14 +19,15 @@
 
 ## 2. Current State
 
-2026-05-29 時点の要点:
+2026-05-31 時点の要点:
 
 - 全 9 サービス + Dashboard は実装済み。
 - production compose / Cloud Supabase / managed Pub/Sub / Vercel Dashboard は一通り稼働済み。
 - Live trading は 2026-05-21 から 2026-05-29 まで運用実績あり。
 - 5月 live 成績は合計 `+46,766円`、ただし 2026-05-29 は `-45,540円` の大きな負け。
 - Paper trading は 2026-05-19 から 2026-05-21 まで確認済みで、合計 `+68,100円`。
-- 2026-05-29 に `AI_MAX_OUTPUT_TOKENS=256` が思考型 Gemini の JSON 出力を潰していた可能性を特定。`2048` で JSON 出力確認済み。
+- 2026-05-31 に production 反映済み: `AI_MAX_OUTPUT_TOKENS=2048`、live/day 新規 BUY 開始 `09:15 JST`、Aggregator source 別 threshold (`RULE_ONLY=0.5`, `AI_ONLY=0.5`, `CONSENSUS=0.3`)。
+- `scripts/production-preopen-check.py` を追加済み。kabu station 起動後、`--kabu-offline` なしで `OK 60 / WARN 0 / NG 0` を確認済み。
 
 長い時系列ログ:
 
@@ -50,28 +51,36 @@
 
 優先度が高い順:
 
-1. **AI 戦略の復旧を production で確認する**
-   - PR #66 で `AI_MAX_OUTPUT_TOKENS` のデフォルトを `2048` へ変更済み。
-   - production 再起動後、`strategy-ai` の JSON 生成、parser、signal publish、`strategy_logs` / `aggregator_logs` 反映を確認する。
+1. **翌営業日寄り前に one-command pre-open check を再実行する**
+   - kabu station / Windows proxy 起動後に `op run --env-file infra/env.production -- uv run python scripts/production-preopen-check.py --timeout 30` を実行する。
+   - 2026-05-31 は token cache 削除 + `feeder` / `oms-live` restart 後に `OK 60 / WARN 0 / NG 0` まで復帰済み。
+   - 明朝は `feeder` が `Up`、`feeder kabu` が `token 200` または `unregister/all 200`、`positions(live)` が空であることを再確認する。
 
-2. **寄り付き直後の live BUY guard を観測する**
+2. **AI 戦略の復旧を production で観測する**
+   - PR #66 で `AI_MAX_OUTPUT_TOKENS` のデフォルトを `2048` へ変更済み。
+   - production `strategy-ai` は再起動済みでコンテナ内 env も `2048` を確認済み。
+   - 翌営業日の実 market data で JSON 生成、parser、signal publish、`strategy_logs` / `aggregator_logs` 反映を確認する。
+
+3. **寄り付き直後の live BUY guard を観測する**
    - 5/29 の損失は 09:00-09:05 の急変動エントリーが大きい。
    - PR #66 で `gateway` の live/day 新規 BUY は 09:15 JST より前に `opening_live_buy` で reject するよう変更済み。
+   - production `gateway` は `LIVE_DAY_NEW_BUY_START_TIME=09:15` で再起動済み。
    - 数営業日、reject reason 分布、09:00-09:15 の missed profit / avoided loss を観測する。
 
-3. **Aggregator の source 別 confidence threshold を観測する**
-   - RULE / AI 単独シグナルは `0.5`、RULE+AI consensus は `0.3` を下限にする方針。
+4. **Aggregator の source 別 confidence threshold を観測する**
+   - PR #67 で RULE / AI 単独シグナルは `0.5`、RULE+AI consensus は `0.3` を下限に変更済み。
+   - production `aggregator` は `MIN_CONFIDENCE_RULE_ONLY=0.5`、`MIN_CONFIDENCE_AI_ONLY=0.5`、`MIN_CONFIDENCE_CONSENSUS=0.3` で再起動済み。
    - 弱い RULE 単独通過を減らしつつ、AI 復旧後の consensus は落としすぎない狙い。
 
-4. **保有時間制限を検討する**
+5. **保有時間制限を検討する**
    - 15分以内の決済が利益の大半を稼ぎ、60分超は勝率が落ちている。
    - 45分前後の time-based closeout を候補にする。
 
-5. **carry / closeout の堅牢化を続ける**
+6. **carry / closeout の堅牢化を続ける**
    - closeout 後に live position が残る場合は `CRITICAL` ログまで実装済み。
    - 通知系、Dashboard 明示表示、翌営業日 pre-open 手順の強化は継続課題。
 
-6. **損切り exit / Universe Scanner 改善は別実験に分ける**
+7. **損切り exit / Universe Scanner 改善は別実験に分ける**
    - price-based stop-loss exit は重要だが、live 自動 SELL に直結するため設計と paper / dry-run を挟む。
    - Universe Scanner の `min_volatility` / momentum penalty / `top_n` 可変化は、Gateway / Aggregator guard の効果観測後に扱う。
 
@@ -98,6 +107,8 @@ uv run python scripts/health-check.py
 Production 系の確認例:
 
 ```bash
+set -a && . infra/.op.service-account.env && set +a
+op run --env-file infra/env.production -- uv run python scripts/production-preopen-check.py --timeout 30
 op run --env-file infra/env.production -- uv run python scripts/health-check.py --check supabase --timeout 30
 op run --env-file infra/env.production -- docker compose --env-file infra/env.production -f infra/docker-compose.prod.yml ps
 ```
