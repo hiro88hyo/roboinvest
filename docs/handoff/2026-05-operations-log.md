@@ -431,3 +431,37 @@ memory ファイルは個人ホームディレクトリにあるため別 AI か
 - **持ち越し（Carryover）リスク**: 5031 の持ち越し事故（2日保有して本日売却、-17,600円）のようなリスクを防止するため、大引けクローズアウトの堅牢化とアラート機能、差金決済規制（同一銘柄の当日再購入ロック）の徹底が必要。
 
 これらの詳細は、アーティファクト `brain/f2b491b0-d9b8-43c8-bf17-0873c80e7b52/investment_review_may_2026.md` に記載している。
+
+### 2026-05-31 production pre-open automation / kabu recovery
+
+休日中に明営業日の寄り前確認を短縮するため、production pre-open check をスクリプト化した。
+
+- PR #66: `AI_MAX_OUTPUT_TOKENS=2048` と live/day 新規 BUY guard `09:15 JST` を main へ反映済み。
+- PR #67: Aggregator source 別 threshold (`RULE_ONLY=0.5`, `AI_ONLY=0.5`, `CONSENSUS=0.3`) を main へ反映済み。
+- production secret env `infra/env.production` はローカルで `LIVE_DAY_NEW_BUY_START_TIME=09:15` と source 別 threshold を更新済み。
+- `strategy-ai` / `aggregator` / `gateway` は production compose で rebuild/recreate 済み。コンテナ内 env は期待値どおり。
+- PR #68: `scripts/production-preopen-check.py` を追加し、`docs/runbook/live-go-checklist.md` に one-command pre-open check を記載した。
+- PR #69: feeder の古い 502/401 ログに引っ張られず、最新の kabu 関連ログで復帰判定するように修正した。
+
+実行確認:
+
+```bash
+set -a && . infra/.op.service-account.env && set +a
+op run --env-file infra/env.production -- \
+  uv run python scripts/production-preopen-check.py --timeout 30
+```
+
+結果:
+
+- kabu station 起動前は `--kabu-offline` で `OK 58 / WARN 2 / NG 0`。WARN は feeder restart と kabu 502 のみ。
+- kabu station 起動直後は feeder が `HTTP 502`、続いて `401 APIキー不一致`。古い shared token cache が残っていた可能性が高い。
+- `/var/lib/kabu/token_cache.json` を削除し、`feeder` を restart。続いて `oms-live` も stale token を持たないよう restart。
+- 復帰後は `feeder` が `POST /token 200`、`PUT /unregister/all 200` を記録。
+- 最終 pre-open check は `OK 60 / WARN 0 / NG 0`。`positions(live)` は空、managed Pub/Sub smoke publish/pull/ack も OK、Supabase 主要 9 tables も OK。
+
+明朝の残タスク:
+
+- kabu station / Windows proxy 起動後に `scripts/production-preopen-check.py --timeout 30` を再実行する。
+- `watchlist` が当日分に更新された後、feeder の `/register 200` と raw market data 流入を確認する。
+- 09:00-09:15 JST は `opening_live_buy` reject が出ることを確認する。
+- 09:15 以降は AI signal 復旧、Aggregator threshold の効き方、`kabu Code 21` / token retry の有無を観測する。
