@@ -103,10 +103,29 @@ def test_min_confidence_drops_single_source(signal_factory) -> None:  # type: ig
     assert aggregate([rule], config=_cfg(min_confidence=Decimal("0.3"))) is None
 
 
+def test_rule_only_uses_source_specific_threshold(signal_factory) -> None:  # type: ignore[no-untyped-def]
+    rule = signal_factory(source=SignalSource.RULE, action=Action.BUY, confidence=0.49)
+    assert aggregate([rule], config=_cfg()) is None
+
+
+def test_ai_only_uses_source_specific_threshold(signal_factory) -> None:  # type: ignore[no-untyped-def]
+    ai = signal_factory(source=SignalSource.AI, action=Action.BUY, confidence=0.49)
+    assert aggregate([ai], config=_cfg()) is None
+
+
 def test_min_confidence_drops_consensus(signal_factory) -> None:  # type: ignore[no-untyped-def]
     rule = signal_factory(source=SignalSource.RULE, action=Action.BUY, confidence=0.2)
     ai = signal_factory(source=SignalSource.AI, action=Action.BUY, confidence=0.2)
     assert aggregate([rule, ai], config=_cfg(min_confidence=Decimal("0.3"))) is None
+
+
+def test_consensus_uses_consensus_threshold(signal_factory) -> None:  # type: ignore[no-untyped-def]
+    rule = signal_factory(source=SignalSource.RULE, action=Action.BUY, confidence=0.4)
+    ai = signal_factory(source=SignalSource.AI, action=Action.BUY, confidence=0.4)
+    unified = aggregate([rule, ai], config=_cfg())
+    assert unified is not None
+    assert unified.signal_source is SignalSource.CONSENSUS
+    assert unified.confidence == pytest.approx(0.4)
 
 
 def test_min_confidence_drops_conflict_winner(signal_factory) -> None:  # type: ignore[no-untyped-def]

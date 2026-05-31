@@ -55,6 +55,11 @@ RSI_BUY_THRESHOLD=25.0
 RSI_SELL_THRESHOLD=75.0
 BOLLINGER_BREAKOUT_TOLERANCE=0.15
 
+# Aggregator thresholds. Keep consensus permissive while filtering weak single-source signals.
+MIN_CONFIDENCE_RULE_ONLY=0.5
+MIN_CONFIDENCE_AI_ONLY=0.5
+MIN_CONFIDENCE_CONSENSUS=0.3
+
 # AI strategy
 LLM_PROVIDER=gemini
 GEMINI_API_KEY=op://Trade AI/ai/GEMINI_API_KEY

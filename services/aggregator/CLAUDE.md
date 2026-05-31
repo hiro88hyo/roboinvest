@@ -93,7 +93,10 @@ services/aggregator/
   w_rule, w_ai = env SOURCE_WEIGHT_RULE, SOURCE_WEIGHT_AI (デフォルト 1.0 / 1.0)
   unified.confidence = (rule.confidence * w_rule + ai.confidence * w_ai) / (w_rule + w_ai)
   ```
-- `CONSENSUS_MIN_CONFIDENCE` (env、デフォルト 0.3) 未満は `None` を返す (= シグナル破棄)
+- source 別 confidence 下限未満は `None` を返す (= シグナル破棄)
+  - `MIN_CONFIDENCE_RULE_ONLY`: RULE 単独採用の下限（デフォルト 0.5）
+  - `MIN_CONFIDENCE_AI_ONLY`: AI 単独採用の下限（デフォルト 0.5）
+  - `MIN_CONFIDENCE_CONSENSUS`: RULE + AI 一致採用の下限（デフォルト 0.3）
 - 矛盾時フォールバック: `CONFLICT_POLICY` (`skip` | `prefer_rule` | `prefer_ai`、デフォルト `skip`)
 - `strategy_signal_id_a` / `strategy_signal_id_b` は入力 `StrategySignal.signal_id` をそのまま入れる
 - Aggregator は **新しい `signal_id` (UUIDv4) を自分で生成**し、`UnifiedTradeSignal.signal_id` に入れる
@@ -122,7 +125,8 @@ services/aggregator/
 - `PUBSUB_SUBSCRIPTION_SIGNALS_B`: `aggregator-strategy-signals-b`
 - `PUBSUB_TOPIC_TRADE_SIGNALS`: `trade-signals`
 - `SOURCE_WEIGHT_RULE` / `SOURCE_WEIGHT_AI`: 合議の重み（デフォルト各 1.0）
-- `CONSENSUS_MIN_CONFIDENCE`: 統合後 confidence 下限（デフォルト 0.3）
+- `CONSENSUS_MIN_CONFIDENCE`: 旧来の統合後 confidence 下限（デフォルト 0.3、互換用）
+- `MIN_CONFIDENCE_RULE_ONLY` / `MIN_CONFIDENCE_AI_ONLY` / `MIN_CONFIDENCE_CONSENSUS`: source 別 confidence 下限（デフォルト 0.5 / 0.5 / 0.3）
 - `CONFLICT_POLICY`: `skip` / `prefer_rule` / `prefer_ai`（デフォルト `skip`）
 - `PAIRING_BUCKET_MS` / `PAIRING_WINDOW_MS`: バケット粒度・ウィンドウ長（デフォルト 1000ms）
 - `DEFAULT_HOLDING_TYPE`: Phase 1/2 の固定値 (`day` | `swing`、デフォルト `day`)
