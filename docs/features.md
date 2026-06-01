@@ -1,6 +1,6 @@
 # Feature Ledger
 
-最終更新: 2026-05-23
+最終更新: 2026-06-01
 
 この文書は、将来の実装候補・改善候補を feature として整理し、要件検討の入口をそろえるための台帳。
 実装仕様書ではなく、何を独立した feature とみなすかを揃えることを目的とする。
@@ -27,6 +27,7 @@
 | アプリログの stdout/stderr 統一 | Draft | ファイル依存を減らし、実行基盤の標準収集に寄せる | `trade-ai-logs:/app/logs` volume はあるが、現状は実質未活用 |
 | 構造化 JSON ログ対応 | Idea | 検索・相関分析・メトリクス化をしやすくする | 共通キー候補: `service`, `env`, `symbol`, `signal_id`, `order_id` |
 | ログベースメトリクス / Alerting | Idea | 例外・注文失敗・Pub/Sub 停滞などを監視する | Cloud Logging 導入後に具体化する |
+| Discord 通知 | Draft | 監視 alert と約定・決済イベントを Discord に通知する | [features/discord-notifications.md](features/discord-notifications.md)。監視系と取引系で topic / Function を分ける |
 | 監査ログと運用ログの責務分離 | Draft | DB に残す業務記録と、運用観測用ログを分離する | `strategy_logs` / `aggregator_logs` は監査寄り、アプリ例外は運用ログ寄り |
 
 ### B. Production Platform
