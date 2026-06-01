@@ -1,7 +1,7 @@
 # Decision Draft: Cloud Logging の収集方式
 
 作成日: 2026-05-23
-対象: [docs/feature-cloud-logging.md](feature-cloud-logging.md)
+対象: [index.md](index.md)
 Status: Draft
 
 ## 結論案
@@ -112,7 +112,7 @@ Python services
 4. `trade-ai-logs` volume をいつ撤去するか
 
 Collector が Docker ログを読む具体方式は、別メモ
-[feature-cloud-logging-decision-013-collector-docker-log-details.md](feature-cloud-logging-decision-013-collector-docker-log-details.md)
+[decision-013-collector-docker-log-details.md](decision-013-collector-docker-log-details.md)
 で詰める。
 
 ## 残課題

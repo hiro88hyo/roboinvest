@@ -2,7 +2,7 @@
 
 作成日: 2026-05-23
 Status: Draft
-台帳: [docs/features.md](features.md)
+台帳: [docs/features.md](../../features.md)
 
 ## 1. 背景
 

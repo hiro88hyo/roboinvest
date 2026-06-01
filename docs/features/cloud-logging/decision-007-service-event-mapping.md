@@ -1,7 +1,7 @@
 # Decision Draft: サービスごとのイベント割り当て
 
 作成日: 2026-05-24
-対象: [docs/feature-cloud-logging.md](feature-cloud-logging.md)
+対象: [index.md](index.md)
 Status: Draft
 
 ## 方針

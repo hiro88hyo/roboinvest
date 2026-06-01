@@ -1,7 +1,7 @@
 # Decision Draft: Python logging の JSON formatter 方針
 
 作成日: 2026-05-24
-対象: [docs/feature-cloud-logging.md](feature-cloud-logging.md)
+対象: [index.md](index.md)
 Status: Draft
 
 ## 結論案

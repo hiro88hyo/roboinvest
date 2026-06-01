@@ -23,7 +23,7 @@
 
 | 中項目 | Status | 目的 | メモ |
 |---|---|---|---|
-| Cloud Logging へのログ集約 | Draft | サービスログの収集先を GCP に統一する | 現状の Python サービスはほぼ `stdout/stderr` 出力なので移行相性はよい |
+| Cloud Logging へのログ集約 | Draft | サービスログの収集先を GCP に統一する | [features/cloud-logging/index.md](features/cloud-logging/index.md)。現状の Python サービスはほぼ `stdout/stderr` 出力なので移行相性はよい |
 | アプリログの stdout/stderr 統一 | Draft | ファイル依存を減らし、実行基盤の標準収集に寄せる | `trade-ai-logs:/app/logs` volume はあるが、現状は実質未活用 |
 | 構造化 JSON ログ対応 | Idea | 検索・相関分析・メトリクス化をしやすくする | 共通キー候補: `service`, `env`, `symbol`, `signal_id`, `order_id` |
 | ログベースメトリクス / Alerting | Idea | 例外・注文失敗・Pub/Sub 停滞などを監視する | Cloud Logging 導入後に具体化する |
@@ -79,7 +79,7 @@
 
 優先して要件を詰める候補:
 
-1. Cloud Logging へのログ集約
+1. [Cloud Logging へのログ集約](features/cloud-logging/index.md)
 2. 監査ログと運用ログの責務分離
 3. live 注文フローの安定化
 4. stale signal / backlog signal 対策
