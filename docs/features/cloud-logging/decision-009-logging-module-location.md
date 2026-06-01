@@ -1,8 +1,8 @@
-# Decision Draft: 共通 logging モジュールの置き場所
+# Decision Note: 共通 logging モジュールの置き場所
 
 作成日: 2026-05-24
 対象: [index.md](index.md)
-Status: Draft
+Status: Accepted
 
 ## 結論案
 

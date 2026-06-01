@@ -1,8 +1,8 @@
-# Decision Draft: `environment` フィールドの取得元
+# Decision Note: `environment` フィールドの取得元
 
 作成日: 2026-05-24
 対象: [index.md](index.md)
-Status: Draft
+Status: Accepted
 
 ## 結論案
 

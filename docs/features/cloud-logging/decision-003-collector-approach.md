@@ -1,8 +1,8 @@
-# Decision Draft: Cloud Logging の収集方式
+# Decision Note: Cloud Logging の収集方式
 
 作成日: 2026-05-23
 対象: [index.md](index.md)
-Status: Draft
+Status: Accepted
 
 ## 結論案
 
@@ -117,10 +117,10 @@ Collector が Docker ログを読む具体方式は、別メモ
 
 ## 残課題
 
-- `LAN host + docker compose` 上での Collector 入力方式の詳細
-- DB 監査ログと運用ログの責務分離
-- マスキングルール
-- JSON 構造化の粒度
+- 解消済み: `LAN host + docker compose` 上での Collector 入力方式の詳細は [decision-013-collector-docker-log-details.md](decision-013-collector-docker-log-details.md) で整理し、production compose に実装した。
+- 解消済み: JSON 構造化の粒度は [decision-005-json-granularity.md](decision-005-json-granularity.md) で整理した。
+- 残り: DB 監査ログと運用ログの責務分離はイベントごとに継続判断する。
+- 残り: マスキングルールは必要に応じて具体化する。
 
 ## 現時点の推奨順位
 

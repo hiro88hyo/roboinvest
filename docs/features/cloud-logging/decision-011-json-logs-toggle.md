@@ -1,8 +1,8 @@
-# Decision Draft: `json_logs` の切り替え
+# Decision Note: `json_logs` の切り替え
 
 作成日: 2026-05-24
 対象: [index.md](index.md)
-Status: Draft
+Status: Accepted
 
 ## 結論案
 
@@ -21,8 +21,9 @@ Status: Draft
 - `JSON_LOGS=true` または未設定: 1 行 1 JSON
 - `JSON_LOGS=false`: 従来に近いプレーンテキスト形式
 
-`JSON_LOGS=false` は切り戻し用であり、この場合も Collector はログを捨てない。
-アプリ JSON として parse できない行はプレーンテキストの `message` として Cloud Logging に送る。
+`JSON_LOGS=false` はローカル調査や一時切り戻し用とする。
+production の Collector 実装では `service` と `event` を持つアプリ JSON だけを Cloud Logging へ送るため、
+プレーンテキストログは原則として Cloud Logging 転送対象にしない。
 
 ## 適用方針
 
@@ -70,3 +71,4 @@ Status: Draft
 - 共通 logging 初期化関数は `json_logs: bool | None = None` を受けられるようにし、未指定時は `JSON_LOGS` を読む
 - bool 変換は `true/false`, `1/0`, `yes/no` 程度を受ける
 - プレーンログ時も `service` 名と基本フォーマットはできるだけ維持する
+- production Collector は plain text / 他基盤ログを drop し、アプリ JSON のみ Cloud Logging へ転送する

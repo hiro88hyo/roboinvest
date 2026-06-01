@@ -1,15 +1,15 @@
-# Decision Draft: Collector による Docker ログ収集の詳細
+# Decision Note: Collector による Docker ログ収集の詳細
 
 作成日: 2026-05-24
 対象: [index.md](index.md)
-Status: Draft
+Status: Accepted
 
 ## 結論案
 
 - Collector は Docker が保持する container log file を読む方式を第一候補とする
 - 入力は OpenTelemetry Collector の `filelog` receiver を第一候補とする
 - Docker の JSON envelope を parse した後、`log` フィールド内のアプリ JSON をさらに parse する
-- parse できないログは捨てず、プレーンテキストの `message` として Cloud Logging へ送る
+- production 実装では `service` と `event` を持つアプリ JSON だけを Cloud Logging へ送る
 
 ## 収集対象
 
@@ -64,17 +64,17 @@ Docker の標準 json-file log driver では、各行はおおむね以下の形
 
 ## 検証条件
 
-実装前に以下を確認する。
+以下を確認する。
 
 - `JSON_LOGS=true` のログが Cloud Logging で `jsonPayload.event` などとして検索できる
-- `JSON_LOGS=false` のプレーンログが捨てられず Cloud Logging に届く
+- production では `service` と `event` を持つアプリ JSON だけが Cloud Logging に届く
 - `severity=ERROR` のログが Cloud Logging の severity filter で検索できる
 - Collector 再起動後にログの大きな重複や欠落がない
 - Cloud Logging API への一時送信失敗時に retry される
 
 ## 残課題
 
-- 実際の Collector config
-- Docker log rotation の具体値
-- Collector 自身の health check と運用確認手順
-- ログ量が増えた場合の除外フィルタと保持期間
+- 解消済み: 実際の Collector config は production compose の `observability` profile に追加済み。
+- 解消済み: Collector 自身の health check と運用確認手順は [../../runbook/cloud-logging.md](../../runbook/cloud-logging.md) に整理済み。
+- 残り: Docker log rotation の具体値。
+- 残り: ログ量が増えた場合の除外フィルタと保持期間。

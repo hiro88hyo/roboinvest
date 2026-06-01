@@ -2,6 +2,7 @@
 
 作成日: 2026-05-24
 対象: [index.md](index.md)
+Status: Accepted
 
 ## 決定
 

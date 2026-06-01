@@ -1,8 +1,8 @@
-# Decision Draft: Python logging の JSON formatter 方針
+# Decision Note: Python logging の JSON formatter 方針
 
 作成日: 2026-05-24
 対象: [index.md](index.md)
-Status: Draft
+Status: Accepted
 
 ## 結論案
 
@@ -98,7 +98,7 @@ Status: Draft
 
 ## 残課題
 
-- 共通 logging モジュールをどこに置くか
-- `environment` の値をどの設定から取るか
-- `json_logs` の ON/OFF を環境変数化するか
-- Collector 側で自動付与する属性との重複をどこまで許すか
+- 解消済み: 共通 logging モジュールは `trade_contracts.logging` に置く。
+- 解消済み: `environment` は `APP_ENV`, `ENVIRONMENT`, `NODE_ENV` の順に読み、未指定時は `dev` とする。
+- 解消済み: `JSON_LOGS` で JSON / plain text を切り替える。
+- 解消済み: アプリ側属性と Collector 側属性の境界は [decision-012-attribute-boundary.md](decision-012-attribute-boundary.md) で整理した。

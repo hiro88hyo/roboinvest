@@ -1,7 +1,7 @@
 # Feature Memo: Cloud Logging へのログ集約
 
 作成日: 2026-05-23
-Status: Draft
+Status: Implemented with Follow-ups
 台帳: [docs/features.md](../../features.md)
 
 ## 1. 背景
@@ -96,23 +96,32 @@ Status: Draft
 
 ## 12. 未決事項
 
-- Collector が Docker container logs を読む具体方式
-- Collector 側での Docker JSON envelope / アプリ JSON の parse 方針
-- Cloud Logging 上の `timestamp` / `severity` / `jsonPayload` / `resource` への mapping
-- どのイベントを DB とログの両方に残すか
-- PII / secret / 注文関連のマスキングルールをどうするか
-- Collector 側の送信失敗時の retry / queue / drop 方針
-- ログ量、保持期間、除外フィルタ、コスト上限の方針
+### 解消済み
+
+- Collector が Docker container logs を読む具体方式。
+- Collector 側での Docker JSON envelope / アプリ JSON の parse 方針。
+- Cloud Logging 上の `timestamp` / `severity` / `jsonPayload` / `resource` への mapping。
+- Cloud Logging への認証を Collector 側へ集約する方針。
+- `JSON_LOGS=false` による一時切り戻し方針。
+
+### 残課題
+
+- 全サービス・全重要イベントの構造化は段階実装中。
+- OMS Live fill / closeout など、一部ログはまだ `event="log"` が多く、`order_filled` / `closeout_completed` / `broker_order_failed` などへ分ける余地がある。
+- どのイベントを DB とログの両方に残すかは、イベントごとに継続判断する。
+- PII / secret / 注文関連のマスキングルールは、必要に応じて具体化する。
+- ログ量、保持期間、除外フィルタ、コスト上限は別途運用判断する。
+- Alerting / Monitoring / 通知は別 feature として扱う。
 
 ## 13. 段階的な進め方
 
-1. 現状のログ出力点を棚卸しする
-2. Cloud Logging に載せる対象サービスと基盤を決める
-3. `stdout/stderr` 統一と `trade-ai-logs` volume の扱いを決める
-4. Collector の入力、parse、Cloud Logging mapping を小さく検証する
-5. 主要イベントだけ構造化フィールドを付与する
-6. runbook に確認手順と障害時の見る場所を書く
-7. 必要なら次段でログベースメトリクス / Alerting を分離して設計する
+1. Done: 現状のログ出力点を棚卸しする。
+2. Done: Cloud Logging に載せる対象サービスと基盤を決める。
+3. Done: `stdout/stderr` 統一と `trade-ai-logs` volume の扱いを決める。
+4. Done: Collector の入力、parse、Cloud Logging mapping を小さく検証する。
+5. Partial: 主要イベントだけ構造化フィールドを付与する。
+6. Done: runbook に確認手順と障害時の見る場所を書く。
+7. Done: ログベースメトリクス / Alerting を別 feature として分離する。
 
 ## 14. 実装メモ
 
