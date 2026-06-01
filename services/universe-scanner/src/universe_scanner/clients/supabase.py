@@ -57,7 +57,7 @@ class SupabaseWriter:
     ) -> None:
         """`rows` を `table` に upsert する。`on_conflict` は PK/UNIQUE カラムを CSV で指定。"""
         if not rows:
-            logger.info("supabase upsert skipped: table=%s rows=0", table)
+            logger.debug("supabase upsert skipped: table=%s rows=0", table)
             return
         assert self._client is not None
         for index, chunk in enumerate(_chunked(rows, self.upsert_chunk_size), start=1):
@@ -76,7 +76,7 @@ class SupabaseWriter:
                 raise SupabaseError(
                     f"upsert failed: table={table} status={resp.status_code} body={resp.text[:200]}"
                 )
-            logger.info(
+            logger.debug(
                 "supabase upsert: table=%s chunk=%d rows=%d",
                 table,
                 index,
@@ -105,7 +105,7 @@ class SupabaseWriter:
             raise SupabaseError(
                 f"delete failed: table={table} status={resp.status_code} body={resp.text[:200]}"
             )
-        logger.info("supabase delete: table=%s filters=%s", table, filters)
+        logger.debug("supabase delete: table=%s filters=%s", table, filters)
 
 
 def _chunked(rows: list[dict[str, Any]], chunk_size: int) -> list[list[dict[str, Any]]]:

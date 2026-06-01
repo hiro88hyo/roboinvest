@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -272,6 +273,49 @@ async def test_buy_with_no_existing_position_publishes_to_live_orders() -> None:
     assert json.loads(pubsub.acked[0].content.decode()) == {"ackIds": ["a1"]}
 
 
+async def test_order_publish_summary_logs_counts(caplog: Any) -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response(
+                [
+                    (
+                        "a1",
+                        _unified_payload(
+                            action=Action.BUY,
+                            price="2500",
+                            stop_loss_price="2400",
+                        ),
+                    )
+                ]
+            )
+        ]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trade_mode="live")],
+        positions_quantity_rows=[[]],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        runner.publish_summary_log_interval_seconds = 0.0
+        return await runner.run_once()
+
+    caplog.set_level(logging.INFO, logger="gateway.streaming.runner")
+
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+
+    assert stats.approved == 1
+    summaries = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "order_publish_summary"
+    ]
+    assert len(summaries) == 1
+    assert summaries[0].total == 1
+    assert summaries[0].trade_mode_counts == {"live": 1}
+    assert summaries[0].side_counts == {"BUY": 1}
+    assert summaries[0].destination_topic_counts == {LIVE_TOPIC: 1}
+
+
 async def test_live_buy_quantity_is_capped_by_oms_limit() -> None:
     pubsub = _PubSubRouter(
         pull_batches=[
@@ -405,6 +449,34 @@ async def test_sell_without_position_is_rejected() -> None:
     assert stats.rejected == 1
     assert pubsub.published == []
     assert stats.acked == 1
+
+
+async def test_reject_summary_logs_reason_counts(caplog: Any) -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[_pull_response([("a1", _unified_payload(action=Action.SELL))])]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trade_mode="live")],
+        positions_quantity_rows=[[]],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        runner.reject_summary_log_interval_seconds = 0.0
+        return await runner.run_once()
+
+    caplog.set_level(logging.INFO, logger="gateway.streaming.runner")
+
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+
+    assert stats.rejected == 1
+    summaries = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "signal_reject_summary"
+    ]
+    assert len(summaries) == 1
+    assert summaries[0].total == 1
+    assert summaries[0].reason_counts == {"no_position_for_sell": 1}
 
 
 async def test_buy_with_existing_long_is_rejected_without_price_lookup() -> None:

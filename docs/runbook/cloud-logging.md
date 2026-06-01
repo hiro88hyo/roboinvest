@@ -20,6 +20,7 @@ OpenTelemetry Collector 経由で Cloud Logging へ送るための手順。
 ```bash
 APP_ENV=production
 JSON_LOGS=true
+MARKET_DATA_STALE_WARN_SECONDS=180
 OTEL_COLLECTOR_IMAGE=otel/opentelemetry-collector-contrib:0.153.0
 GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/gcp-pubsub-sa.json
 GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH=/dev/shm/roboinvest/gcp-pubsub-sa.json
@@ -126,6 +127,75 @@ jsonPayload.event="order_published"
 jsonPayload.destination_topic=~"orders"
 ```
 
+OMS Live 約定:
+
+```text
+logName:"roboinvest"
+jsonPayload.service="oms-live"
+jsonPayload.event="order_filled"
+```
+
+kabu API 発注 reject:
+
+```text
+logName:"roboinvest"
+jsonPayload.event="broker_order_rejected"
+```
+
+可能額不足など broker message で絞る場合:
+
+```text
+logName:"roboinvest"
+jsonPayload.event="broker_order_rejected"
+jsonPayload.broker_message:"可能額"
+```
+
+Closeout 完了:
+
+```text
+logName:"roboinvest"
+jsonPayload.service="oms-live"
+jsonPayload.event="closeout_completed"
+```
+
+Market data 集計:
+
+```text
+logName:"roboinvest"
+jsonPayload.event="market_data_summary"
+```
+
+Market data stale 警告:
+
+```text
+logName:"roboinvest"
+jsonPayload.event="market_data_stale"
+severity>=WARNING
+```
+
+Market data 復旧:
+
+```text
+logName:"roboinvest"
+jsonPayload.event="market_data_recovered"
+```
+
+Closeout invariant:
+
+```text
+logName:"roboinvest"
+jsonPayload.service="oms-live"
+jsonPayload.event="closeout_invariant"
+```
+
+Gateway reject 集計:
+
+```text
+logName:"roboinvest"
+jsonPayload.service="gateway"
+jsonPayload.event="signal_reject_summary"
+```
+
 ## 6. Saved Queries
 
 Cloud Logging Console には以下の名前で保存しておく。
@@ -134,7 +204,15 @@ Cloud Logging Console には以下の名前で保存しておく。
 | --- | --- |
 | `roboinvest-errors` | `logName:"roboinvest"`<br>`severity>=ERROR` |
 | `roboinvest-gateway-rejections` | `logName:"roboinvest"`<br>`jsonPayload.service="gateway"`<br>`jsonPayload.event="signal_rejected"` |
+| `roboinvest-gateway-reject-summary` | `logName:"roboinvest"`<br>`jsonPayload.service="gateway"`<br>`jsonPayload.event="signal_reject_summary"` |
 | `roboinvest-order-published` | `logName:"roboinvest"`<br>`jsonPayload.event="order_published"` |
+| `roboinvest-order-filled` | `logName:"roboinvest"`<br>`jsonPayload.service="oms-live"`<br>`jsonPayload.event="order_filled"` |
+| `roboinvest-broker-rejected` | `logName:"roboinvest"`<br>`jsonPayload.event="broker_order_rejected"` |
+| `roboinvest-closeout-completed` | `logName:"roboinvest"`<br>`jsonPayload.service="oms-live"`<br>`jsonPayload.event="closeout_completed"` |
+| `roboinvest-closeout-invariant` | `logName:"roboinvest"`<br>`jsonPayload.service="oms-live"`<br>`jsonPayload.event="closeout_invariant"` |
+| `roboinvest-market-data-summary` | `logName:"roboinvest"`<br>`jsonPayload.event="market_data_summary"` |
+| `roboinvest-market-data-stale` | `logName:"roboinvest"`<br>`jsonPayload.event="market_data_stale"`<br>`severity>=WARNING` |
+| `roboinvest-market-data-recovered` | `logName:"roboinvest"`<br>`jsonPayload.event="market_data_recovered"` |
 | `roboinvest-oms-live-warnings` | `logName:"roboinvest"`<br>`jsonPayload.service="oms-live"`<br>`severity>=WARNING` |
 | `roboinvest-opening-buy-guard` | `logName:"roboinvest"`<br>`jsonPayload.service="gateway"`<br>`jsonPayload.event="signal_rejected"`<br>`jsonPayload.reason="opening_live_buy"` |
 

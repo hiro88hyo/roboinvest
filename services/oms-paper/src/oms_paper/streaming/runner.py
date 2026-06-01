@@ -29,9 +29,11 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
 from trade_contracts.enums import OrderType, Side, SignalSource, TradeMode, TradingStyle
+from trade_contracts.logging import event_extra
 from trade_contracts.market import OrderBookSnapshot
 from trade_contracts.order import OrderRequest
 
@@ -45,6 +47,7 @@ from ..position_updater import apply_fill, build_fill_record
 from ..swing_monitor import evaluate_swing_exit
 
 logger = logging.getLogger(__name__)
+JST = ZoneInfo("Asia/Tokyo")
 
 Sleep = Callable[[float], Awaitable[None]]
 MonotonicClock = Callable[[], float]
@@ -93,6 +96,17 @@ class StreamRunner:
     swing_position_cache: dict[str, PaperPosition] = field(default_factory=dict)
     swing_cache_ttl_seconds: float = 30.0
     swing_cache_loaded_at: float | None = None
+    summary_log_interval_seconds: float = 60.0
+    _summary_started_at: float | None = field(default=None, init=False)
+    _summary_books_pulled: int = field(default=0, init=False)
+    _summary_books_applied: int = field(default=0, init=False)
+    _summary_orders_pulled: int = field(default=0, init=False)
+    _summary_parse_errors: int = field(default=0, init=False)
+    _summary_filled: int = field(default=0, init=False)
+    _summary_no_fills: int = field(default=0, init=False)
+    _summary_write_errors: int = field(default=0, init=False)
+    _latest_book_timestamp: datetime | None = field(default=None, init=False)
+    _market_data_is_stale: bool = field(default=False, init=False)
 
     async def run(self, *, iterations: int | None = None) -> list[BatchStats]:
         results: list[BatchStats] = []
@@ -172,7 +186,7 @@ class StreamRunner:
                 self.settings.pubsub_subscription_paper_orders, order_acks
             )
 
-        return BatchStats(
+        stats = BatchStats(
             books_pulled=len(books_msgs),
             books_applied=books_applied,
             orders_pulled=len(order_msgs),
@@ -187,6 +201,8 @@ class StreamRunner:
             swing_no_fills=swing_no_fills,
             swing_write_errors=swing_write_errors,
         )
+        self._record_summary(stats)
+        return stats
 
     async def run_closeout(self) -> CloseoutStats:
         """14:50 JST cron から呼ばれる前提の paper 全建玉強制決済。
@@ -307,9 +323,105 @@ class StreamRunner:
             if book is None:
                 continue
             self.book_cache[book.symbol] = book
+            self._latest_book_timestamp = book.timestamp
             updated.add(book.symbol)
             applied += 1
         return applied, acks, updated
+
+    def _record_summary(self, stats: BatchStats) -> None:
+        now = self.monotonic()
+        if self._summary_started_at is None:
+            self._summary_started_at = now
+        self._summary_books_pulled += stats.books_pulled
+        self._summary_books_applied += stats.books_applied
+        self._summary_orders_pulled += stats.orders_pulled
+        self._summary_parse_errors += stats.parse_errors
+        self._summary_filled += stats.filled
+        self._summary_no_fills += stats.no_fills
+        self._summary_write_errors += stats.write_errors
+
+        elapsed = now - self._summary_started_at
+        if elapsed < self.summary_log_interval_seconds:
+            return
+
+        latest_book_age_seconds = None
+        if self._latest_book_timestamp is not None:
+            age = self.wall_clock() - self._latest_book_timestamp
+            latest_book_age_seconds = max(0.0, age.total_seconds())
+
+        logger.info(
+            "market data summary: books_pulled=%d books_applied=%d orders=%d "
+            "filled=%d no_fills=%d parse_errors=%d write_errors=%d "
+            "latest_book_age_seconds=%s",
+            self._summary_books_pulled,
+            self._summary_books_applied,
+            self._summary_orders_pulled,
+            self._summary_filled,
+            self._summary_no_fills,
+            self._summary_parse_errors,
+            self._summary_write_errors,
+            latest_book_age_seconds,
+            extra=event_extra(
+                "market_data_summary",
+                books_pulled=self._summary_books_pulled,
+                books_applied=self._summary_books_applied,
+                orders_pulled=self._summary_orders_pulled,
+                filled=self._summary_filled,
+                no_fills=self._summary_no_fills,
+                parse_errors=self._summary_parse_errors,
+                write_errors=self._summary_write_errors,
+                latest_book_age_seconds=latest_book_age_seconds,
+                window_seconds=round(elapsed, 3),
+            ),
+        )
+        self._log_stale_market_data_if_needed(latest_book_age_seconds)
+        self._summary_started_at = now
+        self._summary_books_pulled = 0
+        self._summary_books_applied = 0
+        self._summary_orders_pulled = 0
+        self._summary_parse_errors = 0
+        self._summary_filled = 0
+        self._summary_no_fills = 0
+        self._summary_write_errors = 0
+
+    def _log_stale_market_data_if_needed(self, latest_book_age_seconds: float | None) -> None:
+        threshold = self.settings.market_data_stale_warn_seconds
+        if threshold is None or threshold <= 0 or latest_book_age_seconds is None:
+            return
+        now = self.wall_clock()
+        if not _is_jpx_continuous_auction_session(now):
+            return
+        is_stale = latest_book_age_seconds > threshold
+        if not is_stale:
+            if self._market_data_is_stale:
+                logger.info(
+                    "market data recovered: latest_book_age_seconds=%.3f threshold=%.3f",
+                    latest_book_age_seconds,
+                    threshold,
+                    extra=event_extra(
+                        "market_data_recovered",
+                        latest_book_age_seconds=latest_book_age_seconds,
+                        threshold_seconds=threshold,
+                        kind="order_book",
+                    ),
+                )
+            self._market_data_is_stale = False
+            return
+
+        if self._market_data_is_stale:
+            return
+        self._market_data_is_stale = True
+        logger.warning(
+            "market data stale: latest_book_age_seconds=%.3f threshold=%.3f",
+            latest_book_age_seconds,
+            threshold,
+            extra=event_extra(
+                "market_data_stale",
+                latest_book_age_seconds=latest_book_age_seconds,
+                threshold_seconds=threshold,
+                kind="order_book",
+            ),
+        )
 
     async def _ensure_swing_cache_fresh(self) -> None:
         """``swing_cache_ttl_seconds`` を超過していたら ``list_paper_positions`` で再取得。
@@ -616,6 +728,14 @@ def _parse_book(msg: PulledMessage) -> OrderBookSnapshot | None:
     except ValidationError:
         logger.exception("book schema invalid: message_id=%s", msg.message_id)
         return None
+
+
+def _is_jpx_continuous_auction_session(now: datetime) -> bool:
+    local = now.astimezone(JST)
+    if local.weekday() >= 5:
+        return False
+    minutes = local.hour * 60 + local.minute
+    return (9 * 60 <= minutes < 11 * 60 + 30) or (12 * 60 + 30 <= minutes < 15 * 60 + 30)
 
 
 # 公開エイリアス。runner を直接インスタンス化するテスト向け。

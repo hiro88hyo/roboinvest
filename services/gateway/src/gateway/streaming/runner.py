@@ -34,6 +34,7 @@ import asyncio
 import json
 import logging
 import time
+from collections import Counter
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -87,6 +88,14 @@ class StreamRunner:
     sleep: Sleep = field(default=asyncio.sleep)
     monotonic: MonotonicClock = field(default=time.monotonic)
     wall_clock: WallClock = field(default_factory=lambda: lambda: datetime.now(UTC))
+    reject_summary_log_interval_seconds: float = 60.0
+    publish_summary_log_interval_seconds: float = 60.0
+    _reject_summary_started_at: float | None = field(default=None, init=False)
+    _reject_summary_reasons: Counter[str] = field(default_factory=Counter, init=False)
+    _publish_summary_started_at: float | None = field(default=None, init=False)
+    _publish_summary_trade_modes: Counter[str] = field(default_factory=Counter, init=False)
+    _publish_summary_sides: Counter[str] = field(default_factory=Counter, init=False)
+    _publish_summary_topics: Counter[str] = field(default_factory=Counter, init=False)
 
     async def run(self, *, iterations: int | None = None) -> list[BatchStats]:
         results: list[BatchStats] = []
@@ -267,6 +276,11 @@ class StreamRunner:
                 "trade_mode": order.trade_mode.value,
                 "signal_source": order.signal_source.value,
             },
+        )
+        self._record_publish_summary(
+            trade_mode=order.trade_mode.value,
+            side=order.side.value,
+            destination_topic=topic,
         )
         logger.info(
             "order approved: symbol=%s side=%s qty=%d trade_mode=%s signal_id=%s",
@@ -459,6 +473,7 @@ class StreamRunner:
         return capped
 
     def _log_reject(self, signal: UnifiedTradeSignal, reason: str, trade_mode: TradeMode) -> None:
+        self._record_reject_summary(reason=reason)
         logger.info(
             (
                 "signal rejected: symbol=%s action=%s reason=%s trade_mode=%s "
@@ -487,6 +502,69 @@ class StreamRunner:
                 has_price=signal.price is not None,
             ),
         )
+
+    def _record_reject_summary(self, *, reason: str) -> None:
+        now = self.monotonic()
+        if self._reject_summary_started_at is None:
+            self._reject_summary_started_at = now
+        self._reject_summary_reasons[reason] += 1
+
+        elapsed = now - self._reject_summary_started_at
+        if elapsed < self.reject_summary_log_interval_seconds:
+            return
+
+        reason_counts = dict(sorted(self._reject_summary_reasons.items()))
+        logger.info(
+            "signal reject summary: total=%d reasons=%s",
+            sum(reason_counts.values()),
+            reason_counts,
+            extra=event_extra(
+                "signal_reject_summary",
+                total=sum(reason_counts.values()),
+                reason_counts=reason_counts,
+                window_seconds=round(elapsed, 3),
+            ),
+        )
+        self._reject_summary_started_at = now
+        self._reject_summary_reasons.clear()
+
+    def _record_publish_summary(
+        self, *, trade_mode: str, side: str, destination_topic: str
+    ) -> None:
+        now = self.monotonic()
+        if self._publish_summary_started_at is None:
+            self._publish_summary_started_at = now
+        self._publish_summary_trade_modes[trade_mode] += 1
+        self._publish_summary_sides[side] += 1
+        self._publish_summary_topics[destination_topic] += 1
+
+        elapsed = now - self._publish_summary_started_at
+        if elapsed < self.publish_summary_log_interval_seconds:
+            return
+
+        trade_mode_counts = dict(sorted(self._publish_summary_trade_modes.items()))
+        side_counts = dict(sorted(self._publish_summary_sides.items()))
+        destination_topic_counts = dict(sorted(self._publish_summary_topics.items()))
+        total = sum(trade_mode_counts.values())
+        logger.info(
+            "order publish summary: total=%d trade_modes=%s sides=%s topics=%s",
+            total,
+            trade_mode_counts,
+            side_counts,
+            destination_topic_counts,
+            extra=event_extra(
+                "order_publish_summary",
+                total=total,
+                trade_mode_counts=trade_mode_counts,
+                side_counts=side_counts,
+                destination_topic_counts=destination_topic_counts,
+                window_seconds=round(elapsed, 3),
+            ),
+        )
+        self._publish_summary_started_at = now
+        self._publish_summary_trade_modes.clear()
+        self._publish_summary_sides.clear()
+        self._publish_summary_topics.clear()
 
 
 @dataclass(frozen=True, slots=True)

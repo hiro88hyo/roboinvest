@@ -31,6 +31,7 @@ class OmsPaperSettings(BaseSettings):
     pubsub_subscription_raw_market_data: str = "oms-paper-raw-market-data"
     pubsub_pull_max_messages: int = 100
     pubsub_ack_deadline_seconds: int = 30
+    market_data_stale_warn_seconds: float | None = 180.0
 
     day_closeout_time: str = "14:50"
     day_closeout_timezone: str = "Asia/Tokyo"

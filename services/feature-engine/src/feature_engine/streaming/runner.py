@@ -3,11 +3,15 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
+from trade_contracts.logging import event_extra
 from trade_contracts.market import OrderBookSnapshot, TickData
 
 from feature_engine.clients.pubsub import PubSubPublisher, PubSubSubscriber, PulledMessage
@@ -19,8 +23,11 @@ from feature_engine.streaming.position_updater import update_positions_for_tick
 from feature_engine.streaming.session import TickDecision, TickSession
 
 logger = logging.getLogger(__name__)
+JST = ZoneInfo("Asia/Tokyo")
 
 Sleep = Callable[[float], Awaitable[None]]
+MonotonicClock = Callable[[], float]
+WallClock = Callable[[], datetime]
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +70,18 @@ class StreamRunner:
     warm_writer: WarmWriter | None = None
     idle_backoff_seconds: float = 1.0
     sleep: Sleep = field(default=asyncio.sleep)
+    monotonic: MonotonicClock = field(default=time.monotonic)
+    wall_clock: WallClock = field(default_factory=lambda: lambda: datetime.now(UTC))
+    summary_log_interval_seconds: float = 60.0
+    _summary_started_at: float | None = field(default=None, init=False)
+    _summary_received: int = field(default=0, init=False)
+    _summary_ticks_processed: int = field(default=0, init=False)
+    _summary_books_processed: int = field(default=0, init=False)
+    _summary_ticks_dropped: int = field(default=0, init=False)
+    _summary_parse_errors: int = field(default=0, init=False)
+    _summary_process_errors: int = field(default=0, init=False)
+    _latest_tick_timestamp: datetime | None = field(default=None, init=False)
+    _market_data_is_stale: bool = field(default=False, init=False)
 
     async def run(self, *, iterations: int | None = None) -> list[BatchStats]:
         """pull ループ本体。`iterations=None` で無限ループ、値指定でテスト向けに有限化。
@@ -114,7 +133,7 @@ class StreamRunner:
         if ack_ids:
             await self.subscriber.acknowledge(self.settings.pubsub_subscription_raw, ack_ids)
 
-        return BatchStats(
+        stats = BatchStats(
             received=len(messages),
             ticks_processed=ticks_processed,
             books_processed=books_processed,
@@ -123,6 +142,8 @@ class StreamRunner:
             parse_errors=parse_errors,
             process_errors=process_errors,
         )
+        self._record_summary(stats)
+        return stats
 
     async def _handle_message(self, msg: PulledMessage) -> str:
         parsed = _parse_payload(msg.data)
@@ -143,6 +164,7 @@ class StreamRunner:
         decision = self.tick_session.observe(tick)
         if decision != TickDecision.ACCEPT:
             return "tick_dropped"
+        self._latest_tick_timestamp = tick.timestamp
 
         if self.warm_writer is not None:
             try:
@@ -163,6 +185,96 @@ class StreamRunner:
         await update_positions_for_tick(tick, reader=self.reader, writer=self.writer)
         return "tick_processed"
 
+    def _record_summary(self, stats: BatchStats) -> None:
+        now = self.monotonic()
+        if self._summary_started_at is None:
+            self._summary_started_at = now
+        self._summary_received += stats.received
+        self._summary_ticks_processed += stats.ticks_processed
+        self._summary_books_processed += stats.books_processed
+        self._summary_ticks_dropped += stats.ticks_dropped
+        self._summary_parse_errors += stats.parse_errors
+        self._summary_process_errors += stats.process_errors
+
+        elapsed = now - self._summary_started_at
+        if elapsed < self.summary_log_interval_seconds:
+            return
+
+        latest_tick_age_seconds = None
+        if self._latest_tick_timestamp is not None:
+            age = self.wall_clock() - self._latest_tick_timestamp
+            latest_tick_age_seconds = max(0.0, age.total_seconds())
+
+        logger.info(
+            "market data summary: received=%d ticks=%d books=%d dropped=%d "
+            "parse_errors=%d process_errors=%d latest_tick_age_seconds=%s",
+            self._summary_received,
+            self._summary_ticks_processed,
+            self._summary_books_processed,
+            self._summary_ticks_dropped,
+            self._summary_parse_errors,
+            self._summary_process_errors,
+            latest_tick_age_seconds,
+            extra=event_extra(
+                "market_data_summary",
+                received=self._summary_received,
+                ticks_processed=self._summary_ticks_processed,
+                books_processed=self._summary_books_processed,
+                ticks_dropped=self._summary_ticks_dropped,
+                parse_errors=self._summary_parse_errors,
+                process_errors=self._summary_process_errors,
+                latest_tick_age_seconds=latest_tick_age_seconds,
+                window_seconds=round(elapsed, 3),
+            ),
+        )
+        self._log_stale_market_data_if_needed(latest_tick_age_seconds)
+        self._summary_started_at = now
+        self._summary_received = 0
+        self._summary_ticks_processed = 0
+        self._summary_books_processed = 0
+        self._summary_ticks_dropped = 0
+        self._summary_parse_errors = 0
+        self._summary_process_errors = 0
+
+    def _log_stale_market_data_if_needed(self, latest_tick_age_seconds: float | None) -> None:
+        threshold = self.settings.market_data_stale_warn_seconds
+        if threshold is None or threshold <= 0 or latest_tick_age_seconds is None:
+            return
+        now = self.wall_clock()
+        if not _is_jpx_continuous_auction_session(now):
+            return
+        is_stale = latest_tick_age_seconds > threshold
+        if not is_stale:
+            if self._market_data_is_stale:
+                logger.info(
+                    "market data recovered: latest_tick_age_seconds=%.3f threshold=%.3f",
+                    latest_tick_age_seconds,
+                    threshold,
+                    extra=event_extra(
+                        "market_data_recovered",
+                        latest_tick_age_seconds=latest_tick_age_seconds,
+                        threshold_seconds=threshold,
+                        kind="tick",
+                    ),
+                )
+            self._market_data_is_stale = False
+            return
+
+        if self._market_data_is_stale:
+            return
+        self._market_data_is_stale = True
+        logger.warning(
+            "market data stale: latest_tick_age_seconds=%.3f threshold=%.3f",
+            latest_tick_age_seconds,
+            threshold,
+            extra=event_extra(
+                "market_data_stale",
+                latest_tick_age_seconds=latest_tick_age_seconds,
+                threshold_seconds=threshold,
+                kind="tick",
+            ),
+        )
+
 
 def _parse_payload(data: bytes) -> TickData | OrderBookSnapshot | None:
     """ペイロード (JSON bytes) を型判別してパースする。
@@ -182,3 +294,11 @@ def _parse_payload(data: bytes) -> TickData | OrderBookSnapshot | None:
         return TickData.model_validate(payload)
     except ValidationError:
         return None
+
+
+def _is_jpx_continuous_auction_session(now: datetime) -> bool:
+    local = now.astimezone(JST)
+    if local.weekday() >= 5:
+        return False
+    minutes = local.hour * 60 + local.minute
+    return (9 * 60 <= minutes < 11 * 60 + 30) or (12 * 60 + 30 <= minutes < 15 * 60 + 30)

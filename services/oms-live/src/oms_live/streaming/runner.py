@@ -29,6 +29,7 @@ from typing import Any, cast
 
 from pydantic import ValidationError
 from trade_contracts.enums import TradingStyle
+from trade_contracts.logging import event_extra
 from trade_contracts.order import OrderRequest
 
 from ..clients.pubsub import PubSubError, PubSubSubscriber, PulledMessage
@@ -175,6 +176,14 @@ class StreamRunner:
                 order.order_id,
                 order.symbol,
                 order.unified_signal_id,
+                extra=event_extra(
+                    "order_skipped_duplicate",
+                    order_id=str(order.order_id),
+                    symbol=order.symbol,
+                    unified_signal_id=str(order.unified_signal_id)
+                    if order.unified_signal_id
+                    else None,
+                ),
             )
             return "skipped_duplicate"
 
@@ -186,6 +195,13 @@ class StreamRunner:
                 order.order_id,
                 order.symbol,
                 sorted(allowed),
+                extra=event_extra(
+                    "order_safety_rejected",
+                    reason="allowed_symbols",
+                    order_id=str(order.order_id),
+                    symbol=order.symbol,
+                    allowed_symbols=sorted(allowed),
+                ),
             )
             return "safety_rejected"
         max_qty = self.settings.oms_live_max_qty_per_order
@@ -196,6 +212,14 @@ class StreamRunner:
                 order.symbol,
                 order.quantity,
                 max_qty,
+                extra=event_extra(
+                    "order_safety_rejected",
+                    reason="max_qty_per_order",
+                    order_id=str(order.order_id),
+                    symbol=order.symbol,
+                    quantity=order.quantity,
+                    max_quantity=max_qty,
+                ),
             )
             return "safety_rejected"
         if self.settings.oms_live_dry_run:
@@ -205,6 +229,13 @@ class StreamRunner:
                 order.symbol,
                 order.side.value,
                 order.quantity,
+                extra=event_extra(
+                    "order_dry_run_skipped",
+                    order_id=str(order.order_id),
+                    symbol=order.symbol,
+                    side=order.side.value,
+                    quantity=order.quantity,
+                ),
             )
             return "dry_run_skipped"
 
@@ -225,6 +256,15 @@ class StreamRunner:
                 "kabu sendorder failed: symbol=%s signal_id=%s",
                 order.symbol,
                 order.unified_signal_id,
+                extra=event_extra(
+                    "broker_order_failed",
+                    phase="sendorder",
+                    symbol=order.symbol,
+                    unified_signal_id=str(order.unified_signal_id)
+                    if order.unified_signal_id
+                    else None,
+                    order_id=str(order.order_id),
+                ),
             )
             return "no_fill"
         if int(send_resp.get("Result", -1)) != 0:
@@ -233,6 +273,17 @@ class StreamRunner:
                 order.symbol,
                 order.unified_signal_id,
                 send_resp,
+                extra=event_extra(
+                    "broker_order_rejected",
+                    symbol=order.symbol,
+                    unified_signal_id=str(order.unified_signal_id)
+                    if order.unified_signal_id
+                    else None,
+                    order_id=str(order.order_id),
+                    broker_result=send_resp.get("Result"),
+                    broker_code=send_resp.get("Code"),
+                    broker_message=send_resp.get("Message"),
+                ),
             )
             return "no_fill"
         kabu_order_id = str(send_resp.get("OrderId") or "")
@@ -241,6 +292,15 @@ class StreamRunner:
                 "kabu sendorder returned empty OrderId: symbol=%s body=%s",
                 order.symbol,
                 send_resp,
+                extra=event_extra(
+                    "broker_order_failed",
+                    phase="sendorder_empty_order_id",
+                    symbol=order.symbol,
+                    order_id=str(order.order_id),
+                    broker_result=send_resp.get("Result"),
+                    broker_code=send_resp.get("Code"),
+                    broker_message=send_resp.get("Message"),
+                ),
             )
             return "no_fill"
 
@@ -256,6 +316,16 @@ class StreamRunner:
                 order.symbol,
                 fill.reason,
                 order.unified_signal_id,
+                extra=event_extra(
+                    "order_no_fill",
+                    symbol=order.symbol,
+                    reason=fill.reason,
+                    unified_signal_id=str(order.unified_signal_id)
+                    if order.unified_signal_id
+                    else None,
+                    order_id=str(order.order_id),
+                    broker_order_id=kabu_order_id,
+                ),
             )
             return "no_fill"
 
@@ -275,6 +345,16 @@ class StreamRunner:
                 order.symbol,
                 update.error,
                 order.unified_signal_id,
+                extra=event_extra(
+                    "order_apply_fill_failed",
+                    symbol=order.symbol,
+                    reason=update.error,
+                    unified_signal_id=str(order.unified_signal_id)
+                    if order.unified_signal_id
+                    else None,
+                    order_id=str(order.order_id),
+                    broker_order_id=kabu_order_id,
+                ),
             )
             return "no_fill"
 
@@ -299,6 +379,17 @@ class StreamRunner:
             record.price,
             update.realized_pnl,
             order.unified_signal_id,
+            extra=event_extra(
+                "order_filled",
+                symbol=record.symbol,
+                side=record.side.value,
+                quantity=record.quantity,
+                price=str(record.price),
+                realized_pnl=str(update.realized_pnl) if update.realized_pnl is not None else None,
+                unified_signal_id=str(order.unified_signal_id) if order.unified_signal_id else None,
+                order_id=str(order.order_id),
+                broker_order_id=kabu_order_id,
+            ),
         )
         return "filled"
 
@@ -338,6 +429,12 @@ class StreamRunner:
                     kabu_order_id,
                     fill.reason,
                     _summarize_order_state(state),
+                    extra=event_extra(
+                        "broker_order_terminal",
+                        broker_order_id=kabu_order_id,
+                        reason=fill.reason,
+                        order_state=_summarize_order_state(state),
+                    ),
                 )
                 return fill
             if self.monotonic() >= deadline:
@@ -346,6 +443,12 @@ class StreamRunner:
                     kabu_order_id,
                     timeout,
                     _summarize_order_state(state),
+                    extra=event_extra(
+                        "broker_order_timeout",
+                        broker_order_id=kabu_order_id,
+                        timeout_seconds=timeout,
+                        order_state=_summarize_order_state(state),
+                    ),
                 )
                 return None
             if interval > 0:
@@ -400,7 +503,10 @@ class StreamRunner:
           (持ち越し決済を阻害しないため)
         """
         if self.settings.oms_live_dry_run:
-            logger.info("closeout: skipped (DRY_RUN)")
+            logger.info(
+                "closeout: skipped (DRY_RUN)",
+                extra=event_extra("closeout_skipped", reason="dry_run"),
+            )
             return CloseoutStats(
                 triggered=False,
                 skipped_reason="dry_run",
@@ -412,7 +518,10 @@ class StreamRunner:
         try:
             state = await self.supabase.read_system_status()
         except SupabaseError:
-            logger.exception("closeout: read_system_status failed")
+            logger.exception(
+                "closeout: read_system_status failed",
+                extra=event_extra("closeout_skipped", reason="read_system_status_failed"),
+            )
             return CloseoutStats(
                 triggered=False,
                 skipped_reason="read_system_status_failed",
@@ -422,7 +531,15 @@ class StreamRunner:
                 write_errors=0,
             )
         if state.trading_style is not TradingStyle.DAY:
-            logger.info("closeout: skipped (trading_style=%s)", state.trading_style.value)
+            logger.info(
+                "closeout: skipped (trading_style=%s)",
+                state.trading_style.value,
+                extra=event_extra(
+                    "closeout_skipped",
+                    reason=f"trading_style_{state.trading_style.value}",
+                    trading_style=state.trading_style.value,
+                ),
+            )
             return CloseoutStats(
                 triggered=False,
                 skipped_reason=f"trading_style_{state.trading_style.value}",
@@ -433,6 +550,11 @@ class StreamRunner:
             )
 
         positions = await self.supabase.list_live_positions()
+        logger.info(
+            "closeout: started positions=%d",
+            len(positions),
+            extra=event_extra("closeout_started", positions_seen=len(positions)),
+        )
         precheck = await self._check_closeout_position_drift(
             supabase_positions=positions,
             phase="precheck",
@@ -447,7 +569,14 @@ class StreamRunner:
                 write_errors=0,
             )
         if precheck.has_drift:
-            logger.critical("closeout: blocked by position drift before sendorder")
+            logger.critical(
+                "closeout: blocked by position drift before sendorder",
+                extra=event_extra(
+                    "closeout_blocked",
+                    reason="position_drift",
+                    positions_seen=len(positions),
+                ),
+            )
             return CloseoutStats(
                 triggered=False,
                 skipped_reason="position_drift",
@@ -457,6 +586,17 @@ class StreamRunner:
                 write_errors=0,
             )
         if not positions:
+            logger.info(
+                "closeout: completed positions=0 closed=0 no_fills=0 write_errors=0",
+                extra=event_extra(
+                    "closeout_completed",
+                    positions_seen=0,
+                    closed=0,
+                    no_fills=0,
+                    write_errors=0,
+                    realized_pnl=str(Decimal("0")),
+                ),
+            )
             return CloseoutStats(
                 triggered=True,
                 skipped_reason=None,
@@ -486,13 +626,19 @@ class StreamRunner:
         for order, outcome in zip(orders, outcomes, strict=True):
             if isinstance(outcome, SupabaseError):
                 logger.exception(
-                    "closeout: write failure symbol=%s", order.symbol, exc_info=outcome
+                    "closeout: write failure symbol=%s",
+                    order.symbol,
+                    exc_info=outcome,
+                    extra=event_extra("closeout_write_failed", symbol=order.symbol),
                 )
                 write_errors += 1
                 continue
             if isinstance(outcome, Exception):
                 logger.exception(
-                    "closeout: unexpected failure symbol=%s", order.symbol, exc_info=outcome
+                    "closeout: unexpected failure symbol=%s",
+                    order.symbol,
+                    exc_info=outcome,
+                    extra=event_extra("closeout_order_failed", symbol=order.symbol),
                 )
                 no_fills += 1
                 continue
@@ -507,10 +653,33 @@ class StreamRunner:
             try:
                 await self.supabase.add_realized_pnl(realized_pnl_total)
             except SupabaseError:
-                logger.exception("closeout: aggregate pnl update failed")
+                logger.exception(
+                    "closeout: aggregate pnl update failed",
+                    extra=event_extra(
+                        "closeout_write_failed",
+                        phase="aggregate_pnl",
+                        realized_pnl=str(realized_pnl_total),
+                    ),
+                )
                 write_errors += 1
 
         await self._log_closeout_remaining_positions()
+        logger.info(
+            "closeout: completed positions=%d closed=%d no_fills=%d write_errors=%d pnl=%s",
+            len(positions),
+            closed,
+            no_fills,
+            write_errors,
+            realized_pnl_total,
+            extra=event_extra(
+                "closeout_completed",
+                positions_seen=len(positions),
+                closed=closed,
+                no_fills=no_fills,
+                write_errors=write_errors,
+                realized_pnl=str(realized_pnl_total),
+            ),
+        )
 
         return CloseoutStats(
             triggered=True,
@@ -535,28 +704,54 @@ class StreamRunner:
             )
             kabu_positions = parse_kabu_positions(kabu_rows)
         except KabuApiError:
-            logger.exception("closeout: %s failed reading kabu positions", phase)
+            logger.exception(
+                "closeout: %s failed reading kabu positions",
+                phase,
+                extra=event_extra("closeout_position_check_failed", phase=phase),
+            )
             return None
 
         actions = compute_position_diff(kabu_positions, supabase_positions)
         if not actions.has_drift:
-            logger.info("closeout: %s positions matched symbols=%s", phase, list(actions.matched))
+            logger.info(
+                "closeout: %s positions matched symbols=%s",
+                phase,
+                list(actions.matched),
+                extra=event_extra(
+                    "closeout_position_check_matched",
+                    phase=phase,
+                    matched_symbols=list(actions.matched),
+                ),
+            )
             return actions
 
+        supabase_summary = [f"{p.symbol}:{p.quantity}@{p.entry_price}" for p in supabase_positions]
+        kabu_summary = [f"{p.symbol}:{p.quantity}@{p.average_price}" for p in kabu_positions]
+        mismatch_summary = [
+            f"{m.symbol}:kabu={m.kabu_quantity}@{m.kabu_average_price},"
+            f"supabase={m.supabase_quantity}@{m.supabase_entry_price}"
+            for m in actions.quantity_mismatches
+        ]
         logger.critical(
             "closeout: %s position drift supabase=%s kabu=%s matched=%s "
             "to_import=%s mismatches=%s supabase_orphans=%s",
             phase,
-            [f"{p.symbol}:{p.quantity}@{p.entry_price}" for p in supabase_positions],
-            [f"{p.symbol}:{p.quantity}@{p.average_price}" for p in kabu_positions],
+            supabase_summary,
+            kabu_summary,
             list(actions.matched),
             [f"{p.symbol}:{p.quantity}@{p.average_price}" for p in actions.to_import],
-            [
-                f"{m.symbol}:kabu={m.kabu_quantity}@{m.kabu_average_price},"
-                f"supabase={m.supabase_quantity}@{m.supabase_entry_price}"
-                for m in actions.quantity_mismatches
-            ],
+            mismatch_summary,
             [f"{p.symbol}:{p.quantity}@{p.entry_price}" for p in actions.supabase_orphans],
+            extra=event_extra(
+                "closeout_position_drift",
+                phase=phase,
+                supabase_positions=supabase_summary,
+                kabu_positions=kabu_summary,
+                matched_symbols=list(actions.matched),
+                import_symbols=[p.symbol for p in actions.to_import],
+                mismatch_symbols=[m.symbol for m in actions.quantity_mismatches],
+                supabase_orphan_symbols=[p.symbol for p in actions.supabase_orphans],
+            ),
         )
         return actions
 
@@ -565,21 +760,48 @@ class StreamRunner:
         try:
             supabase_positions = await self.supabase.list_live_positions()
         except SupabaseError:
-            logger.exception("closeout: post-check failed reading Supabase positions")
+            logger.exception(
+                "closeout: post-check failed reading Supabase positions",
+                extra=event_extra("closeout_position_check_failed", phase="postcheck_supabase"),
+            )
             return
-        if not supabase_positions:
-            try:
-                kabu_rows = await self._call_kabu_with_auth_retry(
-                    lambda: self.kabu.list_positions(product=1),
-                    operation="list_positions closeout postcheck",
-                )
-                kabu_positions = parse_kabu_positions(kabu_rows)
-            except KabuApiError:
-                logger.exception("closeout: postcheck failed reading kabu positions")
-                return
-            if not kabu_positions:
-                logger.info("closeout: postcheck clear (no live positions remain)")
-                return
+        try:
+            kabu_rows = await self._call_kabu_with_auth_retry(
+                lambda: self.kabu.list_positions(product=1),
+                operation="list_positions closeout postcheck",
+            )
+            kabu_positions = parse_kabu_positions(kabu_rows)
+        except KabuApiError:
+            logger.exception(
+                "closeout: postcheck failed reading kabu positions",
+                extra=event_extra("closeout_position_check_failed", phase="postcheck_kabu"),
+            )
+            return
+
+        ok = not supabase_positions and not kabu_positions
+        supabase_symbols = [p.symbol for p in supabase_positions]
+        kabu_symbols = [p.symbol for p in kabu_positions]
+        log = logger.info if ok else logger.critical
+        log(
+            "closeout invariant: ok=%s supabase_remaining=%d kabu_remaining=%d",
+            ok,
+            len(supabase_positions),
+            len(kabu_positions),
+            extra=event_extra(
+                "closeout_invariant",
+                ok=ok,
+                supabase_remaining=len(supabase_positions),
+                kabu_remaining=len(kabu_positions),
+                supabase_symbols=supabase_symbols,
+                kabu_symbols=kabu_symbols,
+            ),
+        )
+        if ok:
+            logger.info(
+                "closeout: postcheck clear (no live positions remain)",
+                extra=event_extra("closeout_postcheck_clear"),
+            )
+            return
         await self._check_closeout_position_drift(
             supabase_positions=supabase_positions,
             phase="postcheck",
@@ -605,11 +827,31 @@ class StreamRunner:
                 operation=f"sendorder symbol={order.symbol}",
             )
         except KabuApiError:
-            logger.exception("closeout sendorder failed: symbol=%s", order.symbol)
+            logger.exception(
+                "closeout sendorder failed: symbol=%s",
+                order.symbol,
+                extra=event_extra(
+                    "broker_order_failed",
+                    phase="closeout_sendorder",
+                    symbol=order.symbol,
+                    order_id=str(order.order_id),
+                ),
+            )
             return "no_fill", Decimal("0")
         if int(send_resp.get("Result", -1)) != 0:
             logger.warning(
-                "closeout sendorder rejected: symbol=%s body=%s", order.symbol, send_resp
+                "closeout sendorder rejected: symbol=%s body=%s",
+                order.symbol,
+                send_resp,
+                extra=event_extra(
+                    "broker_order_rejected",
+                    phase="closeout",
+                    symbol=order.symbol,
+                    order_id=str(order.order_id),
+                    broker_result=send_resp.get("Result"),
+                    broker_code=send_resp.get("Code"),
+                    broker_message=send_resp.get("Message"),
+                ),
             )
             return "no_fill", Decimal("0")
         kabu_order_id = str(send_resp.get("OrderId") or "")
@@ -636,7 +878,17 @@ class StreamRunner:
         )
         if update.error is not None:
             logger.warning(
-                "closeout apply_fill error: symbol=%s error=%s", order.symbol, update.error
+                "closeout apply_fill error: symbol=%s error=%s",
+                order.symbol,
+                update.error,
+                extra=event_extra(
+                    "order_apply_fill_failed",
+                    phase="closeout",
+                    symbol=order.symbol,
+                    reason=update.error,
+                    order_id=str(order.order_id),
+                    broker_order_id=kabu_order_id,
+                ),
             )
             return "no_fill", Decimal("0")
         record = build_fill_record(order=order, fill=fill, executed_at=order.created_at)
@@ -645,6 +897,23 @@ class StreamRunner:
 
         await self.supabase.insert_trade_live(record)
         await self._write_position_change(existing=existing, update=update, symbol=order.symbol)
+        logger.info(
+            "closeout order filled: symbol=%s qty=%d price=%s pnl=%s",
+            record.symbol,
+            record.quantity,
+            record.price,
+            update.realized_pnl,
+            extra=event_extra(
+                "closeout_order_filled",
+                symbol=record.symbol,
+                side=record.side.value,
+                quantity=record.quantity,
+                price=str(record.price),
+                realized_pnl=str(update.realized_pnl) if update.realized_pnl is not None else None,
+                order_id=str(order.order_id),
+                broker_order_id=kabu_order_id,
+            ),
+        )
         return "filled", update.realized_pnl or Decimal("0")
 
     async def _call_kabu_with_auth_retry(

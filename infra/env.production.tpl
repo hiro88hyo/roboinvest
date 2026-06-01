@@ -8,6 +8,7 @@ TZ=Asia/Tokyo
 APP_ENV=production
 JSON_LOGS=true
 LOG_LEVEL=INFO
+MARKET_DATA_STALE_WARN_SECONDS=180
 
 # Managed GCP Pub/Sub. Do not set PUBSUB_EMULATOR_HOST in production.
 PUBSUB_PROJECT_ID=op://Trade AI/production/PUBSUB_PROJECT_ID

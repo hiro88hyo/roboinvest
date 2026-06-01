@@ -334,4 +334,4 @@ class SupabaseClient:
                 f"update failed: table=system_status status={resp.status_code} "
                 f"body={resp.text[:200]}"
             )
-        logger.info("supabase update: table=system_status is_trading_allowed=false")
+        logger.debug("supabase update: table=system_status is_trading_allowed=false")

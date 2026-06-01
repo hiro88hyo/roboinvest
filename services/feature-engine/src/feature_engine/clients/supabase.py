@@ -177,7 +177,7 @@ class SupabaseReader:
             if len(page) < _PAGE_SIZE:
                 break
             offset += _PAGE_SIZE
-        logger.info("supabase select: path=%s rows=%d", path, len(collected))
+        logger.debug("supabase select: path=%s rows=%d", path, len(collected))
         return collected
 
 
@@ -240,7 +240,7 @@ class SupabaseWriter:
     ) -> None:
         """`rows` を `table` に upsert する。`on_conflict` は PK/UNIQUE カラムを CSV で指定。"""
         if not rows:
-            logger.info("supabase upsert skipped: table=%s rows=0", table)
+            logger.debug("supabase upsert skipped: table=%s rows=0", table)
             return
         assert self._client is not None
         resp = await self._client.post(
@@ -257,7 +257,7 @@ class SupabaseWriter:
             raise SupabaseError(
                 f"upsert failed: table={table} status={resp.status_code} body={resp.text[:200]}"
             )
-        logger.info("supabase upsert: table=%s rows=%d", table, len(rows))
+        logger.debug("supabase upsert: table=%s rows=%d", table, len(rows))
 
     @retry(
         reraise=True,
@@ -288,4 +288,4 @@ class SupabaseWriter:
             raise SupabaseError(
                 f"patch failed: table={table} status={resp.status_code} body={resp.text[:200]}"
             )
-        logger.info("supabase patch: table=%s filters=%s", table, filters)
+        logger.debug("supabase patch: table=%s filters=%s", table, filters)

@@ -437,14 +437,20 @@ async def test_run_once_sell_full_close_calls_add_realized_pnl_and_delete() -> N
     }
 
 
-async def test_run_once_sendorder_rejected_records_no_fill_and_acks() -> None:
+async def test_run_once_sendorder_rejected_records_no_fill_and_acks(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     order = make_order_request(side=Side.BUY, quantity=100)
     pubsub = _PubSubRouter(batches=[_pull_response([("a1", order.model_dump_json().encode())])])
     supabase = _SupabaseRouter()
-    kabu = _KabuRouter(sendorder_responses=[{"Result": 4, "Message": "rejected"}])
+    kabu = _KabuRouter(
+        sendorder_responses=[{"Result": 4, "Code": 21, "Message": "可能額が不足しております"}]
+    )
 
     async def _body(runner: StreamRunner) -> Any:
         return await runner.run_once()
+
+    caplog.set_level("WARNING", logger="oms_live.streaming.runner")
 
     stats = await _with_runner(pubsub=pubsub, supabase=supabase, kabu=kabu, run_body=_body)
     assert stats.filled == 0
@@ -455,6 +461,18 @@ async def test_run_once_sendorder_rejected_records_no_fill_and_acks() -> None:
     assert [r for r in supabase.requests if r.method in write_methods] == []
     # ack は飛ぶ
     assert len(pubsub.acked) == 1
+    rejected = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "broker_order_rejected"
+    ]
+    assert len(rejected) == 1
+    rejected_fields = vars(rejected[0])
+    assert rejected_fields["symbol"] == order.symbol
+    assert rejected_fields["order_id"] == str(order.order_id)
+    assert rejected_fields["broker_result"] == 4
+    assert rejected_fields["broker_code"] == 21
+    assert rejected_fields["broker_message"] == "可能額が不足しております"
 
 
 async def test_run_once_retries_sendorder_after_auth_loss() -> None:
@@ -858,7 +876,9 @@ async def test_run_closeout_read_system_status_failure_returns_skipped() -> None
     assert result.skipped_reason == "read_system_status_failed"
 
 
-async def test_run_closeout_uses_closeout_timeout_before_cancel() -> None:
+async def test_run_closeout_uses_closeout_timeout_before_cancel(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     pubsub = _PubSubRouter()
     supabase = _SupabaseRouter(
         system_status_rows=[_system_status_row(trading_style="day")],
@@ -882,7 +902,8 @@ async def test_run_closeout_uses_closeout_timeout_before_cancel() -> None:
     settings = _settings(closeout_order_fill_timeout_seconds=0.0)
 
     async def _body(runner: StreamRunner) -> Any:
-        return await runner.run_closeout()
+        with caplog.at_level("CRITICAL"):
+            return await runner.run_closeout()
 
     result = await _with_runner(
         pubsub=pubsub, supabase=supabase, kabu=kabu, settings=settings, run_body=_body
@@ -891,6 +912,16 @@ async def test_run_closeout_uses_closeout_timeout_before_cancel() -> None:
     assert result.closed == 0
     assert result.no_fills == 1
     assert any(req.url.path.endswith("/cancelorder") for req in kabu.requests)
+    invariants = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "closeout_invariant"
+    ]
+    assert len(invariants) == 1
+    invariant_fields = vars(invariants[0])
+    assert invariant_fields["ok"] is False
+    assert invariant_fields["supabase_remaining"] == 0
+    assert invariant_fields["kabu_remaining"] == 1
 
 
 async def test_run_closeout_logs_critical_when_position_remains(
