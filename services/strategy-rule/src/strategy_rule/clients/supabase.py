@@ -70,7 +70,7 @@ class SupabaseWriter:
         """
         rows = [_signal_to_row(s) for s in signals]
         if not rows:
-            logger.info("supabase upsert skipped: table=strategy_logs rows=0")
+            logger.debug("supabase upsert skipped: table=strategy_logs rows=0")
             return 0
         assert self._client is not None
         resp = await self._client.post(
@@ -89,5 +89,5 @@ class SupabaseWriter:
                 f"insert failed: table=strategy_logs status={resp.status_code} "
                 f"body={resp.text[:200]}"
             )
-        logger.info("supabase upsert: table=strategy_logs rows=%d", len(rows))
+        logger.debug("supabase upsert: table=strategy_logs rows=%d", len(rows))
         return len(rows)

@@ -165,7 +165,7 @@ class SupabaseClient:
             json=[row],
         )
         self._raise_for_status(resp, table="positions", op="insert")
-        logger.info(
+        logger.debug(
             "supabase insert: positions symbol=%s qty=%d", position.symbol, position.quantity
         )
 
@@ -192,7 +192,7 @@ class SupabaseClient:
             json={"quantity": quantity, "entry_price": entry_price},
         )
         self._raise_for_status(resp, table="positions", op="update")
-        logger.info(
+        logger.debug(
             "supabase update: positions symbol=%s qty=%d entry=%s", symbol, quantity, entry_price
         )
 
@@ -217,7 +217,7 @@ class SupabaseClient:
             json={"stop_loss_price": stop_loss_price},
         )
         self._raise_for_status(resp, table="positions", op="update_stop_loss")
-        logger.info("supabase update: positions symbol=%s stop_loss=%s", symbol, stop_loss_price)
+        logger.debug("supabase update: positions symbol=%s stop_loss=%s", symbol, stop_loss_price)
 
     @retry(
         reraise=True,
@@ -234,7 +234,7 @@ class SupabaseClient:
             headers={"Prefer": "return=minimal"},
         )
         self._raise_for_status(resp, table="positions", op="delete")
-        logger.info("supabase delete: positions symbol=%s", symbol)
+        logger.debug("supabase delete: positions symbol=%s", symbol)
 
     @retry(
         reraise=True,
@@ -284,7 +284,7 @@ class SupabaseClient:
             json=[row],
         )
         self._raise_for_status(resp, table="trades_paper", op="insert")
-        logger.info(
+        logger.debug(
             "supabase insert: trades_paper trade_id=%s symbol=%s side=%s qty=%d",
             record.trade_id,
             record.symbol,

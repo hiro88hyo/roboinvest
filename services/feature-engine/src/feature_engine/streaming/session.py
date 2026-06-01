@@ -23,7 +23,7 @@ class TickSession:
     """同一銘柄の tick 順序保証と `(symbol, timestamp)` ベキ等化を担うインメモリ状態。
 
     - 同じ `(symbol, timestamp)` が二度来たら `DUPLICATE` として破棄する (Pub/Sub リトライ対策)。
-    - 既に処理済みの時点より古い tick は `STALE` として破棄しログを残す。
+    - 既に処理済みの時点より古い tick は `STALE` として破棄する。
     - 受理した tick の timestamp は銘柄ごとに保持する。
 
     プロセスを跨いだ永続化は持たない。再起動直後は最初の tick から受け付ける
@@ -45,7 +45,7 @@ class TickSession:
             )
             return TickDecision.DUPLICATE
         if tick.timestamp < last:
-            logger.warning(
+            logger.debug(
                 "tick stale dropped: symbol=%s last=%s received=%s",
                 tick.symbol,
                 last.isoformat(),

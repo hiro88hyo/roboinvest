@@ -1,6 +1,6 @@
 # Handoff Memo (for coding AIs)
 
-最終更新: 2026-05-31 / HEAD: `main`
+最終更新: 2026-06-01 / HEAD: `main`
 
 このファイルは、次の coding AI が最初に読むための短い索引です。日次の長い運用ログはここに積まず、必要な詳細だけリンク先で確認してください。
 
@@ -32,6 +32,7 @@
 長い時系列ログ:
 
 - [docs/handoff/2026-05-operations-log.md](handoff/2026-05-operations-log.md)
+- [docs/handoff/2026-06-operations-log.md](handoff/2026-06-operations-log.md)
 
 5月成績レビュー:
 
@@ -68,6 +69,13 @@
    - Vercel Dashboard は Supabase Realtime ベースの取引オペレーション画面とし、監視基盤そのものにはしない。
    - PnL / 建玉数 / 注文数などは、Supabase を正として `metrics-exporter` が定期集計し、Cloud Monitoring custom metrics に送る案が有力。
    - 詳細メモは [docs/runbook/cloud-monitoring.md](runbook/cloud-monitoring.md) を参照。
+
+0.2. **次セッションで 2026-06-01 のログ設計を振り返る**
+   - 2026-06-01 live は `+4,470円`、closeout 後 `positions(live)=0` で終了。
+   - Cloud Logging 上で `signal_rejected` / `order_published` / OMS Live fill / closeout が調査しやすいか確認する。
+   - OMS Live の `live order filled` や closeout ログは現状 `event="log"` が多い。必要なら `order_filled` / `closeout_completed` / `broker_order_failed` のような構造化 event 名に分ける。
+   - `14:16 JST` に kabu `Code 21: 可能額が不足しております` が 1 件発生。エラー継続性は問題なかったが、Gateway の資金見積もりと実買付余力のズレ、アラート対象化を検討する。
+   - 詳細は [docs/handoff/2026-06-operations-log.md](handoff/2026-06-operations-log.md) を参照。
 
 1. **翌営業日寄り前に one-command pre-open check を再実行する**
    - kabu station / Windows proxy 起動後に `op run --env-file infra/env.production -- uv run python scripts/production-preopen-check.py --timeout 30` を実行する。

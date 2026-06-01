@@ -117,6 +117,34 @@ custom.googleapis.com/roboinvest/service/kabu_api/latency_ms
 - closeout 後に live position が残る
 - market open 後、一定時間 watchlist / daily_ohlcv / feeder が不健全
 
+### Log-Based Alert Candidates
+
+Cloud Monitoring のログベース指標または Logging alert で先に作る候補。
+しきい値は初期値で、数営業日見て調整する。
+
+| Alert | Source | Initial condition | Severity | Note |
+| --- | --- | --- | --- | --- |
+| Broker order rejected | `jsonPayload.event="broker_order_rejected"` | 1 件以上 / 5分 | WARNING | 可能額不足、kabu 側 reject。`broker_code`, `broker_message` で分類する。 |
+| Market data stale | `jsonPayload.event="market_data_stale"` | 1 件以上 / 5分 | WARNING | Feature Engine tick / OMS Paper book の stale。ザラ場中だけ発火する。 |
+| Closeout write errors | `jsonPayload.event="closeout_completed"` | `jsonPayload.write_errors > 0` | CRITICAL | closeout 約定後の DB 更新失敗。手動照合が必要。 |
+| Closeout incomplete | `jsonPayload.event="closeout_completed"` | `jsonPayload.positions_seen > jsonPayload.closed` | CRITICAL | no fill / write error を含む。closeout 後 postcheck と合わせて確認する。 |
+| Closeout invariant failed | `jsonPayload.event="closeout_invariant"` | `jsonPayload.ok=false` | CRITICAL | closeout 後に Supabase または kabu に live position が残っている。 |
+| Closeout drift | `jsonPayload.event="closeout_position_drift"` | 1 件以上 | CRITICAL | kabu 実残と Supabase positions の乖離。 |
+| Runtime errors | `severity>=ERROR` | 1 件以上 / 5分 | WARNING | 汎用エラー。panic/fail-fast 系は CRITICAL に昇格検討。 |
+| Gateway reject spike | `jsonPayload.event="signal_reject_summary"` | `jsonPayload.total > 20` / 5分 | WARNING | opening guard など想定 reject は reason 別に確認する。 |
+| Order publish spike | `jsonPayload.event="order_publish_summary"` | `jsonPayload.total > 10` / 5分 | WARNING | 想定外の発注急増検知。live/paper と BUY/SELL の内訳を見る。 |
+
+ログベース指標化する場合の推奨 label:
+
+- `service`
+- `event`
+- `reason` または `broker_code`
+- `trade_mode`
+- `side`
+
+`order_id`, `signal_id`, `symbol` は高カーディナリティになりやすいので、原則 label にしない。
+調査時は Cloud Logging の `jsonPayload` で絞る。
+
 ## 6. Vercel Dashboard Boundary
 
 Vercel Dashboard は人間が取引状況を見る画面として使う。

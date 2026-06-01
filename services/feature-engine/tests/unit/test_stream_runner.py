@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 from collections.abc import Awaitable, Callable, Coroutine
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -472,3 +473,38 @@ async def test_warm_persist_failure_does_not_block_pipeline(tmp_path: Any) -> No
     assert stats.process_errors == 0
     assert stats.acked == 1
     assert len(pubsub.published) == 1
+
+
+async def test_market_data_stale_warns_and_recovers_during_jpx_session(caplog: Any) -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _make_pull_response([("a1", _tick_payload(ts="2026-04-20T00:00:00+00:00"))]),
+            _make_pull_response([("a2", _tick_payload(ts="2026-04-20T00:09:00+00:00"))]),
+        ]
+    )
+    supabase = _SupabaseRouter(positions=[])
+
+    async def _body(runner: StreamRunner) -> Any:
+        runner.summary_log_interval_seconds = 0.0
+        runner.wall_clock = lambda: datetime(2026, 4, 20, 0, 10, tzinfo=UTC)
+        await runner.run_once()
+        return await runner.run_once()
+
+    caplog.set_level(logging.INFO, logger="feature_engine.streaming.runner")
+
+    await _with_runner(pubsub_router=pubsub, supabase_router=supabase, run_body=_body)
+
+    stale = [
+        record for record in caplog.records if getattr(record, "event", None) == "market_data_stale"
+    ]
+    assert len(stale) == 1
+    assert stale[0].kind == "tick"
+    assert stale[0].latest_tick_age_seconds == 600.0
+    recovered = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "market_data_recovered"
+    ]
+    assert len(recovered) == 1
+    assert recovered[0].kind == "tick"
+    assert recovered[0].latest_tick_age_seconds == 60.0

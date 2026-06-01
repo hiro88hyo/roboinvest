@@ -110,7 +110,7 @@ class PubSubPublisher:
         topic_path = client.topic_path(self.project_id, topic)
         future = client.publish(topic_path, data, **(attributes or {}))
         message_id = await asyncio.to_thread(future.result, timeout=self.timeout_seconds)
-        logger.info("pubsub publish: topic=%s message_id=%s", topic, message_id)
+        logger.debug("pubsub publish: topic=%s message_id=%s", topic, message_id)
         return str(message_id)
 
     async def _publish_rest(
@@ -138,7 +138,7 @@ class PubSubPublisher:
         ids = payload.get("messageIds") or []
         if not ids:
             raise PubSubError(f"publish response missing messageIds: body={resp.text[:200]}")
-        logger.info("pubsub publish: topic=%s message_id=%s", topic, ids[0])
+        logger.debug("pubsub publish: topic=%s message_id=%s", topic, ids[0])
         return str(ids[0])
 
 
@@ -232,7 +232,7 @@ class PubSubSubscriber:
             for received in response.received_messages
         ]
         if out:
-            logger.info("pubsub pull: sub=%s received=%d", subscription, len(out))
+            logger.debug("pubsub pull: sub=%s received=%d", subscription, len(out))
         return out
 
     async def _pull_rest(
@@ -275,7 +275,7 @@ class PubSubSubscriber:
                 )
             )
         if out:
-            logger.info("pubsub pull: sub=%s received=%d", subscription, len(out))
+            logger.debug("pubsub pull: sub=%s received=%d", subscription, len(out))
         return out
 
     @retry(
@@ -301,7 +301,7 @@ class PubSubSubscriber:
                 request={"subscription": subscription_path, "ack_ids": ack_ids},
                 timeout=self.timeout_seconds,
             )
-        logger.info("pubsub ack: sub=%s count=%d", subscription, len(ack_ids))
+        logger.debug("pubsub ack: sub=%s count=%d", subscription, len(ack_ids))
 
     async def _acknowledge_rest(
         self, client: httpx.AsyncClient, subscription: str, ack_ids: list[str]

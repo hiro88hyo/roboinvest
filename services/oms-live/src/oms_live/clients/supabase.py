@@ -124,7 +124,7 @@ class SupabaseClient:
             },
         )
         self._raise_for_status(resp, table="system_status", op="update")
-        logger.info(
+        logger.debug(
             "supabase update: system_status pnl_delta=%s daily=%s weekly=%s monthly=%s",
             amount,
             new_daily,
@@ -210,7 +210,7 @@ class SupabaseClient:
             json=[row],
         )
         self._raise_for_status(resp, table="positions", op="insert")
-        logger.info(
+        logger.debug(
             "supabase insert: positions(live) symbol=%s qty=%d", position.symbol, position.quantity
         )
 
@@ -236,7 +236,7 @@ class SupabaseClient:
             json={"quantity": quantity, "entry_price": entry_price},
         )
         self._raise_for_status(resp, table="positions", op="update")
-        logger.info(
+        logger.debug(
             "supabase update: positions(live) symbol=%s qty=%d entry=%s",
             symbol,
             quantity,
@@ -297,7 +297,7 @@ class SupabaseClient:
             headers={"Prefer": "return=minimal"},
         )
         self._raise_for_status(resp, table="positions", op="delete")
-        logger.info("supabase delete: positions(live) symbol=%s", symbol)
+        logger.debug("supabase delete: positions(live) symbol=%s", symbol)
 
     @retry(
         reraise=True,
@@ -332,7 +332,7 @@ class SupabaseClient:
             json=[row],
         )
         self._raise_for_status(resp, table="trades_live", op="insert")
-        logger.info(
+        logger.debug(
             "supabase insert: trades_live trade_id=%s order_id=%s symbol=%s side=%s qty=%d",
             record.trade_id,
             record.order_id,

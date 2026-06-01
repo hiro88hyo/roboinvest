@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -951,6 +952,49 @@ async def test_first_delivery_fills_second_delivery_skipped() -> None:
     assert s1.skipped_duplicate == 0
     assert s2.filled == 0
     assert s2.skipped_duplicate == 1
+
+
+async def test_market_data_stale_warns_and_recovers_during_jpx_session(caplog: Any) -> None:
+    stale_book = make_order_book(
+        symbol="7203",
+        timestamp=datetime(2026, 4, 20, 0, 0, tzinfo=UTC),
+    )
+    fresh_book = make_order_book(
+        symbol="7203",
+        timestamp=datetime(2026, 4, 20, 0, 9, tzinfo=UTC),
+    )
+    pubsub = _PubSubRouter(
+        book_batches=[
+            _pull_response([("bk-1", stale_book.model_dump_json().encode("utf-8"))]),
+            _pull_response([("bk-2", fresh_book.model_dump_json().encode("utf-8"))]),
+        ]
+    )
+    supabase = _SupabaseRouter()
+
+    async def _body(runner: StreamRunner) -> Any:
+        runner.summary_log_interval_seconds = 0.0
+        runner.wall_clock = lambda: datetime(2026, 4, 20, 0, 10, tzinfo=UTC)
+        await runner.run_once()
+        return await runner.run_once()
+
+    caplog.set_level(logging.INFO, logger="oms_paper.streaming.runner")
+
+    await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+
+    stale = [
+        record for record in caplog.records if getattr(record, "event", None) == "market_data_stale"
+    ]
+    assert len(stale) == 1
+    assert stale[0].kind == "order_book"
+    assert stale[0].latest_book_age_seconds == 600.0
+    recovered = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "market_data_recovered"
+    ]
+    assert len(recovered) == 1
+    assert recovered[0].kind == "order_book"
+    assert recovered[0].latest_book_age_seconds == 60.0
 
 
 # --- helpers --------------------------------------------------------------
