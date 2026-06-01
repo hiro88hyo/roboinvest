@@ -499,6 +499,22 @@ class StreamRunner:
                 source=signal.signal_source.value,
                 holding_type=signal.holding_type.value,
                 action=signal.action.value,
+                confidence=signal.confidence,
+                signal_created_at=signal.created_at.isoformat(),
+                age_seconds=round(
+                    self._signal_age_seconds(signal=signal, now=self.wall_clock()),
+                    3,
+                ),
+                strategy_signal_id_a=(
+                    str(signal.strategy_signal_id_a)
+                    if signal.strategy_signal_id_a is not None
+                    else None
+                ),
+                strategy_signal_id_b=(
+                    str(signal.strategy_signal_id_b)
+                    if signal.strategy_signal_id_b is not None
+                    else None
+                ),
                 has_price=signal.price is not None,
             ),
         )

@@ -114,10 +114,17 @@ Status: Partially Implemented
 - `reason`
 - `source`
 - `holding_type`
+- `action`
+- `confidence`
+- `signal_created_at`
+- `age_seconds`
+- `strategy_signal_id_a`
+- `strategy_signal_id_b`
 
 目的:
 
 - どのシグナルが、なぜ gateway などで reject されたかを追う
+- source / action / reason / upstream strategy signal を軸に日次集計できるようにする
 
 ## 8. order_published
 
@@ -185,6 +192,39 @@ Status: Partially Implemented
 目的:
 
 - 市場外ガードがどの signal に対して発火したかを追う
+
+## 12. ai_decision_skipped
+
+追加フィールド:
+
+- `symbol`
+- `strategy`
+- `reason`
+- `action`
+- `confidence`
+- `feature_timestamp`
+- `trigger_signal_id`
+- `trigger_action`
+- `trigger_confidence`
+- `min_interval_seconds`
+
+目的:
+
+- Strategy AI が signal を出さなかった理由を日次で数えられるようにする
+- `hold` / `parse_failed` / `rate_limited` / `no_signal` / `non_positive_confidence` を切り分ける
+
+## 13. ai_trigger_parse_failed
+
+追加フィールド:
+
+- `subscription`
+- `message_id`
+- `payload_bytes`
+- `reason`
+
+目的:
+
+- `strategy-ai-triggers` の poison message を件数化し、AI が見られなかった入力を切り分ける
 
 ## キー命名の補足
 

@@ -73,11 +73,15 @@ Status: Partially Implemented
 - `pubsub_ack_failed`
 - `pubsub_publish_failed`
 - `external_api_error`
+- `ai_decision_skipped`
+- `ai_trigger_parse_failed`
 
 補足:
 
 - LLM API エラーは `external_api_error`
 - `processed-features` または AI trigger 系の pull / ack、`strategy-signals-b` publish が対象
+- AI が signal を出さない場合は `ai_decision_skipped` で理由を残す
+- trigger payload の JSON / schema failure は `ai_trigger_parse_failed` で poison ack を追う
 
 ### aggregator
 

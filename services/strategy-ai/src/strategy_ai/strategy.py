@@ -8,6 +8,7 @@ from typing import Any
 
 from trade_contracts.enums import Action, SignalSource
 from trade_contracts.features import ProcessedFeatures
+from trade_contracts.logging import event_extra
 from trade_contracts.signal import StrategySignal
 
 from .llm.base import LLMClient, LLMError
@@ -38,6 +39,19 @@ class AiStrategy:
         state: MutableMapping[str, Any],
     ) -> StrategySignal | None:
         if not self._should_call(features.timestamp, state):
+            logger.debug(
+                "ai skipped by rate limit: symbol=%s strategy=%s",
+                features.symbol,
+                self.name,
+                extra=event_extra(
+                    "ai_decision_skipped",
+                    symbol=features.symbol,
+                    strategy=self.name,
+                    reason="rate_limited",
+                    feature_timestamp=features.timestamp.isoformat(),
+                    min_interval_seconds=self.min_interval_seconds,
+                ),
+            )
             return None
         state[_LAST_CALL_KEY] = features.timestamp
 
@@ -45,20 +59,65 @@ class AiStrategy:
         try:
             response = await self.llm.complete(prompt)
         except LLMError:
-            logger.exception("llm call failed: symbol=%s", features.symbol)
+            logger.exception(
+                "llm call failed: symbol=%s",
+                features.symbol,
+                extra=event_extra(
+                    "external_api_error",
+                    api_name="llm",
+                    endpoint="complete",
+                    symbol=features.symbol,
+                    strategy=self.name,
+                    reason="llm_error",
+                    feature_timestamp=features.timestamp.isoformat(),
+                ),
+            )
             return None
 
         decision = parse_response(response)
         if decision is None:
+            logger.warning(
+                "ai decision skipped: symbol=%s reason=parse_failed",
+                features.symbol,
+                extra=event_extra(
+                    "ai_decision_skipped",
+                    symbol=features.symbol,
+                    strategy=self.name,
+                    reason="parse_failed",
+                    feature_timestamp=features.timestamp.isoformat(),
+                ),
+            )
             return None
         if decision.action is Action.HOLD:
-            logger.debug("ai HOLD skipped: symbol=%s", features.symbol)
+            logger.info(
+                "ai decision skipped: symbol=%s reason=hold confidence=%.3f",
+                features.symbol,
+                decision.confidence,
+                extra=event_extra(
+                    "ai_decision_skipped",
+                    symbol=features.symbol,
+                    strategy=self.name,
+                    reason="hold",
+                    action=decision.action.value,
+                    confidence=decision.confidence,
+                    feature_timestamp=features.timestamp.isoformat(),
+                ),
+            )
             return None
         if decision.confidence <= 0.0:
-            logger.debug(
-                "ai non-positive confidence skipped: symbol=%s action=%s",
+            logger.info(
+                "ai decision skipped: symbol=%s reason=non_positive_confidence action=%s",
                 features.symbol,
                 decision.action.value,
+                extra=event_extra(
+                    "ai_decision_skipped",
+                    symbol=features.symbol,
+                    strategy=self.name,
+                    reason="non_positive_confidence",
+                    action=decision.action.value,
+                    confidence=decision.confidence,
+                    feature_timestamp=features.timestamp.isoformat(),
+                ),
             )
             return None
 

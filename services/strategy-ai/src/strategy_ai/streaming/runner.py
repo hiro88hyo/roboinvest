@@ -9,6 +9,7 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 from trade_contracts.features import ProcessedFeatures
+from trade_contracts.logging import event_extra
 from trade_contracts.signal import StrategySignal
 
 from strategy_ai.clients.pubsub import PubSubPublisher, PubSubSubscriber, PulledMessage
@@ -126,11 +127,38 @@ class StreamRunner:
     async def _handle_message(self, msg: PulledMessage) -> tuple[str, int]:
         trigger = _parse_trigger(msg.data)
         if trigger is None:
-            logger.exception("parse failed: message_id=%s len=%d", msg.message_id, len(msg.data))
+            logger.warning(
+                "parse failed: message_id=%s len=%d",
+                msg.message_id,
+                len(msg.data),
+                extra=event_extra(
+                    "ai_trigger_parse_failed",
+                    message_id=msg.message_id,
+                    payload_bytes=len(msg.data),
+                    reason="invalid_trigger_payload",
+                    subscription=self.settings.pubsub_subscription_features,
+                ),
+            )
             return "parse_error", 0
 
         try:
             signals = await self.engine.evaluate(trigger.features)
+            if not signals:
+                logger.info(
+                    "ai trigger produced no signal: symbol=%s rule_action=%s",
+                    trigger.features.symbol,
+                    trigger.signal.action.value,
+                    extra=event_extra(
+                        "ai_decision_skipped",
+                        symbol=trigger.features.symbol,
+                        strategy="engine",
+                        reason="no_signal",
+                        trigger_signal_id=str(trigger.signal.signal_id),
+                        trigger_action=trigger.signal.action.value,
+                        trigger_confidence=trigger.signal.confidence,
+                        feature_timestamp=trigger.features.timestamp.isoformat(),
+                    ),
+                )
             await self._dispatch_signals(trigger.features.symbol, signals)
         except Exception:
             logger.exception("process failed: message_id=%s", msg.message_id)

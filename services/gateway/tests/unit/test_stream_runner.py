@@ -53,6 +53,8 @@ def _unified_payload(
     holding_type: TradingStyle = TradingStyle.DAY,
     stop_loss_price: str | None = None,
     signal_id: UUID | None = None,
+    strategy_signal_id_a: UUID | None = None,
+    strategy_signal_id_b: UUID | None = None,
     created_at: str = "2026-04-20T09:00:00+00:00",
 ) -> bytes:
     body: dict[str, Any] = {
@@ -62,8 +64,8 @@ def _unified_payload(
         "action": action.value,
         "confidence": confidence,
         "signal_source": signal_source.value,
-        "strategy_signal_id_a": None,
-        "strategy_signal_id_b": None,
+        "strategy_signal_id_a": str(strategy_signal_id_a) if strategy_signal_id_a else None,
+        "strategy_signal_id_b": str(strategy_signal_id_b) if strategy_signal_id_b else None,
         "holding_type": holding_type.value,
         "stop_loss_price": stop_loss_price,
         "target_price": None,
@@ -477,6 +479,63 @@ async def test_reject_summary_logs_reason_counts(caplog: Any) -> None:
     assert len(summaries) == 1
     assert summaries[0].total == 1
     assert summaries[0].reason_counts == {"no_position_for_sell": 1}
+
+
+async def test_signal_rejected_log_has_daily_analysis_fields(caplog: Any) -> None:
+    signal_id = uuid4()
+    strategy_signal_id_a = uuid4()
+    strategy_signal_id_b = uuid4()
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response(
+                [
+                    (
+                        "a1",
+                        _unified_payload(
+                            action=Action.SELL,
+                            signal_id=signal_id,
+                            signal_source=SignalSource.CONSENSUS,
+                            strategy_signal_id_a=strategy_signal_id_a,
+                            strategy_signal_id_b=strategy_signal_id_b,
+                            confidence=0.73,
+                            created_at="2026-04-20T00:30:00+00:00",
+                        ),
+                    )
+                ]
+            )
+        ]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trade_mode="live")],
+        positions_quantity_rows=[[]],
+    )
+
+    def _now() -> datetime:
+        return datetime(2026, 4, 20, 0, 30, 3, tzinfo=UTC)
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    caplog.set_level(logging.INFO, logger="gateway.streaming.runner")
+
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, wall_clock=_now, run_body=_body)
+
+    assert stats.rejected == 1
+    rejected = [
+        record for record in caplog.records if getattr(record, "event", None) == "signal_rejected"
+    ]
+    assert len(rejected) == 1
+    record = rejected[0]
+    assert record.signal_id == str(signal_id)
+    assert record.source == "CONSENSUS"
+    assert record.reason == "no_position_for_sell"
+    assert record.action == "SELL"
+    assert record.symbol == "7203"
+    assert record.confidence == 0.73
+    assert record.signal_created_at == "2026-04-20T00:30:00+00:00"
+    assert record.age_seconds == 3.0
+    assert record.strategy_signal_id_a == str(strategy_signal_id_a)
+    assert record.strategy_signal_id_b == str(strategy_signal_id_b)
 
 
 async def test_buy_with_existing_long_is_rejected_without_price_lookup() -> None:

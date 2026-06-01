@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 from collections.abc import Awaitable, Callable, Coroutine, MutableMapping
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -9,6 +10,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import httpx
+import pytest
 from strategy_ai.clients.pubsub import PubSubPublisher, PubSubSubscriber
 from strategy_ai.clients.supabase import SupabaseWriter
 from strategy_ai.config import StrategyAiSettings
@@ -256,13 +258,17 @@ async def test_trigger_message_publishes_signal_and_logs() -> None:
     assert rows[0]["reasoning"] == "ai pick"
 
 
-async def test_no_signal_acks_without_publish_or_log_write() -> None:
+async def test_no_signal_acks_without_publish_or_log_write(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     pubsub = _PubSubRouter(pull_batches=[_make_pull_response([("a1", _trigger_payload())])])
     supabase = _SupabaseRouter()
     engine = StrategyAiEngine([_FakeAsyncStrategy("silent", action=None)])
 
     async def _body(runner: StreamRunner) -> Any:
         return await runner.run_once()
+
+    caplog.set_level(logging.INFO, logger="strategy_ai.streaming.runner")
 
     stats = await _with_runner(
         pubsub_router=pubsub, supabase_router=supabase, engine=engine, run_body=_body
@@ -275,6 +281,17 @@ async def test_no_signal_acks_without_publish_or_log_write() -> None:
         not (r.method == "POST" and r.url.path == "/rest/v1/strategy_logs")
         for r in supabase.requests
     )
+    skipped = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "ai_decision_skipped"
+    ]
+    assert len(skipped) == 1
+    record: Any = skipped[0]
+    assert record.reason == "no_signal"
+    assert record.symbol == "7203"
+    assert record.trigger_action == "BUY"
+    assert record.trigger_confidence == 0.9
 
 
 async def test_acknowledges_each_message_without_waiting_for_batch_end() -> None:
@@ -326,7 +343,9 @@ async def test_strategy_exception_is_isolated_and_message_acked() -> None:
     assert stats.acked == 1
 
 
-async def test_malformed_json_is_treated_as_poison_and_acked() -> None:
+async def test_malformed_json_is_treated_as_poison_and_acked(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     pubsub = _PubSubRouter(pull_batches=[_make_pull_response([("a1", b"not-json")])])
     supabase = _SupabaseRouter()
     engine = StrategyAiEngine([_FakeAsyncStrategy("fake_buy", action=Action.BUY)])
@@ -334,12 +353,24 @@ async def test_malformed_json_is_treated_as_poison_and_acked() -> None:
     async def _body(runner: StreamRunner) -> Any:
         return await runner.run_once()
 
+    caplog.set_level(logging.WARNING, logger="strategy_ai.streaming.runner")
+
     stats = await _with_runner(
         pubsub_router=pubsub, supabase_router=supabase, engine=engine, run_body=_body
     )
     assert stats.parse_errors == 1
     assert stats.acked == 1
     assert pubsub.published == []
+    parse_failures = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "ai_trigger_parse_failed"
+    ]
+    assert len(parse_failures) == 1
+    record: Any = parse_failures[0]
+    assert record.message_id == "m-a1"
+    assert record.reason == "invalid_trigger_payload"
+    assert record.subscription == SUBSCRIPTION
 
 
 async def test_validation_failure_is_acked() -> None:
