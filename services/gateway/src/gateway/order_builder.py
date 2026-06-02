@@ -38,5 +38,9 @@ def build(
         order_type=OrderType.MARKET,
         trade_mode=trade_mode,
         signal_source=signal.signal_source,
+        stop_loss_price=signal.stop_loss_price,
+        target_price=signal.target_price,
+        trailing_stop_pct=signal.trailing_stop_pct,
+        max_hold_days=signal.max_hold_days,
         created_at=created_at or datetime.now(UTC),
     )

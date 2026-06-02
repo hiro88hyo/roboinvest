@@ -39,6 +39,10 @@ class PositionSnapshot:
     trade_type: TradeType
     quantity: int
     entry_price: Decimal
+    current_price: Decimal
+    target_price: Decimal | None = None
+    stop_loss_price: Decimal | None = None
+    trailing_stop_pct: Decimal | None = None
 
 
 @dataclass(slots=True)
@@ -85,7 +89,10 @@ class SupabaseReader:
     async def fetch_positions(self, symbol: str) -> list[PositionSnapshot]:
         """`symbol` に紐づく live / paper のポジションを返す。"""
         params = {
-            "select": "symbol,trade_type,quantity,entry_price",
+            "select": (
+                "symbol,trade_type,quantity,entry_price,current_price,"
+                "target_price,stop_loss_price,trailing_stop_pct"
+            ),
             "symbol": f"eq.{symbol}",
         }
         rows = await self._select_all("/rest/v1/positions", params=params)
@@ -97,6 +104,10 @@ class SupabaseReader:
                     trade_type=TradeType(str(r["trade_type"])),
                     quantity=int(r["quantity"]),
                     entry_price=Decimal(str(r["entry_price"])),
+                    current_price=Decimal(str(r.get("current_price", r["entry_price"]))),
+                    target_price=_optional_decimal(r.get("target_price")),
+                    stop_loss_price=_optional_decimal(r.get("stop_loss_price")),
+                    trailing_stop_pct=_optional_decimal(r.get("trailing_stop_pct")),
                 )
             )
         return out
@@ -192,6 +203,12 @@ def _parse_total(content_range: str | None) -> int | None:
         return int(tail)
     except ValueError:
         return None
+
+
+def _optional_decimal(value: Any) -> Decimal | None:
+    if value is None:
+        return None
+    return Decimal(str(value))
 
 
 @dataclass(slots=True)

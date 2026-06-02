@@ -19,6 +19,10 @@ class OrderRequest(BaseModel):
     limit_price: Decimal | None = None
     trade_mode: TradeMode
     signal_source: SignalSource
+    stop_loss_price: Decimal | None = None
+    target_price: Decimal | None = None
+    trailing_stop_pct: Decimal | None = None
+    max_hold_days: int | None = Field(default=None, ge=1)
     created_at: datetime
 
 

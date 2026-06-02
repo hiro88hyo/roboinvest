@@ -337,6 +337,10 @@ class StreamRunner:
             fill=fill,
             existing=existing,
             holding_type=holding_type,
+            stop_loss_price=order.stop_loss_price,
+            target_price=order.target_price,
+            max_hold_days=order.max_hold_days,
+            trailing_stop_pct=order.trailing_stop_pct,
             executed_at=order.created_at,
         )
         if update.error is not None:

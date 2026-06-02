@@ -15,9 +15,14 @@ from trade_contracts.logging import event_extra
 from trade_contracts.market import OrderBookSnapshot, TickData
 
 from feature_engine.clients.pubsub import PubSubPublisher, PubSubSubscriber, PulledMessage
-from feature_engine.clients.supabase import SupabaseReader, SupabaseWriter
+from feature_engine.clients.supabase import PositionSnapshot, SupabaseReader, SupabaseWriter
 from feature_engine.config import FeatureEngineSettings
 from feature_engine.storage.warm import WarmWriter
+from feature_engine.streaming.exit_orders import (
+    ExitOrderMonitor,
+    build_exit_order,
+    topic_for_exit_order,
+)
 from feature_engine.streaming.feature_state import StreamingFeatureState
 from feature_engine.streaming.position_updater import update_positions_for_tick
 from feature_engine.streaming.session import TickDecision, TickSession
@@ -68,6 +73,7 @@ class StreamRunner:
     tick_session: TickSession
     settings: FeatureEngineSettings
     warm_writer: WarmWriter | None = None
+    exit_monitor: ExitOrderMonitor = field(default_factory=ExitOrderMonitor)
     idle_backoff_seconds: float = 1.0
     sleep: Sleep = field(default=asyncio.sleep)
     monotonic: MonotonicClock = field(default=time.monotonic)
@@ -182,8 +188,50 @@ class StreamRunner:
             data=features.model_dump_json().encode("utf-8"),
             attributes={"symbol": tick.symbol},
         )
-        await update_positions_for_tick(tick, reader=self.reader, writer=self.writer)
+        positions = await self.reader.fetch_positions(tick.symbol)
+        await self._publish_exit_orders(tick, positions)
+        await update_positions_for_tick(
+            tick, reader=self.reader, writer=self.writer, positions=positions
+        )
         return "tick_processed"
+
+    async def _publish_exit_orders(self, tick: TickData, positions: list[PositionSnapshot]) -> None:
+        triggers = self.exit_monitor.collect_triggers(tick=tick, positions=positions)
+        for trigger in triggers:
+            order = build_exit_order(trigger, created_at=self.wall_clock())
+            topic = topic_for_exit_order(
+                trigger,
+                live_topic=self.settings.pubsub_topic_live_orders,
+                paper_topic=self.settings.pubsub_topic_paper_orders,
+            )
+            await self.publisher.publish(
+                topic,
+                data=order.model_dump_json().encode("utf-8"),
+                attributes={
+                    "symbol": trigger.symbol,
+                    "exit_reason": trigger.reason,
+                    "trade_type": trigger.trade_type.value,
+                },
+            )
+            logger.warning(
+                "exit order published: symbol=%s trade_type=%s reason=%s "
+                "price=%s threshold=%s qty=%d",
+                trigger.symbol,
+                trigger.trade_type.value,
+                trigger.reason,
+                trigger.price,
+                trigger.threshold,
+                trigger.quantity,
+                extra=event_extra(
+                    "exit_order_published",
+                    symbol=trigger.symbol,
+                    trade_type=trigger.trade_type.value,
+                    reason=trigger.reason,
+                    price=str(trigger.price),
+                    threshold=str(trigger.threshold),
+                    quantity=trigger.quantity,
+                ),
+            )
 
     def _record_summary(self, stats: BatchStats) -> None:
         now = self.monotonic()

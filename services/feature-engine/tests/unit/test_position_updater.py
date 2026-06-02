@@ -34,6 +34,7 @@ def test_apply_tick_filters_other_symbols() -> None:
             trade_type=TradeType.LIVE,
             quantity=100,
             entry_price=Decimal("8000"),
+            current_price=Decimal("8000"),
         )
     ]
     assert apply_tick(_tick("7203"), positions) == []
@@ -42,7 +43,11 @@ def test_apply_tick_filters_other_symbols() -> None:
 def test_apply_tick_skips_zero_quantity() -> None:
     positions = [
         PositionSnapshot(
-            symbol="7203", trade_type=TradeType.LIVE, quantity=0, entry_price=Decimal("2500")
+            symbol="7203",
+            trade_type=TradeType.LIVE,
+            quantity=0,
+            entry_price=Decimal("2500"),
+            current_price=Decimal("2500"),
         )
     ]
     assert apply_tick(_tick("7203"), positions) == []
@@ -55,12 +60,14 @@ def test_apply_tick_computes_pnl_for_both_trade_types() -> None:
             trade_type=TradeType.LIVE,
             quantity=100,
             entry_price=Decimal("2500"),
+            current_price=Decimal("2500"),
         ),
         PositionSnapshot(
             symbol="7203",
             trade_type=TradeType.PAPER,
             quantity=50,
             entry_price=Decimal("2400"),
+            current_price=Decimal("2400"),
         ),
     ]
     updates = apply_tick(_tick("7203", Decimal("2600")), positions)
@@ -78,6 +85,7 @@ def test_apply_tick_handles_loss() -> None:
             trade_type=TradeType.LIVE,
             quantity=100,
             entry_price=Decimal("2800"),
+            current_price=Decimal("2800"),
         )
     ]
     updates = apply_tick(_tick("7203", Decimal("2600")), positions)
