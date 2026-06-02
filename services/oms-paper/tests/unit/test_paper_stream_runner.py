@@ -6,6 +6,7 @@ import logging
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from typing import Any
 
 import httpx
@@ -209,7 +210,16 @@ async def _with_runner(
 
 async def test_book_pulled_first_then_order_fills() -> None:
     book = make_order_book(symbol="7203", asks=(("1000", 200),))
-    order = make_order_request(symbol="7203", side=Side.BUY, quantity=100, created_at=DEFAULT_TS)
+    order = make_order_request(
+        symbol="7203",
+        side=Side.BUY,
+        quantity=100,
+        stop_loss_price=Decimal("950"),
+        target_price=Decimal("1100"),
+        trailing_stop_pct=Decimal("0.02"),
+        max_hold_days=5,
+        created_at=DEFAULT_TS,
+    )
     pubsub = _PubSubRouter(
         order_batches=[_pull_response([("ord-1", order.model_dump_json().encode("utf-8"))])],
         book_batches=[_pull_response([("bk-1", book.model_dump_json().encode("utf-8"))])],
@@ -246,6 +256,10 @@ async def test_book_pulled_first_then_order_fills() -> None:
     assert pos_body["trade_type"] == "paper"
     assert pos_body["entry_price"] == "1000"
     assert pos_body["current_price"] == "1000"
+    assert pos_body["stop_loss_price"] == "950"
+    assert pos_body["target_price"] == "1100"
+    assert pos_body["trailing_stop_pct"] == "0.02"
+    assert pos_body["max_hold_days"] == 5
 
 
 async def test_order_with_no_book_in_cache_is_no_fill_and_acked() -> None:

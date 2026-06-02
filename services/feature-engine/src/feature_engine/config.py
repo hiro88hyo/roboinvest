@@ -32,6 +32,8 @@ class FeatureEngineSettings(BaseSettings):
     pubsub_emulator_host: str = ""
     pubsub_subscription_raw: str = "feature-engine-raw-market-data"
     pubsub_topic_features: str = "processed-features"
+    pubsub_topic_live_orders: str = "live-orders"
+    pubsub_topic_paper_orders: str = "paper-orders"
     pubsub_pull_max_messages: int = 100
     pubsub_ack_deadline_seconds: int = 30
     market_data_stale_warn_seconds: float | None = 180.0

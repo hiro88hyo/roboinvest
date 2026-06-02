@@ -63,6 +63,7 @@ def test_models_have_expected_attributes() -> None:
     assert PriceLevel(price=Decimal("100"), quantity=500).quantity == 500
     assert ProcessedFeatures.model_fields["order_book"].annotation is not None
     assert OrderRequest.model_fields["trade_mode"].annotation is TradeMode
+    assert OrderRequest.model_fields["stop_loss_price"].annotation == Decimal | None
     assert OrderResult.model_fields["status"].annotation is OrderStatus
     assert OrderBookSnapshot.model_fields["bids"].annotation is not None
     assert StrategySignal.model_fields["source"].annotation is SignalSource

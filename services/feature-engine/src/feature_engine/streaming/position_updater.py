@@ -52,12 +52,14 @@ async def update_positions_for_tick(
     *,
     reader: SupabaseReader,
     writer: SupabaseWriter,
+    positions: list[PositionSnapshot] | None = None,
 ) -> int:
     """tick で特定される symbol の全ポジションを Supabase 上で時価更新する。
 
     更新件数を返す。保有がない銘柄は no-op。
     """
-    positions = await reader.fetch_positions(tick.symbol)
+    if positions is None:
+        positions = await reader.fetch_positions(tick.symbol)
     updates = apply_tick(tick, positions)
     if not updates:
         return 0

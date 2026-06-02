@@ -30,6 +30,10 @@ def make_order_request(
     trade_mode: TradeMode = TradeMode.LIVE,
     signal_source: SignalSource = SignalSource.CONSENSUS,
     unified_signal_id: UUID | None = None,
+    stop_loss_price: Decimal | None = None,
+    target_price: Decimal | None = None,
+    trailing_stop_pct: Decimal | None = None,
+    max_hold_days: int | None = None,
     created_at: datetime | None = None,
 ) -> OrderRequest:
     return OrderRequest(
@@ -41,6 +45,10 @@ def make_order_request(
         limit_price=limit_price,
         trade_mode=trade_mode,
         signal_source=signal_source,
+        stop_loss_price=stop_loss_price,
+        target_price=target_price,
+        trailing_stop_pct=trailing_stop_pct,
+        max_hold_days=max_hold_days,
         created_at=created_at or DEFAULT_TS,
     )
 

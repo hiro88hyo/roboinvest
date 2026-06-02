@@ -318,7 +318,14 @@ async def _with_runner(
 
 
 async def test_run_once_buy_new_position_writes_trade_and_position_and_acks() -> None:
-    order = make_order_request(side=Side.BUY, quantity=100)
+    order = make_order_request(
+        side=Side.BUY,
+        quantity=100,
+        stop_loss_price=Decimal("950"),
+        target_price=Decimal("1100"),
+        trailing_stop_pct=Decimal("0.02"),
+        max_hold_days=5,
+    )
     pubsub = _PubSubRouter(batches=[_pull_response([("a1", order.model_dump_json().encode())])])
     supabase = _SupabaseRouter(live_position_rows=[[]])  # 既存ポジション無し
     kabu = _KabuRouter(
@@ -351,6 +358,14 @@ async def test_run_once_buy_new_position_writes_trade_and_position_and_acks() ->
     )
     inserted = json.loads(insert_req.content.decode())[0]
     assert inserted["order_id"] == str(order.order_id)
+    insert_pos_req = next(
+        r for r in supabase.requests if r.method == "POST" and r.url.path == "/rest/v1/positions"
+    )
+    inserted_pos = json.loads(insert_pos_req.content.decode())[0]
+    assert inserted_pos["stop_loss_price"] == "950"
+    assert inserted_pos["target_price"] == "1100"
+    assert inserted_pos["trailing_stop_pct"] == "0.02"
+    assert inserted_pos["max_hold_days"] == 5
 
     # Pub/Sub ack も飛んでいること
     assert len(pubsub.acked) == 1

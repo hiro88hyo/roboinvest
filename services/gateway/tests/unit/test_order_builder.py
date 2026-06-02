@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from decimal import Decimal
 
 import pytest
 from gateway import order_builder
@@ -8,7 +9,14 @@ from trade_contracts.enums import Action, OrderType, Side, SignalSource, TradeMo
 
 
 def test_build_buy_order(unified_signal_factory) -> None:  # type: ignore[no-untyped-def]
-    signal = unified_signal_factory(action=Action.BUY, signal_source=SignalSource.CONSENSUS)
+    signal = unified_signal_factory(
+        action=Action.BUY,
+        signal_source=SignalSource.CONSENSUS,
+        stop_loss_price=Decimal("2450"),
+        target_price=Decimal("2600"),
+        trailing_stop_pct=Decimal("0.02"),
+        max_hold_days=5,
+    )
     stamp = datetime(2026, 4, 23, 10, 0, tzinfo=UTC)
     order = order_builder.build(
         signal=signal,
@@ -23,6 +31,10 @@ def test_build_buy_order(unified_signal_factory) -> None:  # type: ignore[no-unt
     assert order.order_type is OrderType.MARKET
     assert order.trade_mode is TradeMode.LIVE
     assert order.signal_source is SignalSource.CONSENSUS
+    assert order.stop_loss_price == Decimal("2450")
+    assert order.target_price == Decimal("2600")
+    assert order.trailing_stop_pct == Decimal("0.02")
+    assert order.max_hold_days == 5
     assert order.created_at == stamp
 
 

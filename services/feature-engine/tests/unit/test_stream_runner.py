@@ -16,7 +16,9 @@ from feature_engine.storage.warm import WarmWriter
 from feature_engine.streaming.feature_state import StreamingFeatureState
 from feature_engine.streaming.runner import StreamRunner
 from feature_engine.streaming.session import TickSession
+from trade_contracts.enums import Side
 from trade_contracts.market import OrderBookSnapshot, TickData
+from trade_contracts.order import OrderRequest
 
 Handler = Callable[[httpx.Request], Coroutine[None, None, httpx.Response]]
 
@@ -228,6 +230,46 @@ async def test_tick_message_is_published_acked_and_positions_updated() -> None:
     patch_body = json.loads(patches[0].content.decode())
     assert patch_body["current_price"] == "2500"
     assert patches[0].url.params["trade_type"] == "eq.live"
+
+
+async def test_tick_target_price_publishes_exit_order() -> None:
+    pubsub = _PubSubRouter(pull_batches=[_make_pull_response([("a1", _tick_payload())])])
+    supabase = _SupabaseRouter(
+        positions=[
+            {
+                "symbol": "7203",
+                "trade_type": "live",
+                "quantity": 100,
+                "entry_price": "2400",
+                "current_price": "2490",
+                "target_price": "2500",
+                "stop_loss_price": None,
+                "trailing_stop_pct": None,
+            }
+        ]
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(pubsub_router=pubsub, supabase_router=supabase, run_body=_body)
+    assert stats.ticks_processed == 1
+    assert len(pubsub.published) == 2
+
+    by_topic = {
+        req.url.path.rsplit("/", 1)[-1].removesuffix(":publish"): req for req in pubsub.published
+    }
+    assert TOPIC in by_topic
+    assert "live-orders" in by_topic
+
+    order_body = json.loads(by_topic["live-orders"].content.decode())
+    order_json = base64.b64decode(order_body["messages"][0]["data"]).decode("utf-8")
+    order = OrderRequest.model_validate_json(order_json)
+    assert order.symbol == "7203"
+    assert order.side is Side.SELL
+    assert order.quantity == 100
+    assert order.unified_signal_id is None
+    assert order_body["messages"][0]["attributes"]["exit_reason"] == "target_price"
 
 
 async def test_order_book_message_is_recorded_without_publish() -> None:
