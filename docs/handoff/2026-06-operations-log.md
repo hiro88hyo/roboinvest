@@ -1,5 +1,15 @@
 # June 2026 Operations Log
 
+## 2026-06-02 pre-open check note
+
+Pre-open check around `08:06 JST`:
+
+- Ran `op run --env-file infra/env.production -- uv run python scripts/production-preopen-check.py --timeout 30`.
+- Result was `OK 59 / WARN 0 / NG 1 / SKIP 0` because `feeder kabu logs` reported `kabu auth (HTTP 401)`.
+- Feeder had actually recovered: after the initial `PUT /kabusapi/register` returned `401`, it invalidated the token, fetched a new token with `POST /kabusapi/token` `200`, ran `PUT /kabusapi/unregister/all` `200`, then registered the 2026-06-02 watchlist with `PUT /kabusapi/register` `200`.
+- 2026-06-02 watchlist was populated with 30 symbols, `daily_ohlcv` latest date was `2026-06-01`, live positions were empty, and OMS Live allowed symbols matched the watchlist.
+- Follow-up after close: update `scripts/production-preopen-check.py` so `kabusapi/register "HTTP/1.1 200 OK"` is treated as a successful feeder/kabu recovery signal. The current script only treats `token 200` and `unregister/all 200` as OK, so a recovered 401 can remain a false-positive NG when `register 200` is the latest meaningful state.
+
 ## 2026-06-01 production redeploy and pre-open recheck
 
 Production reflection follow-up:

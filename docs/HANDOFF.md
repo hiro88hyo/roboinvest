@@ -139,6 +139,14 @@ op run --env-file infra/env.production -- uv run python scripts/health-check.py 
 op run --env-file infra/env.production -- docker compose --env-file infra/env.production -f infra/docker-compose.prod.yml ps
 ```
 
+Production deploy:
+
+```bash
+bash scripts/deploy-production.sh --apply --kabu-offline
+```
+
+詳細手順は [docs/runbook/production-deploy.md](runbook/production-deploy.md) を参照。
+
 ## 7. Test And Lint Conventions
 
 - Python は `uv` を使う。`pip` / `poetry` 直叩きは避ける。
