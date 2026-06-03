@@ -96,6 +96,9 @@ class StreamRunner:
     _publish_summary_trade_modes: Counter[str] = field(default_factory=Counter, init=False)
     _publish_summary_sides: Counter[str] = field(default_factory=Counter, init=False)
     _publish_summary_topics: Counter[str] = field(default_factory=Counter, init=False)
+    _pending_live_order_deadlines: dict[tuple[str, str], float] = field(
+        default_factory=dict, init=False
+    )
 
     async def run(self, *, iterations: int | None = None) -> list[BatchStats]:
         results: list[BatchStats] = []
@@ -189,6 +192,10 @@ class StreamRunner:
             self._log_reject(signal, "same_day_reentry_after_sell", trade_mode)
             return _Decision(approved=False, kill_switch_fired=False)
 
+        if self._has_pending_live_order(signal=signal, trade_mode=trade_mode):
+            self._log_reject(signal, "pending_live_order", trade_mode)
+            return _Decision(approved=False, kill_switch_fired=False)
+
         entry_price: Decimal | None = None
         existing_qty: int | None = None
 
@@ -277,6 +284,7 @@ class StreamRunner:
                 "signal_source": order.signal_source.value,
             },
         )
+        self._mark_pending_live_order(signal=signal, trade_mode=trade_mode)
         self._record_publish_summary(
             trade_mode=order.trade_mode.value,
             side=order.side.value,
@@ -302,6 +310,35 @@ class StreamRunner:
             ),
         )
         return _Decision(approved=True, kill_switch_fired=False)
+
+    def _pending_live_order_key(self, signal: UnifiedTradeSignal) -> tuple[str, str]:
+        return (signal.symbol, signal.action.value)
+
+    def _prune_pending_live_orders(self, *, now: float) -> None:
+        expired = [
+            key for key, deadline in self._pending_live_order_deadlines.items() if deadline <= now
+        ]
+        for key in expired:
+            self._pending_live_order_deadlines.pop(key, None)
+
+    def _has_pending_live_order(self, *, signal: UnifiedTradeSignal, trade_mode: TradeMode) -> bool:
+        if trade_mode is not TradeMode.LIVE:
+            return False
+        now = self.monotonic()
+        self._prune_pending_live_orders(now=now)
+        return self._pending_live_order_key(signal) in self._pending_live_order_deadlines
+
+    def _mark_pending_live_order(
+        self, *, signal: UnifiedTradeSignal, trade_mode: TradeMode
+    ) -> None:
+        if trade_mode is not TradeMode.LIVE:
+            return
+        cooldown = self.settings.live_symbol_order_cooldown_seconds
+        if cooldown <= 0:
+            return
+        now = self.monotonic()
+        self._prune_pending_live_orders(now=now)
+        self._pending_live_order_deadlines[self._pending_live_order_key(signal)] = now + cooldown
 
     async def _rebudget_live_buy_quantity(
         self,

@@ -490,6 +490,41 @@ async def test_run_once_sendorder_rejected_records_no_fill_and_acks(
     assert rejected_fields["broker_message"] == "可能額が不足しております"
 
 
+async def test_run_once_sendorder_http_error_logs_broker_code(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    order = make_order_request(side=Side.BUY, quantity=100)
+    pubsub = _PubSubRouter(batches=[_pull_response([("a1", order.model_dump_json().encode())])])
+    supabase = _SupabaseRouter()
+    kabu = _KabuRouter(
+        sendorder_http_statuses=[500],
+        sendorder_responses=[{"Code": 21, "Message": "可能額が不足しております"}],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    caplog.set_level("ERROR", logger="oms_live.streaming.runner")
+
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, kabu=kabu, run_body=_body)
+
+    assert stats.filled == 0
+    assert stats.no_fills == 1
+    assert stats.acked == 1
+    failed = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "broker_order_failed"
+    ]
+    assert len(failed) == 1
+    failed_fields = vars(failed[0])
+    assert failed_fields["phase"] == "sendorder"
+    assert failed_fields["symbol"] == order.symbol
+    assert failed_fields["broker_status_code"] == 500
+    assert failed_fields["broker_code"] == 21
+    assert failed_fields["broker_message"] == "可能額が不足しております"
+
+
 async def test_run_once_retries_sendorder_after_auth_loss() -> None:
     order = make_order_request(side=Side.BUY, quantity=100)
     pubsub = _PubSubRouter(batches=[_pull_response([("a1", order.model_dump_json().encode())])])
@@ -533,7 +568,7 @@ async def test_run_once_poll_timeout_calls_cancel_and_acks_no_fill() -> None:
     )
 
     # monotonic を進めてタイムアウトを起こす
-    times = iter([0.0, 0.0, 100.0])
+    times = iter([0.0, 0.0, 0.0, 100.0])
 
     async def _body(runner: StreamRunner) -> Any:
         runner.monotonic = lambda: next(times)
@@ -546,6 +581,70 @@ async def test_run_once_poll_timeout_calls_cancel_and_acks_no_fill() -> None:
     # cancel が呼ばれていること
     cancel_calls = [r for r in kabu.requests if r.url.path.endswith("/cancelorder")]
     assert len(cancel_calls) == 1
+
+
+async def test_run_once_rejects_same_side_order_after_broker_timeout(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    order1 = make_order_request(symbol="6779", side=Side.SELL, quantity=100)
+    order2 = make_order_request(symbol="6779", side=Side.SELL, quantity=100)
+    pubsub = _PubSubRouter(
+        batches=[
+            _pull_response(
+                [
+                    ("a1", order1.model_dump_json().encode()),
+                    ("a2", order2.model_dump_json().encode()),
+                ]
+            )
+        ]
+    )
+    supabase = _SupabaseRouter()
+    kabu = _KabuRouter(
+        sendorder_responses=[{"Result": 0, "OrderId": "OID-PENDING"}],
+        order_states={
+            "OID-PENDING": [
+                _kabu_order_payload(
+                    order_id="OID-PENDING",
+                    symbol="6779",
+                    side="1",
+                    state=3,
+                    cum_qty=0,
+                    order_qty=100,
+                )
+            ]
+        },
+    )
+    settings = _settings(order_fill_timeout_seconds=0.0)
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    caplog.set_level("WARNING", logger="oms_live.streaming.runner")
+
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        kabu=kabu,
+        settings=settings,
+        run_body=_body,
+    )
+
+    assert stats.filled == 0
+    assert stats.no_fills == 1
+    assert stats.safety_rejected == 1
+    assert stats.acked == 2
+    send_calls = [r for r in kabu.requests if r.url.path.endswith("/sendorder")]
+    assert len(send_calls) == 1
+    rejected = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "order_safety_rejected"
+    ]
+    assert len(rejected) == 1
+    rejected_fields = vars(rejected[0])
+    assert rejected_fields["reason"] == "pending_broker_order"
+    assert rejected_fields["symbol"] == "6779"
+    assert rejected_fields["side"] == "SELL"
 
 
 async def test_run_once_poll_continues_through_state3_zero_cum_qty_then_filled_at_state5() -> None:

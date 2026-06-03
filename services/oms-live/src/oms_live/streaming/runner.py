@@ -82,6 +82,9 @@ class StreamRunner:
     sleep: Sleep = field(default=asyncio.sleep)
     monotonic: MonotonicClock = field(default=time.monotonic)
     wall_clock: WallClock = field(default_factory=lambda: lambda: datetime.now(UTC))
+    _pending_broker_order_deadlines: dict[tuple[str, str], float] = field(
+        default_factory=dict, init=False
+    )
 
     async def run(self, *, iterations: int | None = None) -> list[BatchStats]:
         """Pull → process → ack を ``iterations`` 回繰り返す。``None`` で無限ループ。"""
@@ -239,6 +242,26 @@ class StreamRunner:
             )
             return "dry_run_skipped"
 
+        if self._has_pending_broker_order(order):
+            logger.warning(
+                "live order rejected by pending broker order: order_id=%s symbol=%s side=%s",
+                order.order_id,
+                order.symbol,
+                order.side.value,
+                extra=event_extra(
+                    "order_safety_rejected",
+                    reason="pending_broker_order",
+                    order_id=str(order.order_id),
+                    symbol=order.symbol,
+                    side=order.side.value,
+                    quantity=order.quantity,
+                    unified_signal_id=str(order.unified_signal_id)
+                    if order.unified_signal_id
+                    else None,
+                ),
+            )
+            return "safety_rejected"
+
         # 1) sendorder
         payload = build_sendorder_payload(
             order,
@@ -251,7 +274,8 @@ class StreamRunner:
                 lambda: self.kabu.send_order(payload),
                 operation=f"sendorder symbol={order.symbol}",
             )
-        except KabuApiError:
+        except KabuApiError as exc:
+            broker_code, broker_message = _broker_error_fields(exc)
             logger.exception(
                 "kabu sendorder failed: symbol=%s signal_id=%s",
                 order.symbol,
@@ -264,6 +288,9 @@ class StreamRunner:
                     if order.unified_signal_id
                     else None,
                     order_id=str(order.order_id),
+                    broker_status_code=exc.status_code,
+                    broker_code=broker_code,
+                    broker_message=broker_message,
                 ),
             )
             return "no_fill"
@@ -303,6 +330,7 @@ class StreamRunner:
                 ),
             )
             return "no_fill"
+        self._mark_pending_broker_order(order)
 
         # 2) poll until State==3 (done) or timeout
         fill = await self._poll_until_filled(kabu_order_id)
@@ -310,6 +338,7 @@ class StreamRunner:
             # タイムアウト → cancel して no_fill 扱いで ack
             await self._best_effort_cancel(kabu_order_id)
             return "no_fill"
+        self._clear_pending_broker_order(order)
         if fill.filled_quantity == 0 or fill.fill_price is None:
             logger.info(
                 "live order finished without fill: symbol=%s reason=%s signal_id=%s",
@@ -396,6 +425,32 @@ class StreamRunner:
             ),
         )
         return "filled"
+
+    def _pending_broker_order_key(self, order: OrderRequest) -> tuple[str, str]:
+        return (order.symbol, order.side.value)
+
+    def _prune_pending_broker_orders(self, *, now: float) -> None:
+        expired = [
+            key for key, deadline in self._pending_broker_order_deadlines.items() if deadline <= now
+        ]
+        for key in expired:
+            self._pending_broker_order_deadlines.pop(key, None)
+
+    def _has_pending_broker_order(self, order: OrderRequest) -> bool:
+        now = self.monotonic()
+        self._prune_pending_broker_orders(now=now)
+        return self._pending_broker_order_key(order) in self._pending_broker_order_deadlines
+
+    def _mark_pending_broker_order(self, order: OrderRequest) -> None:
+        cooldown = self.settings.oms_live_pending_order_cooldown_seconds
+        if cooldown <= 0:
+            return
+        now = self.monotonic()
+        self._prune_pending_broker_orders(now=now)
+        self._pending_broker_order_deadlines[self._pending_broker_order_key(order)] = now + cooldown
+
+    def _clear_pending_broker_order(self, order: OrderRequest) -> None:
+        self._pending_broker_order_deadlines.pop(self._pending_broker_order_key(order), None)
 
     async def _poll_until_filled(
         self, kabu_order_id: str, *, timeout_seconds: float | None = None
@@ -830,7 +885,8 @@ class StreamRunner:
                 lambda: self.kabu.send_order(payload),
                 operation=f"sendorder symbol={order.symbol}",
             )
-        except KabuApiError:
+        except KabuApiError as exc:
+            broker_code, broker_message = _broker_error_fields(exc)
             logger.exception(
                 "closeout sendorder failed: symbol=%s",
                 order.symbol,
@@ -839,6 +895,9 @@ class StreamRunner:
                     phase="closeout_sendorder",
                     symbol=order.symbol,
                     order_id=str(order.order_id),
+                    broker_status_code=exc.status_code,
+                    broker_code=broker_code,
+                    broker_message=broker_message,
                 ),
             )
             return "no_fill", Decimal("0")
@@ -959,6 +1018,12 @@ def _summarize_order_state(state: Any) -> dict[str, Any]:
             for d in state.details
         ],
     }
+
+
+def _broker_error_fields(exc: KabuApiError) -> tuple[Any, Any]:
+    if isinstance(exc.body, dict):
+        return exc.body.get("Code"), exc.body.get("Message")
+    return None, None
 
 
 def _parse_order(msg: PulledMessage) -> OrderRequest | None:

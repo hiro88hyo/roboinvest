@@ -615,6 +615,92 @@ async def test_live_buy_uses_signal_price_without_position_price_lookup() -> Non
     assert position_price_calls == []
 
 
+async def test_live_duplicate_buy_is_rejected_while_order_pending(caplog: Any) -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response(
+                [
+                    (
+                        "a1",
+                        _unified_payload(
+                            symbol="6840",
+                            action=Action.BUY,
+                            price="1043",
+                            stop_loss_price="1000",
+                        ),
+                    ),
+                    (
+                        "a2",
+                        _unified_payload(
+                            symbol="6840",
+                            action=Action.BUY,
+                            price="1043",
+                            stop_loss_price="1000",
+                        ),
+                    ),
+                ]
+            )
+        ]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[
+            _system_status_row(trade_mode="live"),
+            _system_status_row(trade_mode="live"),
+        ],
+        positions_quantity_rows=[[]],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    caplog.set_level(logging.INFO, logger="gateway.streaming.runner")
+
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+
+    assert stats.approved == 1
+    assert stats.rejected == 1
+    assert len(pubsub.published) == 1
+    rejected = [
+        record for record in caplog.records if getattr(record, "event", None) == "signal_rejected"
+    ]
+    assert [record.reason for record in rejected] == ["pending_live_order"]
+
+
+async def test_live_duplicate_sell_is_rejected_while_order_pending(caplog: Any) -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response(
+                [
+                    ("a1", _unified_payload(symbol="186A", action=Action.SELL)),
+                    ("a2", _unified_payload(symbol="186A", action=Action.SELL)),
+                ]
+            )
+        ]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[
+            _system_status_row(trade_mode="live"),
+            _system_status_row(trade_mode="live"),
+        ],
+        positions_quantity_rows=[[{"quantity": 200, "side": "LONG"}]],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    caplog.set_level(logging.INFO, logger="gateway.streaming.runner")
+
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+
+    assert stats.approved == 1
+    assert stats.rejected == 1
+    assert len(pubsub.published) == 1
+    rejected = [
+        record for record in caplog.records if getattr(record, "event", None) == "signal_rejected"
+    ]
+    assert [record.reason for record in rejected] == ["pending_live_order"]
+
+
 async def test_paper_buy_falls_back_to_daily_ohlcv_when_no_position() -> None:
     pubsub = _PubSubRouter(
         pull_batches=[

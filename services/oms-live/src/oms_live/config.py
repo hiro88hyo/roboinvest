@@ -41,6 +41,10 @@ class OmsLiveSettings(BaseSettings):
 
     order_fill_poll_interval_seconds: float = 1.0
     order_fill_timeout_seconds: float = 30.0
+    oms_live_pending_order_cooldown_seconds: float = 180.0
+    """通常注文で broker order が未終端のまま timeout した後、同一銘柄・同一方向の
+    追加注文を止める秒数。Gateway の重複 publish 対策をすり抜けた場合の最後の防御。"""
+
     closeout_order_fill_timeout_seconds: float = 2400.0
     """14:50 closeout 注文の約定監視タイムアウト。
 
