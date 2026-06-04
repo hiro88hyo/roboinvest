@@ -28,7 +28,8 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, time as datetime_time
+from datetime import datetime
+from datetime import time as datetime_time
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
