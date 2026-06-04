@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from decimal import Decimal
 
 from trade_contracts.enums import Action, OrderType, Side, TradeMode
 from trade_contracts.order import OrderRequest
@@ -26,10 +27,17 @@ def build(
     signal: UnifiedTradeSignal,
     quantity: int,
     trade_mode: TradeMode,
+    entry_price: Decimal | None = None,
+    default_stop_loss_spread_pct: Decimal | None = None,
     created_at: datetime | None = None,
 ) -> OrderRequest:
     if quantity <= 0:
         raise ValueError(f"quantity must be positive, got: {quantity}")
+    stop_loss_price = _stop_loss_price(
+        signal=signal,
+        entry_price=entry_price,
+        default_stop_loss_spread_pct=default_stop_loss_spread_pct,
+    )
     return OrderRequest(
         unified_signal_id=signal.signal_id,
         symbol=signal.symbol,
@@ -38,9 +46,26 @@ def build(
         order_type=OrderType.MARKET,
         trade_mode=trade_mode,
         signal_source=signal.signal_source,
-        stop_loss_price=signal.stop_loss_price,
+        stop_loss_price=stop_loss_price,
         target_price=signal.target_price,
         trailing_stop_pct=signal.trailing_stop_pct,
         max_hold_days=signal.max_hold_days,
         created_at=created_at or datetime.now(UTC),
     )
+
+
+def _stop_loss_price(
+    *,
+    signal: UnifiedTradeSignal,
+    entry_price: Decimal | None,
+    default_stop_loss_spread_pct: Decimal | None,
+) -> Decimal | None:
+    if signal.stop_loss_price is not None:
+        return signal.stop_loss_price
+    if signal.action is not Action.BUY:
+        return None
+    if entry_price is None or default_stop_loss_spread_pct is None:
+        return None
+    if entry_price <= 0 or default_stop_loss_spread_pct <= 0:
+        return None
+    return entry_price * (Decimal("1") - default_stop_loss_spread_pct)

@@ -271,6 +271,8 @@ class StreamRunner:
             signal=signal,
             quantity=quantity,
             trade_mode=trade_mode,
+            entry_price=entry_price,
+            default_stop_loss_spread_pct=self.risk_config.default_stop_loss_spread_pct,
             created_at=now,
         )
         topic = resolve_topic(trade_mode, self.routing)

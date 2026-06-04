@@ -28,9 +28,11 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, time as datetime_time
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx
 from google.api_core.exceptions import GoogleAPICallError, NotFound
@@ -114,6 +116,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument("--no-pubsub-smoke", action="store_true")
     parser.add_argument(
+        "--refresh-kabu-token",
+        action="store_true",
+        help=(
+            "Clear the shared kabu token cache and restart oms-live/feeder before checks. "
+            "Allowed only during the JST pre-open window unless --allow-market-hours-refresh "
+            "is also set."
+        ),
+    )
+    parser.add_argument(
+        "--allow-market-hours-refresh",
+        action="store_true",
+        help="Allow --refresh-kabu-token outside the JST 05:00-09:00 pre-open window.",
+    )
+    parser.add_argument(
         "--kabu-offline",
         action="store_true",
         help=(
@@ -148,6 +164,10 @@ def _compose_cmd(args: argparse.Namespace, *extra: str) -> list[str]:
     ]
 
 
+def _truncate_output(proc: subprocess.CompletedProcess[str]) -> str:
+    return (proc.stderr or proc.stdout).strip()[:240]
+
+
 def _load_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -174,6 +194,43 @@ def check_expected_env(reporter: Reporter) -> None:
     for key in ("TRADE_MODE", "OMS_LIVE_DRY_RUN", "GEMINI_MODEL", "OMS_LIVE_MAX_QTY_PER_ORDER"):
         value = os.environ.get(key, "")
         reporter.emit("OK" if value else "WARN", key, value or "missing")
+
+
+def refresh_kabu_token(reporter: Reporter, args: argparse.Namespace) -> None:
+    reporter.section("kabu token refresh")
+    if args.kabu_offline:
+        reporter.emit("SKIP", "refresh", "kabu-offline")
+        return
+
+    now = datetime.now(ZoneInfo("Asia/Tokyo")).time()
+    in_preopen = datetime_time(5, 0) <= now < datetime_time(9, 0)
+    if not in_preopen and not args.allow_market_hours_refresh:
+        reporter.emit(
+            "NG",
+            "pre-open window",
+            "use --allow-market-hours-refresh to refresh outside 05:00-09:00 JST",
+        )
+        return
+
+    unlink_script = (
+        "import os; from pathlib import Path; "
+        "p = Path(os.environ.get('KABU_TOKEN_CACHE_FILE', '/var/lib/kabu/token_cache.json')); "
+        "p.unlink(missing_ok=True); print(p)"
+    )
+    proc = _run(
+        _compose_cmd(args, "exec", "-T", "feeder", "python", "-c", unlink_script),
+        timeout=args.timeout,
+    )
+    if proc.returncode != 0:
+        reporter.emit("NG", "clear token cache", _truncate_output(proc))
+        return
+    reporter.emit("OK", "clear token cache", proc.stdout.strip())
+
+    proc = _run(_compose_cmd(args, "restart", "oms-live", "feeder"), timeout=args.timeout)
+    if proc.returncode != 0:
+        reporter.emit("NG", "restart kabu services", _truncate_output(proc))
+        return
+    reporter.emit("OK", "restart kabu services", "oms-live, feeder")
 
 
 def check_compose(reporter: Reporter, args: argparse.Namespace) -> None:
@@ -449,12 +506,15 @@ def check_feeder_logs(reporter: Reporter, args: argparse.Namespace) -> None:
     latest_status = ""
     latest_detail = ""
     for line in text.splitlines():
-        if "kabusapi/token" in line and '"HTTP/1.1 200 OK"' in line:
+        if "kabusapi/token" in line and "200 OK" in line:
             latest_status = "OK"
             latest_detail = "token 200"
-        elif "kabusapi/unregister/all" in line and '"HTTP/1.1 200 OK"' in line:
+        elif "kabusapi/unregister/all" in line and "200 OK" in line:
             latest_status = "OK"
             latest_detail = "unregister/all 200"
+        elif "kabusapi/register" in line and "200 OK" in line:
+            latest_status = "OK"
+            latest_detail = "register 200"
         elif "HTTP 502" in line or "Bad Gateway" in line:
             latest_status = "BAD_GATEWAY"
             latest_detail = "HTTP 502"
@@ -482,6 +542,8 @@ def main() -> int:
     reporter = Reporter(quiet=args.quiet)
 
     check_expected_env(reporter)
+    if args.refresh_kabu_token:
+        refresh_kabu_token(reporter, args)
     check_compose(reporter, args)
     check_container_env(reporter, args)
     check_supabase(reporter, args)

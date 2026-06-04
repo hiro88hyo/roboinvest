@@ -38,16 +38,43 @@ def test_build_buy_order(unified_signal_factory) -> None:  # type: ignore[no-unt
     assert order.created_at == stamp
 
 
+def test_build_buy_order_fills_default_stop_loss(unified_signal_factory) -> None:  # type: ignore[no-untyped-def]
+    signal = unified_signal_factory(action=Action.BUY, stop_loss_price=None)
+    order = order_builder.build(
+        signal=signal,
+        quantity=100,
+        trade_mode=TradeMode.LIVE,
+        entry_price=Decimal("1719.6"),
+        default_stop_loss_spread_pct=Decimal("0.02"),
+    )
+    assert order.stop_loss_price == Decimal("1685.208")
+
+
+def test_build_buy_order_keeps_explicit_stop_loss(unified_signal_factory) -> None:  # type: ignore[no-untyped-def]
+    signal = unified_signal_factory(action=Action.BUY, stop_loss_price=Decimal("1650"))
+    order = order_builder.build(
+        signal=signal,
+        quantity=100,
+        trade_mode=TradeMode.LIVE,
+        entry_price=Decimal("1719.6"),
+        default_stop_loss_spread_pct=Decimal("0.02"),
+    )
+    assert order.stop_loss_price == Decimal("1650")
+
+
 def test_build_sell_order(unified_signal_factory) -> None:  # type: ignore[no-untyped-def]
     signal = unified_signal_factory(action=Action.SELL, signal_source=SignalSource.RULE)
     order = order_builder.build(
         signal=signal,
         quantity=200,
         trade_mode=TradeMode.PAPER,
+        entry_price=Decimal("1719.6"),
+        default_stop_loss_spread_pct=Decimal("0.02"),
     )
     assert order.side is Side.SELL
     assert order.trade_mode is TradeMode.PAPER
     assert order.signal_source is SignalSource.RULE
+    assert order.stop_loss_price is None
 
 
 def test_build_hold_raises(unified_signal_factory) -> None:  # type: ignore[no-untyped-def]

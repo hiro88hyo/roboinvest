@@ -113,8 +113,13 @@ Weak GO の上に、最小サイズの実発注 e2e を完了させる。
 ```bash
 set -a && . infra/.op.service-account.env && set +a
 op run --env-file infra/env.production -- \
-  uv run python scripts/production-preopen-check.py
+  uv run python scripts/production-preopen-check.py --timeout 30 --refresh-kabu-token
 ```
+
+kabu token は Feeder / OMS Live の共有 cache とプロセス内メモリに残る。
+通常の寄り前チェックでは `--refresh-kabu-token` で共有 cache をクリアし、
+`oms-live` と `feeder` を再起動してから確認する。
+このオプションは JST 05:00-09:00 の寄り前だけ実行できる。
 
 kabuステーション / Windows proxy を意図的に止めている休日・夜間は、feeder の kabu 接続エラーだけを WARN 扱いにする。
 

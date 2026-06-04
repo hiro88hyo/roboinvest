@@ -78,7 +78,7 @@
    - 詳細は [docs/handoff/2026-06-operations-log.md](handoff/2026-06-operations-log.md) を参照。
 
 1. **翌営業日寄り前に one-command pre-open check を再実行する**
-   - kabu station / Windows proxy 起動後に `op run --env-file infra/env.production -- uv run python scripts/production-preopen-check.py --timeout 30` を実行する。
+   - kabu station / Windows proxy 起動後に `op run --env-file infra/env.production -- uv run python scripts/production-preopen-check.py --timeout 30 --refresh-kabu-token` を実行する。
    - 2026-05-31 は Cloud Logging 反映後の全 service rebuild/restart 後に `OK 60 / WARN 0 / NG 0` を確認済み。
    - 2026-06-01 はスケジュール発火後に watchlist / daily_ohlcv を確認し、`feeder` が `Up`、`feeder kabu` が `token 200` または `unregister/all 200`、`positions(live)` が空であることを再確認する。
 
@@ -134,7 +134,7 @@ Production 系の確認例:
 
 ```bash
 set -a && . infra/.op.service-account.env && set +a
-op run --env-file infra/env.production -- uv run python scripts/production-preopen-check.py --timeout 30
+op run --env-file infra/env.production -- uv run python scripts/production-preopen-check.py --timeout 30 --refresh-kabu-token
 op run --env-file infra/env.production -- uv run python scripts/health-check.py --check supabase --timeout 30
 op run --env-file infra/env.production -- docker compose --env-file infra/env.production -f infra/docker-compose.prod.yml ps
 ```
