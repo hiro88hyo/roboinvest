@@ -1,5 +1,35 @@
 # June 2026 Operations Log
 
+## 2026-06-06 MAX_HOLD_MINUTES follow-up note
+
+PR #77 (`Add live risk guards for hold time and closeout`) merged `MAX_HOLD_MINUTES=45`
+as an initial live/day safety guard. Treat this as a temporary tail-risk control, not as
+the final profit-maximizing exit model.
+
+Rationale:
+
+- Weekly review for `2026-06-01` to `2026-06-05` showed short holds were profitable
+  while long holds carried most of the downside:
+  - `<=15m`: `+30,960円`
+  - `15-45m`: `-7,020円`
+  - `45-90m`: `-4,710円`
+  - `>90m`: `-25,250円`
+- The `6072` carry/late-exit loss (`-29,450円`) was a tail event that should be
+  prevented by guardrails before trying to optimize signal quality.
+- However, fixed 45-minute forced exits can also cut off valid winners such as longer
+  momentum moves.
+
+Future consideration:
+
+- Observe several sessions of `exit_reason=max_hold_minutes` and compare realized PnL
+  against hypothetical `30m / 45m / 60m` thresholds.
+- Consider replacing the hard 45-minute market exit with a conditional rule:
+  - force exit after 45 minutes only when unrealized PnL is negative or deteriorating,
+  - switch profitable positions to tighter trailing stop after 45 minutes,
+  - keep price-based stop-loss above time-based rules,
+  - keep `14:50` day closeout as the final invariant.
+- Keep swing positions excluded from `MAX_HOLD_MINUTES`.
+
 ## 2026-06-02 pre-open check note
 
 Pre-open check around `08:06 JST`:
