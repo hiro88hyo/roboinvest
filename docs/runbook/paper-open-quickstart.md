@@ -2,6 +2,8 @@
 
 明日の寄り付き前に最初に打つコマンドだけを抜いた最短版。
 詳細な判断基準は `docs/runbook/paper-open-checklist.md` を参照。
+急落警戒で live を止めて paper 観測にする日は
+[`risk-off-paper-day.md`](risk-off-paper-day.md) も先に確認する。
 
 ## 1. Load 1Password Service Account
 

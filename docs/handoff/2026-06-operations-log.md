@@ -1,5 +1,30 @@
 # June 2026 Operations Log
 
+## 2026-06-06 risk-off paper plan
+
+Friday US market selloff and weak Nikkei futures made Monday a risk-off session.
+Decision: do not run live trading; use production paper trading to observe how the
+pipeline behaves under a sharp down-open.
+
+Prepared state:
+
+- Added `docs/runbook/risk-off-paper-day.md`.
+- Added `scripts/prepare-risk-off-paper-day.py` to verify live/paper positions and
+  switch `system_status` to `trade_mode=paper`, `trading_style=day`,
+  `is_trading_allowed=true`.
+- Local `infra/env.production` was changed to `TRADE_MODE=paper` and
+  `OMS_LIVE_DRY_RUN=true`.
+- Ran the prepare script with `--apply`. Cloud Supabase now has
+  `trade_mode=paper`, `trading_style=day`, `is_trading_allowed=true`.
+- Confirmed `positions(live)` and `positions(paper)` were both empty at preparation time.
+
+Monday focus:
+
+- Observe whether the strategy stack buys into the sharp down-open in paper mode.
+- Check `strategy_logs`, `aggregator_logs`, Gateway `signal_rejected` /
+  `order_published`, `trades_paper`, and paper `positions`.
+- Confirm 14:50 paper closeout clears day positions if any are opened.
+
 ## 2026-06-06 MAX_HOLD_MINUTES follow-up note
 
 PR #77 (`Add live risk guards for hold time and closeout`) merged `MAX_HOLD_MINUTES=45`
