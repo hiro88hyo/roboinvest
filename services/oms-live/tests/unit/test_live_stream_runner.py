@@ -145,6 +145,7 @@ class _KabuRouter:
     order_states: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     cancel_response: dict[str, Any] = field(default_factory=lambda: {"Result": 0, "OrderId": ""})
     position_rows: list[dict[str, Any]] = field(default_factory=list)
+    position_row_batches: list[list[dict[str, Any]]] = field(default_factory=list)
     sendorder_status: int = 200
     cancel_status: int = 200
     requests: list[httpx.Request] = field(default_factory=list)
@@ -176,6 +177,8 @@ class _KabuRouter:
             # 最後の 1 件は repeat 想定 (poll が継続したら同じ状態を返す)
             return httpx.Response(200, json=[payload])
         if method == "GET" and path.endswith("/positions"):
+            if self.position_row_batches:
+                return httpx.Response(200, json=self.position_row_batches.pop(0))
             return httpx.Response(200, json=self.position_rows)
         return httpx.Response(404, text=f"unmocked: {method} {path}")
 
@@ -920,7 +923,10 @@ async def test_run_closeout_sells_each_position_and_writes_trade_and_pnl() -> No
     )
     kabu = _KabuRouter(
         sendorder_responses=[{"Result": 0, "OrderId": "OID-CO-1"}],
-        position_rows=[_kabu_position_row(symbol="7203", quantity=100, price="1000")],
+        position_row_batches=[
+            [_kabu_position_row(symbol="7203", quantity=100, price="1000")],
+            [],
+        ],
         order_states={
             "OID-CO-1": [
                 _kabu_order_payload(
@@ -958,7 +964,11 @@ async def test_run_closeout_handles_sendorder_rejected_as_no_fill() -> None:
     )
     kabu = _KabuRouter(
         sendorder_responses=[{"Result": 4, "Message": "no liquidity"}],
-        position_rows=[_kabu_position_row(symbol="7203", quantity=100, price="1000")],
+        position_row_batches=[
+            [_kabu_position_row(symbol="7203", quantity=100, price="1000")],
+            [_kabu_position_row(symbol="7203", quantity=100, price="1000")],
+            [_kabu_position_row(symbol="7203", quantity=100, price="1000")],
+        ],
     )
 
     async def _body(runner: StreamRunner) -> Any:
@@ -969,11 +979,16 @@ async def test_run_closeout_handles_sendorder_rejected_as_no_fill() -> None:
     assert result.positions_seen == 1
     assert result.closed == 0
     assert result.no_fills == 1
-    # 約定無しなので realized_pnl 加算は呼ばれない
+    # 約定無しなので realized_pnl 加算は呼ばれないが、postcheck で残建玉を検知して停止する
     methods = [(r.method, r.url.path) for r in supabase.requests]
     assert ("POST", "/rest/v1/trades_live") not in methods
     assert ("DELETE", "/rest/v1/positions") not in methods
-    assert ("PATCH", "/rest/v1/system_status") not in methods
+    patches = [
+        json.loads(r.content.decode())
+        for r in supabase.requests
+        if r.method == "PATCH" and r.url.path == "/rest/v1/system_status"
+    ]
+    assert {"is_trading_allowed": False} in patches
 
 
 async def test_run_closeout_read_system_status_failure_returns_skipped() -> None:
@@ -1000,7 +1015,11 @@ async def test_run_closeout_uses_closeout_timeout_before_cancel(
     )
     kabu = _KabuRouter(
         sendorder_responses=[{"Result": 0, "OrderId": "OID-CO-TIMEOUT"}],
-        position_rows=[_kabu_position_row(symbol="7203", quantity=100, price="1000")],
+        position_row_batches=[
+            [_kabu_position_row(symbol="7203", quantity=100, price="1000")],
+            [_kabu_position_row(symbol="7203", quantity=100, price="1000")],
+            [_kabu_position_row(symbol="7203", quantity=100, price="1000")],
+        ],
         order_states={
             "OID-CO-TIMEOUT": [
                 _kabu_order_payload(
@@ -1036,6 +1055,12 @@ async def test_run_closeout_uses_closeout_timeout_before_cancel(
     assert invariant_fields["ok"] is False
     assert invariant_fields["supabase_remaining"] == 0
     assert invariant_fields["kabu_remaining"] == 1
+    patches = [
+        json.loads(r.content.decode())
+        for r in supabase.requests
+        if r.method == "PATCH" and r.url.path == "/rest/v1/system_status"
+    ]
+    assert {"is_trading_allowed": False} in patches
 
 
 async def test_run_closeout_logs_critical_when_position_remains(
@@ -1086,6 +1111,12 @@ async def test_run_closeout_logs_critical_when_position_remains(
     assert result.closed == 0
     assert result.no_fills == 0
     assert not any(req.url.path.endswith("/sendorder") for req in kabu.requests)
+    patches = [
+        json.loads(r.content.decode())
+        for r in supabase.requests
+        if r.method == "PATCH" and r.url.path == "/rest/v1/system_status"
+    ]
+    assert {"is_trading_allowed": False} in patches
     messages = [r.getMessage() for r in caplog.records]
     assert any("precheck position drift" in m for m in messages)
     assert any("blocked by position drift" in m for m in messages)
@@ -1115,9 +1146,12 @@ async def test_run_closeout_processes_multiple_positions_in_one_batch() -> None:
             {"Result": 0, "OrderId": "OID-CO-1"},
             {"Result": 0, "OrderId": "OID-CO-2"},
         ],
-        position_rows=[
-            _kabu_position_row(symbol="7203", quantity=100, price="1000"),
-            _kabu_position_row(symbol="9984", quantity=100, price="2000"),
+        position_row_batches=[
+            [
+                _kabu_position_row(symbol="7203", quantity=100, price="1000"),
+                _kabu_position_row(symbol="9984", quantity=100, price="2000"),
+            ],
+            [],
         ],
         order_states={
             "OID-CO-1": [

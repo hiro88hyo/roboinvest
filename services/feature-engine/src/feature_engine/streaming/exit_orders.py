@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from trade_contracts.enums import OrderType, Side, SignalSource, TradeMode, TradeType
+from trade_contracts.enums import OrderType, Side, SignalSource, TradeMode, TradeType, TradingStyle
 from trade_contracts.market import TickData
 from trade_contracts.order import OrderRequest
 
@@ -38,6 +38,7 @@ class ExitOrderMonitor:
         *,
         tick: TickData,
         positions: list[PositionSnapshot],
+        max_hold_minutes: int | None = None,
     ) -> list[ExitTrigger]:
         active_keys: set[tuple[str, TradeType]] = set()
         triggers: list[ExitTrigger] = []
@@ -49,7 +50,12 @@ class ExitOrderMonitor:
             active_keys.add(key)
             self._update_trailing_peak(key, pos, tick.price)
 
-            condition = _exit_condition(pos, tick.price, self._trailing_peaks.get(key))
+            condition = _exit_condition(
+                pos,
+                tick,
+                self._trailing_peaks.get(key),
+                max_hold_minutes=max_hold_minutes,
+            )
             if condition is None:
                 self._clear_pending_for_position(key)
                 continue
@@ -119,9 +125,12 @@ def topic_for_exit_order(trigger: ExitTrigger, *, live_topic: str, paper_topic: 
 
 def _exit_condition(
     pos: PositionSnapshot,
-    price: Decimal,
+    tick: TickData,
     trailing_peak: Decimal | None,
+    *,
+    max_hold_minutes: int | None,
 ) -> tuple[str, Decimal] | None:
+    price = tick.price
     if pos.stop_loss_price is not None and price <= pos.stop_loss_price:
         return ("stop_loss", pos.stop_loss_price)
     if pos.target_price is not None and price >= pos.target_price:
@@ -135,4 +144,12 @@ def _exit_condition(
         threshold = trailing_peak * (Decimal("1") - pos.trailing_stop_pct)
         if price <= threshold:
             return ("trailing_stop", threshold)
+    if (
+        max_hold_minutes is not None
+        and max_hold_minutes > 0
+        and pos.holding_type is TradingStyle.DAY
+    ):
+        held_seconds = (tick.timestamp - pos.opened_at).total_seconds()
+        if held_seconds >= max_hold_minutes * 60:
+            return ("max_hold_minutes", Decimal(max_hold_minutes))
     return None

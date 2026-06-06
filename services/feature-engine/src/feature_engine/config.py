@@ -37,6 +37,7 @@ class FeatureEngineSettings(BaseSettings):
     pubsub_pull_max_messages: int = 100
     pubsub_ack_deadline_seconds: int = 30
     market_data_stale_warn_seconds: float | None = 180.0
+    max_hold_minutes: int | None = None
 
     storage_tick_resolution: TickResolution = "1s"
     storage_warm_dir: Path = Path("./data/warm")

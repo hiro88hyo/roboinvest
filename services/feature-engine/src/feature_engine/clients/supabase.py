@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Self
 
 import httpx
 import polars as pl
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
-from trade_contracts.enums import TradeType
+from trade_contracts.enums import TradeType, TradingStyle
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +40,8 @@ class PositionSnapshot:
     quantity: int
     entry_price: Decimal
     current_price: Decimal
+    opened_at: datetime
+    holding_type: TradingStyle
     target_price: Decimal | None = None
     stop_loss_price: Decimal | None = None
     trailing_stop_pct: Decimal | None = None
@@ -91,7 +93,7 @@ class SupabaseReader:
         params = {
             "select": (
                 "symbol,trade_type,quantity,entry_price,current_price,"
-                "target_price,stop_loss_price,trailing_stop_pct"
+                "target_price,stop_loss_price,trailing_stop_pct,opened_at,holding_type"
             ),
             "symbol": f"eq.{symbol}",
         }
@@ -105,6 +107,8 @@ class SupabaseReader:
                     quantity=int(r["quantity"]),
                     entry_price=Decimal(str(r["entry_price"])),
                     current_price=Decimal(str(r.get("current_price", r["entry_price"]))),
+                    opened_at=_parse_datetime(r["opened_at"]),
+                    holding_type=TradingStyle(str(r["holding_type"])),
                     target_price=_optional_decimal(r.get("target_price")),
                     stop_loss_price=_optional_decimal(r.get("stop_loss_price")),
                     trailing_stop_pct=_optional_decimal(r.get("trailing_stop_pct")),
@@ -209,6 +213,12 @@ def _optional_decimal(value: Any) -> Decimal | None:
     if value is None:
         return None
     return Decimal(str(value))
+
+
+def _parse_datetime(value: Any) -> datetime:
+    if not isinstance(value, str):
+        raise SupabaseError(f"invalid opened_at value: {value!r}")
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
 @dataclass(slots=True)

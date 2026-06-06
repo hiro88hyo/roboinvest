@@ -8,7 +8,7 @@ from decimal import Decimal
 import httpx
 from feature_engine.clients.supabase import PositionSnapshot, SupabaseReader, SupabaseWriter
 from feature_engine.streaming.position_updater import apply_tick, update_positions_for_tick
-from trade_contracts.enums import TradeType
+from trade_contracts.enums import TradeType, TradingStyle
 from trade_contracts.market import TickData
 
 Handler = Callable[[httpx.Request], Coroutine[None, None, httpx.Response]]
@@ -35,6 +35,8 @@ def test_apply_tick_filters_other_symbols() -> None:
             quantity=100,
             entry_price=Decimal("8000"),
             current_price=Decimal("8000"),
+            opened_at=datetime(2026, 1, 20, 12, 0, tzinfo=UTC),
+            holding_type=TradingStyle.DAY,
         )
     ]
     assert apply_tick(_tick("7203"), positions) == []
@@ -48,6 +50,8 @@ def test_apply_tick_skips_zero_quantity() -> None:
             quantity=0,
             entry_price=Decimal("2500"),
             current_price=Decimal("2500"),
+            opened_at=datetime(2026, 1, 20, 12, 0, tzinfo=UTC),
+            holding_type=TradingStyle.DAY,
         )
     ]
     assert apply_tick(_tick("7203"), positions) == []
@@ -61,6 +65,8 @@ def test_apply_tick_computes_pnl_for_both_trade_types() -> None:
             quantity=100,
             entry_price=Decimal("2500"),
             current_price=Decimal("2500"),
+            opened_at=datetime(2026, 1, 20, 12, 0, tzinfo=UTC),
+            holding_type=TradingStyle.DAY,
         ),
         PositionSnapshot(
             symbol="7203",
@@ -68,6 +74,8 @@ def test_apply_tick_computes_pnl_for_both_trade_types() -> None:
             quantity=50,
             entry_price=Decimal("2400"),
             current_price=Decimal("2400"),
+            opened_at=datetime(2026, 1, 20, 12, 0, tzinfo=UTC),
+            holding_type=TradingStyle.DAY,
         ),
     ]
     updates = apply_tick(_tick("7203", Decimal("2600")), positions)
@@ -86,6 +94,8 @@ def test_apply_tick_handles_loss() -> None:
             quantity=100,
             entry_price=Decimal("2800"),
             current_price=Decimal("2800"),
+            opened_at=datetime(2026, 1, 20, 12, 0, tzinfo=UTC),
+            holding_type=TradingStyle.DAY,
         )
     ]
     updates = apply_tick(_tick("7203", Decimal("2600")), positions)
@@ -113,12 +123,16 @@ async def test_update_positions_for_tick_patches_rows() -> None:
             "trade_type": "live",
             "quantity": 100,
             "entry_price": "2500",
+            "opened_at": "2026-01-20T12:00:00+00:00",
+            "holding_type": "day",
         },
         {
             "symbol": "7203",
             "trade_type": "paper",
             "quantity": 50,
             "entry_price": "2400",
+            "opened_at": "2026-01-20T12:00:00+00:00",
+            "holding_type": "day",
         },
     ]
     transport = httpx.MockTransport(_split_handler(captured, rows))

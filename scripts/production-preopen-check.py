@@ -73,6 +73,7 @@ CORE_SERVICES = (
 EXPECTED_ENV = {
     "AI_MAX_OUTPUT_TOKENS": "2048",
     "LIVE_DAY_NEW_BUY_START_TIME": "09:15",
+    "MAX_HOLD_MINUTES": "45",
     "MIN_CONFIDENCE_RULE_ONLY": "0.5",
     "MIN_CONFIDENCE_AI_ONLY": "0.5",
     "MIN_CONFIDENCE_CONSENSUS": "0.3",
@@ -282,6 +283,7 @@ def check_container_env(reporter: Reporter, args: argparse.Namespace) -> None:
     reporter.section("container env")
     probes = {
         "strategy-ai": ("AI_MAX_OUTPUT_TOKENS", "GEMINI_MODEL"),
+        "feature-engine": ("MAX_HOLD_MINUTES",),
         "gateway": ("LIVE_DAY_NEW_BUY_START_TIME", "LIVE_DAY_NEW_BUY_CUTOFF_TIME", "TRADE_MODE"),
         "aggregator": (
             "MIN_CONFIDENCE_RULE_ONLY",

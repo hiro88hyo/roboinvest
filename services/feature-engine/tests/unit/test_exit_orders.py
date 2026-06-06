@@ -9,7 +9,7 @@ from feature_engine.streaming.exit_orders import (
     build_exit_order,
     topic_for_exit_order,
 )
-from trade_contracts.enums import Side, TradeMode, TradeType
+from trade_contracts.enums import Side, TradeMode, TradeType, TradingStyle
 from trade_contracts.market import TickData
 
 
@@ -25,8 +25,10 @@ def _tick(symbol: str = "7203", price: Decimal = Decimal("1000")) -> TickData:
 def _position(
     *,
     trade_type: TradeType = TradeType.LIVE,
+    holding_type: TradingStyle = TradingStyle.DAY,
     current_price: Decimal = Decimal("1000"),
     entry_price: Decimal = Decimal("1000"),
+    opened_at: datetime = datetime(2026, 6, 2, 0, 0, tzinfo=UTC),
     target_price: Decimal | None = None,
     stop_loss_price: Decimal | None = None,
     trailing_stop_pct: Decimal | None = None,
@@ -37,6 +39,8 @@ def _position(
         quantity=100,
         entry_price=entry_price,
         current_price=current_price,
+        opened_at=opened_at,
+        holding_type=holding_type,
         target_price=target_price,
         stop_loss_price=stop_loss_price,
         trailing_stop_pct=trailing_stop_pct,
@@ -77,6 +81,48 @@ def test_collect_triggers_trailing_stop_after_peak() -> None:
     assert len(triggers) == 1
     assert triggers[0].reason == "trailing_stop"
     assert triggers[0].threshold == Decimal("1045.00")
+
+
+def test_collect_triggers_max_hold_minutes() -> None:
+    monitor = ExitOrderMonitor()
+    triggers = monitor.collect_triggers(
+        tick=_tick(price=Decimal("1005")),
+        positions=[
+            _position(
+                opened_at=datetime(2026, 6, 1, 23, 14, 59, tzinfo=UTC),
+                stop_loss_price=Decimal("980"),
+            )
+        ],
+        max_hold_minutes=45,
+    )
+    assert len(triggers) == 1
+    assert triggers[0].reason == "max_hold_minutes"
+    assert triggers[0].threshold == Decimal("45")
+
+
+def test_collect_triggers_max_hold_ignores_younger_position() -> None:
+    monitor = ExitOrderMonitor()
+    triggers = monitor.collect_triggers(
+        tick=_tick(price=Decimal("1005")),
+        positions=[_position(opened_at=datetime(2026, 6, 1, 23, 30, 1, tzinfo=UTC))],
+        max_hold_minutes=45,
+    )
+    assert triggers == []
+
+
+def test_collect_triggers_max_hold_ignores_swing_position() -> None:
+    monitor = ExitOrderMonitor()
+    triggers = monitor.collect_triggers(
+        tick=_tick(price=Decimal("1005")),
+        positions=[
+            _position(
+                holding_type=TradingStyle.SWING,
+                opened_at=datetime(2026, 6, 1, 23, 0, 0, tzinfo=UTC),
+            )
+        ],
+        max_hold_minutes=45,
+    )
+    assert triggers == []
 
 
 def test_collect_triggers_deduplicates_while_condition_remains_true() -> None:

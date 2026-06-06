@@ -196,7 +196,11 @@ class StreamRunner:
         return "tick_processed"
 
     async def _publish_exit_orders(self, tick: TickData, positions: list[PositionSnapshot]) -> None:
-        triggers = self.exit_monitor.collect_triggers(tick=tick, positions=positions)
+        triggers = self.exit_monitor.collect_triggers(
+            tick=tick,
+            positions=positions,
+            max_hold_minutes=self.settings.max_hold_minutes,
+        )
         for trigger in triggers:
             order = build_exit_order(trigger, created_at=self.wall_clock())
             topic = topic_for_exit_order(
