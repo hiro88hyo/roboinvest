@@ -619,6 +619,10 @@ class StreamRunner:
             phase="precheck",
         )
         if precheck is None:
+            await self._disable_trading_after_closeout_failure(
+                reason="position_check_failed",
+                positions_seen=len(positions),
+            )
             return CloseoutStats(
                 triggered=False,
                 skipped_reason="position_check_failed",
@@ -635,6 +639,10 @@ class StreamRunner:
                     reason="position_drift",
                     positions_seen=len(positions),
                 ),
+            )
+            await self._disable_trading_after_closeout_failure(
+                reason="position_drift",
+                positions_seen=len(positions),
             )
             return CloseoutStats(
                 triggered=False,
@@ -722,7 +730,12 @@ class StreamRunner:
                 )
                 write_errors += 1
 
-        await self._log_closeout_remaining_positions()
+        invariant_ok = await self._log_closeout_remaining_positions()
+        if invariant_ok is False:
+            await self._disable_trading_after_closeout_failure(
+                reason="remaining_positions",
+                positions_seen=len(positions),
+            )
         logger.info(
             "closeout: completed positions=%d closed=%d no_fills=%d write_errors=%d pnl=%s",
             len(positions),
@@ -814,7 +827,7 @@ class StreamRunner:
         )
         return actions
 
-    async def _log_closeout_remaining_positions(self) -> None:
+    async def _log_closeout_remaining_positions(self) -> bool | None:
         """closeout 後に残った live 建玉を強いログで可視化する。"""
         try:
             supabase_positions = await self.supabase.list_live_positions()
@@ -823,7 +836,7 @@ class StreamRunner:
                 "closeout: post-check failed reading Supabase positions",
                 extra=event_extra("closeout_position_check_failed", phase="postcheck_supabase"),
             )
-            return
+            return None
         try:
             kabu_rows = await self._call_kabu_with_auth_retry(
                 lambda: self.kabu.list_positions(product=1),
@@ -835,7 +848,7 @@ class StreamRunner:
                 "closeout: postcheck failed reading kabu positions",
                 extra=event_extra("closeout_position_check_failed", phase="postcheck_kabu"),
             )
-            return
+            return None
 
         ok = not supabase_positions and not kabu_positions
         supabase_symbols = [p.symbol for p in supabase_positions]
@@ -860,10 +873,40 @@ class StreamRunner:
                 "closeout: postcheck clear (no live positions remain)",
                 extra=event_extra("closeout_postcheck_clear"),
             )
-            return
+            return True
         await self._check_closeout_position_drift(
             supabase_positions=supabase_positions,
             phase="postcheck",
+        )
+        return False
+
+    async def _disable_trading_after_closeout_failure(
+        self,
+        *,
+        reason: str,
+        positions_seen: int,
+    ) -> None:
+        try:
+            await self.supabase.set_trading_allowed(False)
+        except SupabaseError:
+            logger.exception(
+                "closeout: failed to disable trading after invariant violation",
+                extra=event_extra(
+                    "closeout_disable_trading_failed",
+                    reason=reason,
+                    positions_seen=positions_seen,
+                ),
+            )
+            return
+        logger.critical(
+            "closeout: disabled trading after invariant violation reason=%s positions=%d",
+            reason,
+            positions_seen,
+            extra=event_extra(
+                "closeout_trading_disabled",
+                reason=reason,
+                positions_seen=positions_seen,
+            ),
         )
 
     async def _process_closeout_order(

@@ -138,6 +138,29 @@ class SupabaseClient:
         wait=wait_exponential(multiplier=1, min=1, max=10),
         retry=retry_if_exception_type((httpx.HTTPError, SupabaseError)),
     )
+    async def set_trading_allowed(self, allowed: bool) -> None:
+        """``system_status.is_trading_allowed`` を明示更新する。
+
+        OMS Live は通常 Gateway の kill switch 判定を尊重するだけだが、day
+        closeout 後に live 建玉が残った場合は翌営業日への持ち越し事故を避けるため、
+        closeout 経路自身が fail-closed で取引を止める。
+        """
+        assert self._client is not None
+        resp = await self._client.patch(
+            "/rest/v1/system_status",
+            params={"id": "eq.1"},
+            headers={"Prefer": "return=minimal"},
+            json={"is_trading_allowed": allowed},
+        )
+        self._raise_for_status(resp, table="system_status", op="update")
+        logger.warning("supabase update: system_status is_trading_allowed=%s", allowed)
+
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((httpx.HTTPError, SupabaseError)),
+    )
     async def read_live_position(self, *, symbol: str) -> LivePosition | None:
         """``(symbol, trade_type='live')`` の行を読み、LivePosition で返す。
 

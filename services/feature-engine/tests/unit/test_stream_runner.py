@@ -44,6 +44,23 @@ def _settings() -> FeatureEngineSettings:
     )
 
 
+def _position_row(**overrides: object) -> dict[str, object]:
+    row: dict[str, object] = {
+        "symbol": "7203",
+        "trade_type": "live",
+        "quantity": 100,
+        "entry_price": "2400",
+        "current_price": "2400",
+        "target_price": None,
+        "stop_loss_price": None,
+        "trailing_stop_pct": None,
+        "opened_at": "2026-04-20T08:00:00+00:00",
+        "holding_type": "day",
+    }
+    row.update(overrides)
+    return row
+
+
 def _tick_payload(
     symbol: str = "7203",
     *,
@@ -191,16 +208,7 @@ async def _with_runner(
 
 async def test_tick_message_is_published_acked_and_positions_updated() -> None:
     pubsub = _PubSubRouter(pull_batches=[_make_pull_response([("a1", _tick_payload())])])
-    supabase = _SupabaseRouter(
-        positions=[
-            {
-                "symbol": "7203",
-                "trade_type": "live",
-                "quantity": 100,
-                "entry_price": "2400",
-            }
-        ]
-    )
+    supabase = _SupabaseRouter(positions=[_position_row()])
 
     async def _body(runner: StreamRunner) -> Any:
         return await runner.run_once()
@@ -234,20 +242,7 @@ async def test_tick_message_is_published_acked_and_positions_updated() -> None:
 
 async def test_tick_target_price_publishes_exit_order() -> None:
     pubsub = _PubSubRouter(pull_batches=[_make_pull_response([("a1", _tick_payload())])])
-    supabase = _SupabaseRouter(
-        positions=[
-            {
-                "symbol": "7203",
-                "trade_type": "live",
-                "quantity": 100,
-                "entry_price": "2400",
-                "current_price": "2490",
-                "target_price": "2500",
-                "stop_loss_price": None,
-                "trailing_stop_pct": None,
-            }
-        ]
-    )
+    supabase = _SupabaseRouter(positions=[_position_row(current_price="2490", target_price="2500")])
 
     async def _body(runner: StreamRunner) -> Any:
         return await runner.run_once()
@@ -270,6 +265,37 @@ async def test_tick_target_price_publishes_exit_order() -> None:
     assert order.quantity == 100
     assert order.unified_signal_id is None
     assert order_body["messages"][0]["attributes"]["exit_reason"] == "target_price"
+
+
+async def test_tick_max_hold_minutes_publishes_exit_order() -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[_make_pull_response([("a1", _tick_payload(ts="2026-04-20T09:00:00+00:00"))])]
+    )
+    supabase = _SupabaseRouter(positions=[_position_row(opened_at="2026-04-20T08:14:59+00:00")])
+    settings = _settings()
+    settings.max_hold_minutes = 45
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(
+        pubsub_router=pubsub,
+        supabase_router=supabase,
+        settings=settings,
+        run_body=_body,
+    )
+    assert stats.ticks_processed == 1
+    assert len(pubsub.published) == 2
+
+    by_topic = {
+        req.url.path.rsplit("/", 1)[-1].removesuffix(":publish"): req for req in pubsub.published
+    }
+    order_body = json.loads(by_topic["live-orders"].content.decode())
+    order_json = base64.b64decode(order_body["messages"][0]["data"]).decode("utf-8")
+    order = OrderRequest.model_validate_json(order_json)
+    assert order.side is Side.SELL
+    assert order.quantity == 100
+    assert order_body["messages"][0]["attributes"]["exit_reason"] == "max_hold_minutes"
 
 
 async def test_order_book_message_is_recorded_without_publish() -> None:

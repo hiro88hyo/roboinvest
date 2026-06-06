@@ -167,6 +167,23 @@ async def test_add_realized_pnl_skips_when_zero() -> None:
     assert called == 0
 
 
+async def test_set_trading_allowed_patches_singleton() -> None:
+    captured: list[httpx.Request] = []
+
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(204, content=b"")
+
+    async with _build_client(_handler) as client:
+        await client.set_trading_allowed(False)
+
+    req = captured[0]
+    assert req.method == "PATCH"
+    assert req.url.path == "/rest/v1/system_status"
+    assert req.url.params.get("id") == "eq.1"
+    assert json.loads(req.content.decode()) == {"is_trading_allowed": False}
+
+
 # --- read_live_position ------------------------------------------------------
 
 
