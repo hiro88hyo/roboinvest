@@ -10,6 +10,10 @@
 - live 建玉が空なら `trade_mode=paper` / `OMS_LIVE_DRY_RUN=true` で運用する。
 - live 建玉がある日は paper 化の前に close / reconcile を優先する。
 - paper は通常稼働し、寄り付き急落・板薄・closeout の挙動を記録する。
+- Gateway の day-session safety guard は paper / live 共通で効く前提にする。paper は
+  実行先だけを `paper-orders` / OMS Paper に差し替えた検証経路であり、`09:00-09:15`
+  新規 BUY block、`14:30` 以降の新規 BUY block、`14:50` 以降の day session closed
+  block、同一銘柄の当日 SELL 後 reentry block は live と同じ期待値で確認する。
 
 ## 前日または寄り前準備
 
@@ -85,6 +89,23 @@ op run --env-file infra/env.production -- \
   docker compose --env-file infra/env.production -f infra/docker-compose.prod.yml logs --tail=100 \
   feeder feature-engine strategy-rule strategy-ai aggregator gateway oms-paper
 ```
+
+## 引け後の成績確認
+
+Paper PnL は `system_status.daily_pnl` に反映されない。risk-off paper day では
+`trades_paper` と `positions(paper)` を直接集計する。
+
+```bash
+op run --env-file infra/env.production -- \
+  uv run python scripts/report-daily-trading-performance.py --trade-mode both
+```
+
+確認すること:
+
+- live trade count が `0`、`positions(live)` が空であること。
+- paper realized PnL、open paper position の unrealized PnL、mark-to-market を記録する。
+- `14:50` 以降に day BUY が通っていないこと。Gateway log では `market_closed` reject
+  が出るのが期待値。
 
 ## Abort Conditions
 
