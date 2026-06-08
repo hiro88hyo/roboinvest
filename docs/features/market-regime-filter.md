@@ -105,18 +105,114 @@ AI は market regime の総合判定に使う。
 ## 優先実装
 
 1. `market_regime` の保存先を決める。
-2. `universe-scanner` に定量 regime scorer を追加する。
+2. `universe-scanner` に定量 regime scorer を追加する。`2026-06-08` に PR #82 で純関数 scorer までは実装済み。
 3. AI 判定を scorer のレビュー / 補正役として追加する。
 4. `gateway` が `RISK_OFF` / `CRASH` の BUY を reject する。
 5. `strategy-rule` が `RISK_OFF` で逆張り BUY を抑制する。
 6. paper 日中損失リミット、同一銘柄 cooldown、`max_round_trips_per_symbol` を追加する。
 7. Dashboard / logs で当日の regime、理由、適用されたガードを確認できるようにする。
 
+## 残タスク構造
+
+実装タスクは増やしすぎず、以下の 5 つをメインタスクとして扱う。
+
+### 1. Regime を保存・観測できるようにする
+
+目的: scorer の結果を後から検証できる状態にする。まだ Gateway / live には効かせない。
+
+サブタスク:
+
+- `contracts/sql/011_market_regime.sql` を追加する。
+- `market_regime` テーブルには `valid_date`, `regime`, `confidence`, `buy_enabled`,
+  `position_size_multiplier`, `metrics`, `rationale`, `source`, `created_at` を持たせる。
+- `scripts/health-check.py` と `scripts/production-preopen-check.py` の Supabase table check に
+  `market_regime` を追加する。
+- `services/universe-scanner/src/universe_scanner/clients/supabase.py` 経由で upsert できるようにする。
+- まず `MARKET_REGIME_WRITE_ENABLED=false` で log-only 運用する。
+
+完了条件:
+
+- migration と health check が通る。
+- `universe-scanner` が `market_regime_candidate` をログに出せる。
+- 書き込み flag を on にしたときだけ `market_regime` に upsert される。
+
+### 2. Universe Scanner から scorer を呼ぶ
+
+目的: PR #82 で追加した純関数 scorer を実際の日次 pipeline に接続する。
+
+サブタスク:
+
+- `ScannerSettings` に `market_regime_enabled` と `market_regime_write_enabled` を追加する。
+- `pipeline.py` で watchlist 候補または scored watchlist の symbol を scorer に渡す。
+- `daily_ohlcv` だけの判定であることをログに明示する。
+- `NORMAL` / `CAUTION` / `RISK_OFF` / `CRASH`、metrics、rationale を構造化ログに出す。
+- DB 書き込みは flag で分ける。
+
+完了条件:
+
+- production paper day で DB 書き込みなしに regime ログを観測できる。
+- 同日再実行しても watchlist 挙動は変わらない。
+
+### 3. `daily_ohlcv` 以外の入力を追加する
+
+目的: 2026-06-08 のような寄り前 risk-off を捕まえる。
+`daily_ohlcv` 最新日が前営業日までだと、米国市場下落・日経先物・寄り前気配を検出できない。
+
+サブタスク:
+
+- 入力元を決める。優先候補は日経平均 / TOPIX / グロース250、日経先物、米国指数。
+- 寄り前に取得できる値と、9:00 後にしか取得できない値を分ける。
+- 9:00 直後の watchlist breadth を feature-engine または別集計で計算する案を検討する。
+- AI ニュース要約は補助入力に留める。AI が `NORMAL` と言っても定量ルールが危険なら止める。
+
+完了条件:
+
+- 6/8 型の急落を `CAUTION` 以上にできる入力がある。
+- 入力欠損時は `NORMAL` へ安易に倒さず、欠損理由をログに残す。
+
+### 4. Gateway / Strategy に log-only で反映する
+
+目的: 実際に止める前に「止めていたらどうだったか」を観測する。
+
+サブタスク:
+
+- Gateway が当日の `market_regime` を読む。
+- `MARKET_REGIME_GATEWAY_GUARD_ENABLED=false` のときは reject せず log-only にする。
+- log-only では BUY signal ごとに `would_reject_reason=market_regime_risk_off` を出す。
+- Strategy Rule はまず read-only または未接続でよい。Gateway の観測を先に進める。
+
+完了条件:
+
+- `RISK_OFF` 判定日に BUY が何件止まるはずだったか追える。
+- `NORMAL` 日に過剰停止しそうな signal がないか確認できる。
+
+### 5. Paper guard から Live guard へ段階適用する
+
+目的: 実資金へ反映する前に paper で誤検知・機会損失を確認する。
+
+サブタスク:
+
+- paper mode だけ `RISK_OFF` / `CRASH` の day BUY を reject する。
+- SELL / closeout は常に許可する。
+- reject reason は `market_regime_risk_off` にする。
+- `strategy-rule` では `RISK_OFF` 時に RSI / Bollinger 系の逆張り BUY を生成しない。
+- 数営業日、損失回避・機会損失・誤検知を記録する。
+- live 適用は最後に行う。
+
+完了条件:
+
+- paper で `RISK_OFF` guard が期待どおり BUY のみ止める。
+- closeout / SELL が妨げられない。
+- live 適用前に Cloud Logging / Dashboard で regime と reject reason が追える。
+
 ## 実装ロードマップ
 
 あとで実装するときは、live へ直接効かせず、純関数 scorer → 保存 → log-only → paper guard → live guard の順で小さく分ける。
 
 ### PR 1: universe-scanner の純関数 scorer
+
+Status: Done in PR #82 (`services/universe-scanner/src/universe_scanner/regime.py`,
+`services/universe-scanner/tests/unit/test_regime.py`).
 
 目的: DB 書き込みや Gateway 連携なしで、判定ロジックだけをテスト可能にする。
 
