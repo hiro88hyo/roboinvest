@@ -277,11 +277,12 @@ class SupabaseClient:
         wait=wait_exponential(multiplier=1, min=1, max=10),
         retry=retry_if_exception_type((httpx.HTTPError, SupabaseError)),
     )
-    async def has_live_sell_since(self, *, symbol: str, since: datetime) -> bool:
-        """Return True when ``trades_live`` has a SELL for ``symbol`` since ``since``."""
+    async def has_sell_since(self, *, symbol: str, trade_mode: TradeMode, since: datetime) -> bool:
+        """Return True when the trade history has a SELL for ``symbol`` since ``since``."""
         assert self._client is not None
+        table = "trades_live" if trade_mode is TradeMode.LIVE else "trades_paper"
         resp = await self._client.get(
-            "/rest/v1/trades_live",
+            f"/rest/v1/{table}",
             params={
                 "select": "trade_id",
                 "symbol": f"eq.{symbol}",
@@ -292,17 +293,20 @@ class SupabaseClient:
         )
         if resp.status_code >= 500:
             raise SupabaseError(
-                f"transient error: table=trades_live status={resp.status_code} "
-                f"body={resp.text[:200]}"
+                f"transient error: table={table} status={resp.status_code} body={resp.text[:200]}"
             )
         if resp.status_code >= 300:
             raise SupabaseError(
-                f"read failed: table=trades_live status={resp.status_code} body={resp.text[:200]}"
+                f"read failed: table={table} status={resp.status_code} body={resp.text[:200]}"
             )
         rows = resp.json()
         if not isinstance(rows, list):
-            raise SupabaseError(f"unexpected trades_live payload: {type(rows).__name__}")
+            raise SupabaseError(f"unexpected {table} payload: {type(rows).__name__}")
         return bool(rows)
+
+    async def has_live_sell_since(self, *, symbol: str, since: datetime) -> bool:
+        """Return True when ``trades_live`` has a SELL for ``symbol`` since ``since``."""
+        return await self.has_sell_since(symbol=symbol, trade_mode=TradeMode.LIVE, since=since)
 
     @retry(
         reraise=True,
