@@ -112,6 +112,152 @@ AI は market regime の総合判定に使う。
 6. paper 日中損失リミット、同一銘柄 cooldown、`max_round_trips_per_symbol` を追加する。
 7. Dashboard / logs で当日の regime、理由、適用されたガードを確認できるようにする。
 
+## 実装ロードマップ
+
+あとで実装するときは、live へ直接効かせず、純関数 scorer → 保存 → log-only → paper guard → live guard の順で小さく分ける。
+
+### PR 1: universe-scanner の純関数 scorer
+
+目的: DB 書き込みや Gateway 連携なしで、判定ロジックだけをテスト可能にする。
+
+追加候補:
+
+- `services/universe-scanner/src/universe_scanner/regime.py`
+- `services/universe-scanner/tests/unit/test_regime.py`
+
+入力:
+
+- watchlist 候補または universe 候補の直近日次 OHLCV
+- 1日リターン
+- 下落銘柄比率
+- 3%以上下落銘柄比率
+- 25日線下銘柄比率
+- 出来高急増比率
+- 欠損データ比率
+
+出力例:
+
+```json
+{
+  "market_regime": "NORMAL",
+  "confidence": 0.62,
+  "buy_enabled": true,
+  "position_size_multiplier": 1.0,
+  "rationale": ["breadth not weak enough for caution"],
+  "metrics": {
+    "avg_return_1d": 0.0148,
+    "down_ratio": 0.467,
+    "big_down_ratio": 0.333,
+    "below_ma25_ratio": 0.0
+  }
+}
+```
+
+注意: 2026-06-08 の dry-run では、`daily_ohlcv` 最新日が `2026-06-05` だったため、
+この入力だけでは寄り前の risk-off を検出できなかった。`daily_ohlcv` ベースの scorer は
+「前日までの地合い」を見るものとし、寄り前先物・外部指数・寄り後 breadth なしで過信しない。
+
+### PR 2: 保存先と writer
+
+履歴・説明可能性を優先し、新規 `market_regime` テーブルを第一候補にする。
+`system_status` に直書きすると、後から「なぜその regime になったか」を追いにくい。
+
+migration 候補:
+
+```sql
+create table if not exists market_regime (
+    valid_date date primary key,
+    regime text not null check (regime in ('NORMAL', 'CAUTION', 'RISK_OFF', 'CRASH')),
+    confidence numeric not null,
+    buy_enabled boolean not null,
+    position_size_multiplier numeric not null,
+    metrics jsonb not null default '{}'::jsonb,
+    rationale jsonb not null default '[]'::jsonb,
+    source text not null default 'universe_scanner',
+    created_at timestamptz not null default now()
+);
+```
+
+あわせて `scripts/health-check.py` / `scripts/production-preopen-check.py` の Supabase table list に
+`market_regime` を追加する。
+
+### PR 3: universe-scanner dry-run / log-only
+
+`universe-scanner` 実行時に regime を計算し、まず DB 書き込みなしでログ出力する。
+
+env 候補:
+
+```text
+MARKET_REGIME_ENABLED=false
+MARKET_REGIME_WRITE_ENABLED=false
+```
+
+初期運用:
+
+- `MARKET_REGIME_ENABLED=true`
+- `MARKET_REGIME_WRITE_ENABLED=false`
+- production paper day で `market_regime_candidate` ログだけ観測する
+
+### PR 4: 寄り前外部入力
+
+6/8 型の急落を捕まえるには、`daily_ohlcv` 以外の入力が必要。
+優先順は以下。
+
+1. 日経平均 / TOPIX / グロース250 の前日終値と当日寄り前先物
+2. 9:00 直後の watchlist breadth
+3. ニュース / 市況 summary の AI 判定
+
+AI は理由付け・補正役に留める。AI が `NORMAL` と言っても、定量ルールが危険なら止める。
+
+### PR 5: Gateway log-only guard
+
+Gateway が `market_regime` を読む処理を追加するが、最初は reject せず log のみ。
+
+env 候補:
+
+```text
+MARKET_REGIME_GATEWAY_GUARD_ENABLED=false
+```
+
+確認すること:
+
+- `RISK_OFF` 判定日に、実際の BUY がどれだけ出ていたか
+- 止めていれば損失回避になったか
+- `NORMAL` 日に過剰停止していないか
+
+### PR 6: paper guard
+
+paper mode だけ Gateway guard を有効化する。
+
+期待動作:
+
+- `RISK_OFF` / `CRASH` の day BUY は reject
+- SELL / closeout は常に許可
+- reject reason は `market_regime_risk_off`
+- `CAUTION` の size multiplier は最初は実装せず log-only にする
+
+### PR 7: strategy-rule の逆張り抑制
+
+Gateway だけで止めると reject が増えるだけなので、上流でも BUY 生成を抑制する。
+
+最初に止める対象:
+
+- `rsi_threshold` の BUY
+- Bollinger 系の逆張り BUY
+
+`RISK_OFF` では BUY を生成しない。SELL は維持する。
+
+### PR 8: live guard
+
+paper で数営業日観測してから live に適用する。
+
+live 有効化条件:
+
+- `RISK_OFF` 判定が少なくとも 2-3 回、実損回避に寄与している
+- `NORMAL` 日に過剰停止していない
+- closeout / SELL が regime に妨げられない
+- Dashboard / Cloud Logging で regime と reject reason が追える
+
 ## 初期ガード候補
 
 - `RISK_OFF`: 新規 BUY 停止、SELL / closeout は許可。
