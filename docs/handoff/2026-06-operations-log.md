@@ -1,5 +1,111 @@
 # June 2026 Operations Log
 
+## 2026-06-08 risk-off paper close review and parity fixes
+
+Monday `2026-06-08` was intentionally run in production paper mode because the user expected
+a sharp down market. The outcome confirmed that live should not have been used.
+
+End-of-day results checked around `15:04 JST`:
+
+- `system_status.trade_mode=paper`, `is_trading_allowed=true`.
+- Live side was clean: `live_trade_count=0`, open live positions `[]`, live realized PnL `0`.
+- Paper side:
+  - `trades_paper` rows for the JST date: `198`.
+  - Recomputed paper realized PnL from fills: `-100,900円`.
+  - One paper position remained open: `4092 LONG 100`, entry `5230`, current around `5080`, unrealized around `-15,000円`.
+  - Mark-to-market including the remaining paper position: about `-115,900円`.
+- The remaining `4092` position was opened at `2026-06-08 14:50:19 JST`, immediately after the
+  scheduled `14:50` paper closeout. It was not closed because OMS Paper closeout runs once per
+  day and the Gateway had allowed a new paper/day BUY after closeout.
+
+Important finding: live and paper were not fully parity-equivalent at the Gateway risk layer.
+Some day-trading safety gates were implemented only for `TradeMode.LIVE`, even though paper
+is intended to exercise the same risk/decision path with only the execution venue swapped.
+
+Differences observed before the fixes:
+
+- `09:00-09:15 JST` new day BUY block was live-only.
+- `14:30 JST` late new day BUY block was live-only.
+- `14:50 JST` day session closed block was live-only.
+- Same-symbol same-day reentry after a SELL was live-only.
+- Paper PnL is not reflected in `system_status.daily_pnl`, so paper losses can be missed if
+  only the standard live daily performance script is used.
+
+Fixes already applied in the working tree during the close review:
+
+- `services/gateway/src/gateway/clients/supabase.py`
+  - Added `has_sell_since(symbol, trade_mode, since)` to read either `trades_live` or
+    `trades_paper`.
+  - Kept `has_live_sell_since` as a compatibility wrapper.
+- `services/gateway/src/gateway/config.py`
+  - Added `day_same_symbol_reentry_block_enabled: bool = True`.
+- `services/gateway/src/gateway/streaming/runner.py`
+  - Extended same-symbol same-day reentry blocking to both paper and live.
+  - Extended day session closed / late BUY / opening BUY guards to paper and live.
+  - Rejection reason strings remain the existing values (`same_day_reentry_after_sell`,
+    `market_closed`, `late_live_buy`, `opening_live_buy`) for log compatibility.
+- `infra/docker-compose.prod.yml`
+  - Added `DAY_SAME_SYMBOL_REENTRY_BLOCK_ENABLED: ${DAY_SAME_SYMBOL_REENTRY_BLOCK_ENABLED:-true}`
+    for `gateway`.
+  - Also contains the earlier pre-open fix `MAX_HOLD_MINUTES: ${MAX_HOLD_MINUTES:-45}` for
+    `feature-engine`.
+- Tests added/updated:
+  - Paper/day BUY after same-day SELL rejects before position reads.
+  - Reentry block can be disabled by config.
+  - Paper/day BUY after new-buy cutoff rejects before position reads.
+  - Paper/day BUY before start time rejects before position reads.
+  - Existing paper stale-signal test was moved to a normal session time so it does not conflict
+    with the newly shared market-closed guard.
+
+Verification already run:
+
+- `uv run pytest services/gateway/tests/unit` -> `145 passed`.
+- `uv run ruff format --check ...` on touched Gateway files -> OK.
+- `uv run ruff check ...` on touched Gateway files -> OK.
+- `uv run mypy services/gateway/src/gateway services/gateway/tests/unit/test_stream_runner.py services/gateway/tests/unit/test_config.py` -> OK for the first reentry change. Re-run after the final market-closed parity patch in the next session if desired.
+
+Production reflection already done:
+
+- Rebuilt/recreated production `gateway` twice:
+  - once after the paper/live same-day reentry parity fix,
+  - once after the paper/live session-closed/opening/late BUY parity fix.
+- `docker compose -f infra/docker-compose.prod.yml ps gateway` showed `gateway` Up after recreate.
+- Gateway logs after the final recreate showed paper/day BUY rejected with `reason=market_closed`,
+  e.g. `6997`, `3905` at around `15:09 JST`.
+
+Known current state / dirty working tree:
+
+- `AGENTS.md` is modified from user-provided session context. Do not revert unless explicitly asked.
+- `docs/features.md` and `docs/features/market-regime-filter.md` document the planned market
+  regime / 地合い filter.
+- `infra/docker-compose.prod.yml` has both the pre-open `MAX_HOLD_MINUTES` addition and Gateway
+  `DAY_SAME_SYMBOL_REENTRY_BLOCK_ENABLED`.
+- Gateway source and tests are modified as described above.
+- `4092` paper position still exists and is a simulated residual from the 14:50:19 BUY. Decide
+  in the next session whether to manually close/delete it for clean paper state or keep it as
+  evidence. It is not a live position.
+
+Recommended next-session work:
+
+1. Review and commit the Gateway parity fixes separately from the market-regime planning doc if
+   possible.
+2. Add/adjust docs/runbooks to state the invariant: Gateway day-session safety guards apply to
+   both paper and live; only the destination topic and execution adapter should differ.
+3. Add a paper PnL reporting utility or extend the daily performance skill/script so paper
+   realized/unrealized PnL is first-class and not hidden behind `system_status.daily_pnl=0`.
+4. Add a parity-focused Gateway test group for day-session guards:
+   - opening BUY block,
+   - late BUY block,
+   - market closed block,
+   - same-day reentry block.
+5. Consider an OMS Paper defense-in-depth guard to reject or no-fill day BUY after closeout time,
+   even if Gateway regresses.
+6. Continue with the `market_regime` / 地合い filter design:
+   - Universe Scanner pre-open regime score,
+   - AI summary judgment as brake-only input,
+   - Gateway fail-close for `RISK_OFF` / `CRASH`,
+   - strategy-rule suppression of RSI-style reverse BUY under risk-off conditions.
+
 ## 2026-06-06 risk-off paper plan
 
 Friday US market selloff and weak Nikkei futures made Monday a risk-off session.

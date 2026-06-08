@@ -174,21 +174,19 @@ class StreamRunner:
             self._log_reject(signal, "stale_signal", trade_mode)
             return _Decision(approved=False, kill_switch_fired=False)
 
-        if self._is_live_day_session_closed(
-            trade_mode=trade_mode, holding_type=signal.holding_type
-        ):
+        if self._is_day_session_closed(holding_type=signal.holding_type):
             self._log_reject(signal, "market_closed", trade_mode)
             return _Decision(approved=False, kill_switch_fired=False)
 
-        if self._is_live_day_late_buy(signal=signal, trade_mode=trade_mode, now=now):
+        if self._is_day_late_buy(signal=signal, now=now):
             self._log_reject(signal, "late_live_buy", trade_mode)
             return _Decision(approved=False, kill_switch_fired=False)
 
-        if self._is_live_day_opening_buy(signal=signal, trade_mode=trade_mode, now=now):
+        if self._is_day_opening_buy(signal=signal, now=now):
             self._log_reject(signal, "opening_live_buy", trade_mode)
             return _Decision(approved=False, kill_switch_fired=False)
 
-        if await self._has_live_sell_today(signal=signal, trade_mode=trade_mode, now=now):
+        if await self._has_same_symbol_sell_today(signal=signal, trade_mode=trade_mode, now=now):
             self._log_reject(signal, "same_day_reentry_after_sell", trade_mode)
             return _Decision(approved=False, kill_switch_fired=False)
 
@@ -410,56 +408,45 @@ class StreamRunner:
             return False
         return self._signal_age_seconds(signal=signal, now=now) > max_age
 
-    def _is_live_day_session_closed(
+    def _is_day_session_closed(
         self,
         *,
-        trade_mode: TradeMode,
         holding_type: TradingStyle,
     ) -> bool:
-        if trade_mode is not TradeMode.LIVE or holding_type is not TradingStyle.DAY:
+        if holding_type is not TradingStyle.DAY:
             return False
         now = self.wall_clock().astimezone(ZoneInfo(self.settings.day_closeout_timezone))
         hh, mm = self.settings.day_closeout_time.split(":", 1)
         close_h, close_m = int(hh), int(mm)
         return (now.hour, now.minute) >= (close_h, close_m)
 
-    def _is_live_day_late_buy(
+    def _is_day_late_buy(
         self,
         *,
         signal: UnifiedTradeSignal,
-        trade_mode: TradeMode,
         now: datetime,
     ) -> bool:
-        if (
-            trade_mode is not TradeMode.LIVE
-            or signal.holding_type is not TradingStyle.DAY
-            or signal.action is not Action.BUY
-        ):
+        if signal.holding_type is not TradingStyle.DAY or signal.action is not Action.BUY:
             return False
         local_now = now.astimezone(ZoneInfo(self.settings.day_closeout_timezone))
         hh, mm = self.settings.live_day_new_buy_cutoff_time.split(":", 1)
         cutoff_h, cutoff_m = int(hh), int(mm)
         return (local_now.hour, local_now.minute) >= (cutoff_h, cutoff_m)
 
-    def _is_live_day_opening_buy(
+    def _is_day_opening_buy(
         self,
         *,
         signal: UnifiedTradeSignal,
-        trade_mode: TradeMode,
         now: datetime,
     ) -> bool:
-        if (
-            trade_mode is not TradeMode.LIVE
-            or signal.holding_type is not TradingStyle.DAY
-            or signal.action is not Action.BUY
-        ):
+        if signal.holding_type is not TradingStyle.DAY or signal.action is not Action.BUY:
             return False
         local_now = now.astimezone(ZoneInfo(self.settings.day_closeout_timezone))
         hh, mm = self.settings.live_day_new_buy_start_time.split(":", 1)
         start_h, start_m = int(hh), int(mm)
         return (local_now.hour, local_now.minute) < (start_h, start_m)
 
-    async def _has_live_sell_today(
+    async def _has_same_symbol_sell_today(
         self,
         *,
         signal: UnifiedTradeSignal,
@@ -467,7 +454,7 @@ class StreamRunner:
         now: datetime,
     ) -> bool:
         if (
-            trade_mode is not TradeMode.LIVE
+            not self.settings.day_same_symbol_reentry_block_enabled
             or signal.holding_type is not TradingStyle.DAY
             or signal.action is not Action.BUY
         ):
@@ -475,7 +462,9 @@ class StreamRunner:
         tz = ZoneInfo(self.settings.day_closeout_timezone)
         local_now = now.astimezone(tz)
         day_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC)
-        return await self.supabase.has_live_sell_since(symbol=signal.symbol, since=day_start)
+        return await self.supabase.has_sell_since(
+            symbol=signal.symbol, trade_mode=trade_mode, since=day_start
+        )
 
     def _cap_live_buy_quantity(
         self,

@@ -140,6 +140,7 @@ class _SupabaseRouter:
     positions_price_rows: list[list[dict[str, Any]]] = field(default_factory=list)
     daily_ohlcv_rows: list[list[dict[str, Any]]] = field(default_factory=list)
     trades_live_rows: list[list[dict[str, Any]]] = field(default_factory=list)
+    trades_paper_rows: list[list[dict[str, Any]]] = field(default_factory=list)
     disable_status: int = 204
     requests: list[httpx.Request] = field(default_factory=list)
 
@@ -161,6 +162,9 @@ class _SupabaseRouter:
             return httpx.Response(200, json=rows)
         if request.method == "GET" and path == "/rest/v1/trades_live":
             rows = self.trades_live_rows.pop(0) if self.trades_live_rows else []
+            return httpx.Response(200, json=rows)
+        if request.method == "GET" and path == "/rest/v1/trades_paper":
+            rows = self.trades_paper_rows.pop(0) if self.trades_paper_rows else []
             return httpx.Response(200, json=rows)
         if request.method == "PATCH" and path == "/rest/v1/system_status":
             return httpx.Response(self.disable_status)
@@ -871,6 +875,34 @@ async def test_live_day_buy_is_rejected_after_new_buy_cutoff() -> None:
     assert [r for r in supabase.requests if r.url.path == "/rest/v1/positions"] == []
 
 
+async def test_paper_day_buy_is_rejected_after_new_buy_cutoff() -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response([("a1", _unified_payload(action=Action.BUY, stop_loss_price="2400"))])
+        ]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trade_mode="paper", trading_style="day")],
+    )
+
+    def _at_cutoff() -> datetime:
+        return datetime(2026, 4, 20, 5, 30, 0, tzinfo=UTC)
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        wall_clock=_at_cutoff,
+        run_body=_body,
+    )
+
+    assert stats.rejected == 1
+    assert pubsub.published == []
+    assert [r for r in supabase.requests if r.url.path == "/rest/v1/positions"] == []
+
+
 async def test_live_day_buy_is_rejected_before_new_buy_start() -> None:
     pubsub = _PubSubRouter(
         pull_batches=[
@@ -890,6 +922,45 @@ async def test_live_day_buy_is_rejected_before_new_buy_start() -> None:
     )
     supabase = _SupabaseRouter(
         system_status_rows=[_system_status_row(trade_mode="live", trading_style="day")],
+    )
+
+    def _before_start() -> datetime:
+        return datetime(2026, 4, 20, 0, 14, 0, tzinfo=UTC)
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        wall_clock=_before_start,
+        run_body=_body,
+    )
+
+    assert stats.rejected == 1
+    assert pubsub.published == []
+    assert [r for r in supabase.requests if r.url.path == "/rest/v1/positions"] == []
+
+
+async def test_paper_day_buy_is_rejected_before_new_buy_start() -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response(
+                [
+                    (
+                        "a1",
+                        _unified_payload(
+                            action=Action.BUY,
+                            price="2500",
+                            stop_loss_price="2400",
+                        ),
+                    )
+                ]
+            )
+        ]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trade_mode="paper", trading_style="day")],
     )
 
     def _before_start() -> datetime:
@@ -1012,6 +1083,83 @@ async def test_live_day_buy_is_rejected_after_same_day_sell() -> None:
     assert [r for r in supabase.requests if r.url.path == "/rest/v1/positions"] == []
 
 
+async def test_paper_day_buy_is_rejected_after_same_day_sell() -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response([("a1", _unified_payload(action=Action.BUY, stop_loss_price="2400"))])
+        ]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trade_mode="paper", trading_style="day")],
+        trades_paper_rows=[[{"trade_id": "t1"}]],
+    )
+
+    def _before_cutoff() -> datetime:
+        return datetime(2026, 4, 20, 1, 0, 0, tzinfo=UTC)
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        wall_clock=_before_cutoff,
+        run_body=_body,
+    )
+
+    assert stats.rejected == 1
+    assert pubsub.published == []
+    paper_trades_calls = [
+        r for r in supabase.requests if r.method == "GET" and r.url.path == "/rest/v1/trades_paper"
+    ]
+    assert len(paper_trades_calls) == 1
+    assert [r for r in supabase.requests if r.url.path == "/rest/v1/positions"] == []
+
+
+async def test_paper_day_reentry_block_can_be_disabled() -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response(
+                [
+                    (
+                        "a1",
+                        _unified_payload(
+                            action=Action.BUY,
+                            price="2500",
+                            stop_loss_price="2400",
+                        ),
+                    )
+                ]
+            )
+        ]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trade_mode="paper", trading_style="day")],
+        positions_quantity_rows=[[]],
+        trades_paper_rows=[[{"trade_id": "t1"}]],
+    )
+    settings = _settings(day_same_symbol_reentry_block_enabled=False)
+
+    def _before_cutoff() -> datetime:
+        return datetime(2026, 4, 20, 1, 0, 0, tzinfo=UTC)
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        settings=settings,
+        wall_clock=_before_cutoff,
+        run_body=_body,
+    )
+
+    assert stats.approved == 1
+    assert stats.rejected == 0
+    assert len(pubsub.published) == 1
+    assert [r for r in supabase.requests if r.url.path == "/rest/v1/trades_paper"] == []
+
+
 async def test_live_stale_signal_is_rejected_before_position_reads() -> None:
     pubsub = _PubSubRouter(
         pull_batches=[
@@ -1023,7 +1171,7 @@ async def test_live_stale_signal_is_rejected_before_position_reads() -> None:
                             action=Action.BUY,
                             price="2500",
                             stop_loss_price="2400",
-                            created_at="2026-04-20T09:00:00+00:00",
+                            created_at="2026-04-20T00:00:00+00:00",
                         ),
                     )
                 ]
@@ -1034,7 +1182,7 @@ async def test_live_stale_signal_is_rejected_before_position_reads() -> None:
     settings = _settings(live_signal_max_age_seconds=60)
 
     def _wall_clock() -> datetime:
-        return datetime(2026, 4, 20, 9, 10, 0, tzinfo=UTC)
+        return datetime(2026, 4, 20, 1, 10, 0, tzinfo=UTC)
 
     async def _body(runner: StreamRunner) -> Any:
         return await runner.run_once()
@@ -1067,7 +1215,7 @@ async def test_paper_stale_signal_is_not_rejected() -> None:
                             action=Action.BUY,
                             price="2500",
                             stop_loss_price="2400",
-                            created_at="2026-04-20T09:00:00+00:00",
+                            created_at="2026-04-20T00:00:00+00:00",
                         ),
                     )
                 ]
@@ -1081,7 +1229,7 @@ async def test_paper_stale_signal_is_not_rejected() -> None:
     settings = _settings(live_signal_max_age_seconds=60)
 
     def _wall_clock() -> datetime:
-        return datetime(2026, 4, 20, 9, 10, 0, tzinfo=UTC)
+        return datetime(2026, 4, 20, 1, 10, 0, tzinfo=UTC)
 
     async def _body(runner: StreamRunner) -> Any:
         return await runner.run_once()
