@@ -27,7 +27,9 @@ import httpx
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--apply", action="store_true", help="patch system_status to paper/day/allowed")
+    parser.add_argument(
+        "--apply", action="store_true", help="patch system_status to paper/day/allowed"
+    )
     parser.add_argument(
         "--allow-live-positions",
         action="store_true",
