@@ -493,7 +493,7 @@ async def test_run_once_sendorder_rejected_records_no_fill_and_acks(
     assert rejected_fields["broker_message"] == "可能額が不足しております"
 
 
-async def test_run_once_sendorder_http_error_logs_broker_code(
+async def test_run_once_sendorder_insufficient_cash_http_error_logs_warning(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     order = make_order_request(side=Side.BUY, quantity=100)
@@ -502,6 +502,48 @@ async def test_run_once_sendorder_http_error_logs_broker_code(
     kabu = _KabuRouter(
         sendorder_http_statuses=[500],
         sendorder_responses=[{"Code": 21, "Message": "可能額が不足しております"}],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    caplog.set_level("WARNING", logger="oms_live.streaming.runner")
+
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, kabu=kabu, run_body=_body)
+
+    assert stats.filled == 0
+    assert stats.no_fills == 1
+    assert stats.acked == 1
+    rejected = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "broker_order_rejected"
+    ]
+    assert len(rejected) == 1
+    rejected_fields = vars(rejected[0])
+    assert rejected[0].levelname == "WARNING"
+    assert rejected_fields["phase"] == "sendorder"
+    assert rejected_fields["reason"] == "insufficient_broker_cash"
+    assert rejected_fields["symbol"] == order.symbol
+    assert rejected_fields["broker_status_code"] == 500
+    assert rejected_fields["broker_code"] == 21
+    assert rejected_fields["broker_message"] == "可能額が不足しております"
+    assert not [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "broker_order_failed"
+    ]
+
+
+async def test_run_once_sendorder_unknown_http_error_logs_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    order = make_order_request(side=Side.BUY, quantity=100)
+    pubsub = _PubSubRouter(batches=[_pull_response([("a1", order.model_dump_json().encode())])])
+    supabase = _SupabaseRouter()
+    kabu = _KabuRouter(
+        sendorder_http_statuses=[500],
+        sendorder_responses=[{"Code": 999, "Message": "unknown broker error"}],
     )
 
     async def _body(runner: StreamRunner) -> Any:
@@ -521,11 +563,12 @@ async def test_run_once_sendorder_http_error_logs_broker_code(
     ]
     assert len(failed) == 1
     failed_fields = vars(failed[0])
+    assert failed[0].levelname == "ERROR"
     assert failed_fields["phase"] == "sendorder"
     assert failed_fields["symbol"] == order.symbol
     assert failed_fields["broker_status_code"] == 500
-    assert failed_fields["broker_code"] == 21
-    assert failed_fields["broker_message"] == "可能額が不足しております"
+    assert failed_fields["broker_code"] == 999
+    assert failed_fields["broker_message"] == "unknown broker error"
 
 
 async def test_run_once_retries_sendorder_after_auth_loss() -> None:
