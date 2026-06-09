@@ -875,14 +875,26 @@ async def test_live_day_buy_is_rejected_after_new_buy_cutoff() -> None:
     assert [r for r in supabase.requests if r.url.path == "/rest/v1/positions"] == []
 
 
-async def test_paper_day_buy_is_rejected_after_new_buy_cutoff() -> None:
+async def test_paper_day_buy_is_not_rejected_after_live_new_buy_cutoff() -> None:
     pubsub = _PubSubRouter(
         pull_batches=[
-            _pull_response([("a1", _unified_payload(action=Action.BUY, stop_loss_price="2400"))])
+            _pull_response(
+                [
+                    (
+                        "a1",
+                        _unified_payload(
+                            action=Action.BUY,
+                            price="2500",
+                            stop_loss_price="2400",
+                        ),
+                    )
+                ]
+            )
         ]
     )
     supabase = _SupabaseRouter(
         system_status_rows=[_system_status_row(trade_mode="paper", trading_style="day")],
+        positions_quantity_rows=[[]],
     )
 
     def _at_cutoff() -> datetime:
@@ -898,9 +910,10 @@ async def test_paper_day_buy_is_rejected_after_new_buy_cutoff() -> None:
         run_body=_body,
     )
 
-    assert stats.rejected == 1
-    assert pubsub.published == []
-    assert [r for r in supabase.requests if r.url.path == "/rest/v1/positions"] == []
+    assert stats.approved == 1
+    assert stats.rejected == 0
+    assert len(pubsub.published) == 1
+    assert pubsub.published[0].url.path.endswith(f"/topics/{PAPER_TOPIC}:publish")
 
 
 async def test_live_day_buy_is_rejected_before_new_buy_start() -> None:
@@ -942,7 +955,7 @@ async def test_live_day_buy_is_rejected_before_new_buy_start() -> None:
     assert [r for r in supabase.requests if r.url.path == "/rest/v1/positions"] == []
 
 
-async def test_paper_day_buy_is_rejected_before_new_buy_start() -> None:
+async def test_paper_day_buy_is_not_rejected_before_live_new_buy_start() -> None:
     pubsub = _PubSubRouter(
         pull_batches=[
             _pull_response(
@@ -976,9 +989,10 @@ async def test_paper_day_buy_is_rejected_before_new_buy_start() -> None:
         run_body=_body,
     )
 
-    assert stats.rejected == 1
-    assert pubsub.published == []
-    assert [r for r in supabase.requests if r.url.path == "/rest/v1/positions"] == []
+    assert stats.approved == 1
+    assert stats.rejected == 0
+    assert len(pubsub.published) == 1
+    assert pubsub.published[0].url.path.endswith(f"/topics/{PAPER_TOPIC}:publish")
 
 
 async def test_live_day_buy_is_allowed_at_new_buy_start() -> None:
@@ -1240,6 +1254,88 @@ async def test_paper_stale_signal_is_not_rejected() -> None:
         settings=settings,
         run_body=_body,
         wall_clock=_wall_clock,
+    )
+
+    assert stats.approved == 1
+    assert stats.rejected == 0
+    assert len(pubsub.published) == 1
+    assert pubsub.published[0].url.path.endswith(f"/topics/{PAPER_TOPIC}:publish")
+
+
+async def test_live_day_buy_after_close_is_rejected_before_position_reads() -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response(
+                [
+                    (
+                        "a1",
+                        _unified_payload(
+                            action=Action.BUY,
+                            price="2500",
+                            stop_loss_price="2400",
+                        ),
+                    )
+                ]
+            )
+        ]
+    )
+    supabase = _SupabaseRouter(system_status_rows=[_system_status_row(trade_mode="live")])
+
+    def _after_close() -> datetime:
+        return datetime(2026, 4, 20, 6, 0, 0, tzinfo=UTC)
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        wall_clock=_after_close,
+        run_body=_body,
+    )
+
+    assert stats.rejected == 1
+    assert stats.approved == 0
+    assert pubsub.published == []
+    position_calls = [
+        r for r in supabase.requests if r.method == "GET" and r.url.path == "/rest/v1/positions"
+    ]
+    assert position_calls == []
+
+
+async def test_paper_day_buy_after_close_is_not_rejected_by_live_session_guard() -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response(
+                [
+                    (
+                        "a1",
+                        _unified_payload(
+                            action=Action.BUY,
+                            price="2500",
+                            stop_loss_price="2400",
+                        ),
+                    )
+                ]
+            )
+        ]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trade_mode="paper")],
+        positions_quantity_rows=[[]],
+    )
+
+    def _after_close() -> datetime:
+        return datetime(2026, 4, 20, 6, 0, 0, tzinfo=UTC)
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        wall_clock=_after_close,
+        run_body=_body,
     )
 
     assert stats.approved == 1
