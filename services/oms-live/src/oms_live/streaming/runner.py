@@ -276,6 +276,26 @@ class StreamRunner:
             )
         except KabuApiError as exc:
             broker_code, broker_message = _broker_error_fields(exc)
+            if _is_insufficient_broker_cash(broker_code):
+                logger.warning(
+                    "kabu sendorder rejected by broker cash: symbol=%s signal_id=%s",
+                    order.symbol,
+                    order.unified_signal_id,
+                    extra=event_extra(
+                        "broker_order_rejected",
+                        phase="sendorder",
+                        reason="insufficient_broker_cash",
+                        symbol=order.symbol,
+                        unified_signal_id=str(order.unified_signal_id)
+                        if order.unified_signal_id
+                        else None,
+                        order_id=str(order.order_id),
+                        broker_status_code=exc.status_code,
+                        broker_code=broker_code,
+                        broker_message=broker_message,
+                    ),
+                )
+                return "no_fill"
             logger.exception(
                 "kabu sendorder failed: symbol=%s signal_id=%s",
                 order.symbol,
@@ -1067,6 +1087,10 @@ def _broker_error_fields(exc: KabuApiError) -> tuple[Any, Any]:
     if isinstance(exc.body, dict):
         return exc.body.get("Code"), exc.body.get("Message")
     return None, None
+
+
+def _is_insufficient_broker_cash(broker_code: Any) -> bool:
+    return str(broker_code) == "21"
 
 
 def _parse_order(msg: PulledMessage) -> OrderRequest | None:
