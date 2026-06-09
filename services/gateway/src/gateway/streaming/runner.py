@@ -174,15 +174,15 @@ class StreamRunner:
             self._log_reject(signal, "stale_signal", trade_mode)
             return _Decision(approved=False, kill_switch_fired=False)
 
-        if self._is_day_session_closed(holding_type=signal.holding_type):
+        if self._is_day_session_closed(holding_type=signal.holding_type, trade_mode=trade_mode):
             self._log_reject(signal, "market_closed", trade_mode)
             return _Decision(approved=False, kill_switch_fired=False)
 
-        if self._is_day_late_buy(signal=signal, now=now):
+        if self._is_day_late_buy(signal=signal, trade_mode=trade_mode, now=now):
             self._log_reject(signal, "late_live_buy", trade_mode)
             return _Decision(approved=False, kill_switch_fired=False)
 
-        if self._is_day_opening_buy(signal=signal, now=now):
+        if self._is_day_opening_buy(signal=signal, trade_mode=trade_mode, now=now):
             self._log_reject(signal, "opening_live_buy", trade_mode)
             return _Decision(approved=False, kill_switch_fired=False)
 
@@ -412,7 +412,10 @@ class StreamRunner:
         self,
         *,
         holding_type: TradingStyle,
+        trade_mode: TradeMode,
     ) -> bool:
+        if trade_mode is not TradeMode.LIVE:
+            return False
         if holding_type is not TradingStyle.DAY:
             return False
         now = self.wall_clock().astimezone(ZoneInfo(self.settings.day_closeout_timezone))
@@ -424,8 +427,11 @@ class StreamRunner:
         self,
         *,
         signal: UnifiedTradeSignal,
+        trade_mode: TradeMode,
         now: datetime,
     ) -> bool:
+        if trade_mode is not TradeMode.LIVE:
+            return False
         if signal.holding_type is not TradingStyle.DAY or signal.action is not Action.BUY:
             return False
         local_now = now.astimezone(ZoneInfo(self.settings.day_closeout_timezone))
@@ -437,8 +443,11 @@ class StreamRunner:
         self,
         *,
         signal: UnifiedTradeSignal,
+        trade_mode: TradeMode,
         now: datetime,
     ) -> bool:
+        if trade_mode is not TradeMode.LIVE:
+            return False
         if signal.holding_type is not TradingStyle.DAY or signal.action is not Action.BUY:
             return False
         local_now = now.astimezone(ZoneInfo(self.settings.day_closeout_timezone))
