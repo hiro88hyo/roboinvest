@@ -13,3 +13,16 @@ create table if not exists market_regime (
 
 create index if not exists market_regime_created_at_idx
     on market_regime (created_at desc);
+
+alter table market_regime enable row level security;
+
+drop policy if exists dashboard_admin_select_market_regime on market_regime;
+create policy dashboard_admin_select_market_regime
+    on market_regime
+    for select
+    to authenticated
+    using ((select private.is_dashboard_admin()));
+
+revoke all on market_regime from anon;
+revoke all on market_regime from authenticated;
+grant select on market_regime to authenticated;
