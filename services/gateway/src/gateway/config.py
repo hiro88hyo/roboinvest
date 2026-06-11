@@ -47,6 +47,11 @@ class GatewaySettings(BaseSettings):
     live_signal_max_age_seconds: float | None = 300.0
     live_symbol_order_cooldown_seconds: float = 15.0
     day_same_symbol_reentry_block_enabled: bool = True
+    market_regime_gateway_log_only_enabled: bool = True
+    market_regime_gateway_guard_enabled: bool = False
+    soft_loss_throttle_log_only_enabled: bool = True
+    soft_loss_throttle_guard_enabled: bool = False
+    soft_loss_limit_jpy: Decimal = Decimal("20000")
     live_day_new_buy_start_time: str = "09:15"
     live_day_new_buy_cutoff_time: str = "14:30"
     day_closeout_time: str = "14:50"

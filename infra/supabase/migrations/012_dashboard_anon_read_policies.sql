@@ -1,0 +1,1 @@
+../../../contracts/sql/011_dashboard_anon_read_policies.sql

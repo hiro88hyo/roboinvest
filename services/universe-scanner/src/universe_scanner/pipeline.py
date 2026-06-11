@@ -4,6 +4,8 @@ import logging
 from dataclasses import dataclass
 from datetime import date
 
+from trade_contracts.logging import event_extra
+
 from .calendar import is_tse_business_day
 from .clients.jquants import JQuantsApiVersion as ClientApiVersion
 from .clients.jquants import JQuantsClient
@@ -13,6 +15,7 @@ from .filters.dynamic import DynamicScoringConfig, score_candidates, to_watchlis
 from .filters.static import StaticFilterConfig, apply_static_filter
 from .ingest.daily_ohlcv import ingest_daily_ohlcv
 from .ingest.master_stocks import ingest_master_stocks
+from .regime import RegimeDecision, score_market_regime
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +91,45 @@ async def run_pipeline(
             )
 
         rows = to_watchlist_rows(scored, valid_date_iso=target_date.isoformat())
+        if settings.market_regime_enabled:
+            symbols = [str(row["symbol"]) for row in rows]
+            regime = score_market_regime(ohlcv=ohlcv, symbols=symbols)
+            regime_row = market_regime_row(
+                decision=regime,
+                valid_date_iso=target_date.isoformat(),
+            )
+            logger.info(
+                "market_regime_candidate: valid_date=%s regime=%s confidence=%.3f "
+                "buy_enabled=%s source=daily_ohlcv",
+                target_date,
+                regime.market_regime.value,
+                regime.confidence,
+                regime.buy_enabled,
+                extra=event_extra(
+                    "market_regime_candidate",
+                    valid_date=target_date.isoformat(),
+                    market_regime=regime.market_regime.value,
+                    confidence=regime.confidence,
+                    buy_enabled=regime.buy_enabled,
+                    position_size_multiplier=regime.position_size_multiplier,
+                    source="universe_scanner_daily_ohlcv",
+                    metrics=regime_row["metrics"],
+                    rationale=regime_row["rationale"],
+                    write_enabled=settings.market_regime_write_enabled,
+                ),
+            )
+            if settings.market_regime_write_enabled:
+                await supabase.upsert(
+                    "market_regime",
+                    [regime_row],
+                    on_conflict="valid_date",
+                )
+            else:
+                logger.info(
+                    "market_regime write skipped: valid_date=%s regime=%s write_enabled=false",
+                    target_date,
+                    regime.market_regime.value,
+                )
         await supabase.delete_where(
             "watchlist",
             filters={"valid_date": f"eq.{target_date.isoformat()}"},
@@ -95,3 +137,26 @@ async def run_pipeline(
         await supabase.upsert("watchlist", rows, on_conflict="symbol,valid_date")
 
     return PipelineResult(valid_date=target_date, watchlist_size=len(rows))
+
+
+def market_regime_row(*, decision: RegimeDecision, valid_date_iso: str) -> dict[str, object]:
+    metrics = decision.metrics
+    return {
+        "valid_date": valid_date_iso,
+        "regime": decision.market_regime.value,
+        "confidence": decision.confidence,
+        "buy_enabled": decision.buy_enabled,
+        "position_size_multiplier": decision.position_size_multiplier,
+        "metrics": {
+            "symbol_count": metrics.symbol_count,
+            "usable_symbol_count": metrics.usable_symbol_count,
+            "missing_ratio": metrics.missing_ratio,
+            "avg_return_1d": metrics.avg_return_1d,
+            "down_ratio": metrics.down_ratio,
+            "big_down_ratio": metrics.big_down_ratio,
+            "below_ma25_ratio": metrics.below_ma25_ratio,
+            "high_volume_ratio": metrics.high_volume_ratio,
+        },
+        "rationale": list(decision.rationale),
+        "source": "universe_scanner_daily_ohlcv",
+    }

@@ -65,6 +65,7 @@
 | rule 戦略パラメータ管理 | Idea | RSI / SMA / Bollinger の設定変更を追跡可能にする | env 任せから一段整理したい |
 | AI strategy gating の改善 | Draft | AI 呼び出し頻度と入力品質を安定化する | `strategy-ai-triggers` 経路の設計整理を含む |
 | market regime / 地合いフィルタ | Draft | 急落・全面安相場で新規 BUY を抑制する | [features/market-regime-filter.md](features/market-regime-filter.md)。Universe Scanner の寄り前判定、AI 総合判定、Gateway fail-close を組み合わせる |
+| 損失制御と銘柄選定の見直し | Draft | 負けやすい銘柄・市場状態・ロット構造を事前に避ける | [features/trading-loss-control-review.md](features/trading-loss-control-review.md)。2026-06-10 live 損失を起点に、watchlist risk penalty、dynamic throttle、RULE 単独権限を整理 |
 | consensus ルールの見直し | Idea | RULE / AI の重み付けと conflict policy を再評価する | 実運用ログを材料に要件化したい |
 | feature と signal の説明可能性向上 | Idea | どの入力でどの判断になったかを追いやすくする | dashboard / logs / DB の責務分担が論点 |
 

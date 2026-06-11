@@ -43,13 +43,14 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
-from trade_contracts.enums import Action, TradeMode, TradingStyle
+from trade_contracts.enums import Action, SignalSource, TradeMode, TradingStyle
 from trade_contracts.logging import event_extra
+from trade_contracts.risk import KillSwitchState
 from trade_contracts.signal import UnifiedTradeSignal
 
 from .. import kill_switch, lot_calculator
 from ..clients.pubsub import PubSubPublisher, PubSubSubscriber, PulledMessage
-from ..clients.supabase import SupabaseClient
+from ..clients.supabase import MarketRegimeState, SupabaseClient
 from ..config import GatewaySettings, RiskConfig
 from ..order_builder import build as build_order
 from ..router import TopicRouting, resolve_topic
@@ -193,6 +194,31 @@ class StreamRunner:
         if self._has_pending_live_order(signal=signal, trade_mode=trade_mode):
             self._log_reject(signal, "pending_live_order", trade_mode)
             return _Decision(approved=False, kill_switch_fired=False)
+
+        if self._soft_loss_throttle_blocks_buy(signal=signal, state=state):
+            reason = "soft_loss_rule_only_buy"
+            if self.settings.soft_loss_throttle_guard_enabled:
+                self._log_reject(signal, reason, trade_mode)
+                return _Decision(approved=False, kill_switch_fired=False)
+            self._log_soft_loss_throttle_would_reject(
+                signal=signal,
+                trade_mode=trade_mode,
+                state=state,
+                reason=reason,
+            )
+
+        regime = await self._read_market_regime_for_signal(signal=signal, now=now)
+        if regime is not None and self._market_regime_blocks_buy(signal=signal, regime=regime):
+            reason = "market_regime_risk_off"
+            if self.settings.market_regime_gateway_guard_enabled:
+                self._log_reject(signal, reason, trade_mode)
+                return _Decision(approved=False, kill_switch_fired=False)
+            self._log_market_regime_would_reject(
+                signal=signal,
+                trade_mode=trade_mode,
+                regime=regime,
+                reason=reason,
+            )
 
         entry_price: Decimal | None = None
         existing_qty: int | None = None
@@ -475,6 +501,41 @@ class StreamRunner:
             symbol=signal.symbol, trade_mode=trade_mode, since=day_start
         )
 
+    def _soft_loss_throttle_blocks_buy(
+        self, *, signal: UnifiedTradeSignal, state: KillSwitchState
+    ) -> bool:
+        if (
+            signal.action is not Action.BUY
+            or signal.signal_source is not SignalSource.RULE
+            or (
+                not self.settings.soft_loss_throttle_log_only_enabled
+                and not self.settings.soft_loss_throttle_guard_enabled
+            )
+        ):
+            return False
+        if self.settings.soft_loss_limit_jpy <= 0:
+            return False
+        return state.daily_pnl <= -self.settings.soft_loss_limit_jpy
+
+    async def _read_market_regime_for_signal(
+        self, *, signal: UnifiedTradeSignal, now: datetime
+    ) -> MarketRegimeState | None:
+        if signal.action is not Action.BUY or (
+            not self.settings.market_regime_gateway_log_only_enabled
+            and not self.settings.market_regime_gateway_guard_enabled
+        ):
+            return None
+        tz = ZoneInfo(self.settings.day_closeout_timezone)
+        valid_date = now.astimezone(tz).date()
+        return await self.supabase.read_market_regime(valid_date=valid_date)
+
+    def _market_regime_blocks_buy(
+        self, *, signal: UnifiedTradeSignal, regime: MarketRegimeState
+    ) -> bool:
+        if signal.action is not Action.BUY:
+            return False
+        return regime.regime in {"RISK_OFF", "CRASH"} or not regime.buy_enabled
+
     def _cap_live_buy_quantity(
         self,
         *,
@@ -553,6 +614,85 @@ class StreamRunner:
                     else None
                 ),
                 has_price=signal.price is not None,
+            ),
+        )
+
+    def _log_market_regime_would_reject(
+        self,
+        *,
+        signal: UnifiedTradeSignal,
+        trade_mode: TradeMode,
+        regime: MarketRegimeState,
+        reason: str,
+    ) -> None:
+        logger.info(
+            (
+                "market regime would reject: symbol=%s action=%s reason=%s "
+                "trade_mode=%s signal_id=%s regime=%s confidence=%s buy_enabled=%s"
+            ),
+            signal.symbol,
+            signal.action.value,
+            reason,
+            trade_mode.value,
+            signal.signal_id,
+            regime.regime,
+            regime.confidence,
+            regime.buy_enabled,
+            extra=event_extra(
+                "market_regime_would_reject",
+                trade_mode=trade_mode.value,
+                symbol=signal.symbol,
+                signal_id=str(signal.signal_id),
+                reason=reason,
+                source=signal.signal_source.value,
+                holding_type=signal.holding_type.value,
+                action=signal.action.value,
+                confidence=signal.confidence,
+                market_regime=regime.regime,
+                market_regime_confidence=float(regime.confidence),
+                market_regime_buy_enabled=regime.buy_enabled,
+                market_regime_position_size_multiplier=float(regime.position_size_multiplier),
+                market_regime_source=regime.source,
+                market_regime_valid_date=regime.valid_date.isoformat(),
+                market_regime_rationale=regime.rationale,
+                market_regime_metrics=regime.metrics,
+                guard_enabled=self.settings.market_regime_gateway_guard_enabled,
+            ),
+        )
+
+    def _log_soft_loss_throttle_would_reject(
+        self,
+        *,
+        signal: UnifiedTradeSignal,
+        trade_mode: TradeMode,
+        state: KillSwitchState,
+        reason: str,
+    ) -> None:
+        logger.info(
+            (
+                "soft loss throttle would reject: symbol=%s action=%s reason=%s "
+                "trade_mode=%s signal_id=%s daily_pnl=%s soft_loss_limit=%s"
+            ),
+            signal.symbol,
+            signal.action.value,
+            reason,
+            trade_mode.value,
+            signal.signal_id,
+            state.daily_pnl,
+            self.settings.soft_loss_limit_jpy,
+            extra=event_extra(
+                "soft_loss_throttle_would_reject",
+                trade_mode=trade_mode.value,
+                symbol=signal.symbol,
+                signal_id=str(signal.signal_id),
+                reason=reason,
+                source=signal.signal_source.value,
+                holding_type=signal.holding_type.value,
+                action=signal.action.value,
+                confidence=signal.confidence,
+                daily_pnl=float(state.daily_pnl),
+                soft_loss_limit_jpy=float(self.settings.soft_loss_limit_jpy),
+                guard_enabled=self.settings.soft_loss_throttle_guard_enabled,
             ),
         )
 

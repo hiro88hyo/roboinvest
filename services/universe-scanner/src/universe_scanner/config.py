@@ -47,5 +47,7 @@ class ScannerSettings(BaseSettings):
     scan_weight_volatility: float = 1.0
     scan_weight_volume_surge: float = 1.0
     scan_weight_momentum: float = 1.0
+    market_regime_enabled: bool = True
+    market_regime_write_enabled: bool = False
 
     log_level: str = "INFO"
