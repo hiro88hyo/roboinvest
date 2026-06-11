@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Self
 
@@ -30,6 +30,19 @@ logger = logging.getLogger(__name__)
 
 class SupabaseError(RuntimeError):
     """Supabase (PostgREST) error wrapper."""
+
+
+@dataclass(frozen=True, slots=True)
+class MarketRegimeState:
+    valid_date: date
+    regime: str
+    confidence: Decimal
+    buy_enabled: bool
+    position_size_multiplier: Decimal
+    source: str
+    rationale: list[Any]
+    metrics: dict[str, Any]
+    created_at: datetime | None = None
 
 
 @dataclass(slots=True)
@@ -277,6 +290,78 @@ class SupabaseClient:
         wait=wait_exponential(multiplier=1, min=1, max=10),
         retry=retry_if_exception_type((httpx.HTTPError, SupabaseError)),
     )
+    async def read_market_regime(self, *, valid_date: date) -> MarketRegimeState | None:
+        """Return the market regime row for ``valid_date``.
+
+        Missing rows are expected during rollout and mean "no regime override".
+        A missing table is also treated as no-op so the log-only reader can be
+        deployed before the migration is applied everywhere.
+        """
+        assert self._client is not None
+        resp = await self._client.get(
+            "/rest/v1/market_regime",
+            params={
+                "select": (
+                    "valid_date,regime,confidence,buy_enabled,position_size_multiplier,"
+                    "source,rationale,metrics,created_at"
+                ),
+                "valid_date": f"eq.{valid_date.isoformat()}",
+                "limit": "1",
+            },
+        )
+        if resp.status_code == 404 or (resp.status_code == 400 and "market_regime" in resp.text):
+            logger.warning("market_regime table unavailable; skipping regime guard")
+            return None
+        if resp.status_code >= 500:
+            raise SupabaseError(
+                f"transient error: table=market_regime status={resp.status_code} "
+                f"body={resp.text[:200]}"
+            )
+        if resp.status_code >= 300:
+            raise SupabaseError(
+                f"read failed: table=market_regime status={resp.status_code} body={resp.text[:200]}"
+            )
+        rows = resp.json()
+        if not isinstance(rows, list):
+            raise SupabaseError(f"unexpected market_regime payload: {type(rows).__name__}")
+        if not rows:
+            return None
+        row = rows[0]
+        if not isinstance(row, dict):
+            raise SupabaseError(f"invalid market_regime row: {row!r}")
+        try:
+            rationale = row.get("rationale", [])
+            metrics = row.get("metrics", {})
+            created_at_raw = row.get("created_at")
+            created_at = (
+                datetime.fromisoformat(str(created_at_raw).replace("Z", "+00:00"))
+                if created_at_raw
+                else None
+            )
+            if not isinstance(rationale, list):
+                rationale = []
+            if not isinstance(metrics, dict):
+                metrics = {}
+            return MarketRegimeState(
+                valid_date=date.fromisoformat(str(row["valid_date"])),
+                regime=str(row["regime"]),
+                confidence=Decimal(str(row["confidence"])),
+                buy_enabled=_parse_bool(row["buy_enabled"], field="buy_enabled"),
+                position_size_multiplier=Decimal(str(row["position_size_multiplier"])),
+                source=str(row.get("source") or "unknown"),
+                rationale=rationale,
+                metrics=metrics,
+                created_at=created_at,
+            )
+        except (KeyError, TypeError, ValueError, InvalidOperation) as exc:
+            raise SupabaseError(f"invalid market_regime row: {row}") from exc
+
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((httpx.HTTPError, SupabaseError)),
+    )
     async def has_sell_since(self, *, symbol: str, trade_mode: TradeMode, since: datetime) -> bool:
         """Return True when the trade history has a SELL for ``symbol`` since ``since``."""
         assert self._client is not None
@@ -339,3 +424,15 @@ class SupabaseClient:
                 f"body={resp.text[:200]}"
             )
         logger.debug("supabase update: table=system_status is_trading_allowed=false")
+
+
+def _parse_bool(value: Any, *, field: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered == "true":
+            return True
+        if lowered == "false":
+            return False
+    raise SupabaseError(f"invalid market_regime {field}: {value!r}")

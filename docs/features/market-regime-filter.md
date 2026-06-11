@@ -255,6 +255,8 @@ Status: Done in PR #82 (`services/universe-scanner/src/universe_scanner/regime.p
 
 ### PR 2: 保存先と writer
 
+Status: Implemented in branch `codex/market-regime-gateway-log-only`.
+
 履歴・説明可能性を優先し、新規 `market_regime` テーブルを第一候補にする。
 `system_status` に直書きすると、後から「なぜその regime になったか」を追いにくい。
 
@@ -278,6 +280,8 @@ create table if not exists market_regime (
 `market_regime` を追加する。
 
 ### PR 3: universe-scanner dry-run / log-only
+
+Status: Implemented in branch `codex/market-regime-gateway-log-only`.
 
 `universe-scanner` 実行時に regime を計算し、まず DB 書き込みなしでログ出力する。
 
@@ -306,6 +310,8 @@ MARKET_REGIME_WRITE_ENABLED=false
 AI は理由付け・補正役に留める。AI が `NORMAL` と言っても、定量ルールが危険なら止める。
 
 ### PR 5: Gateway log-only guard
+
+Status: Implemented in branch `codex/market-regime-gateway-log-only`.
 
 Gateway が `market_regime` を読む処理を追加するが、最初は reject せず log のみ。
 

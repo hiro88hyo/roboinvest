@@ -109,6 +109,22 @@ def _system_status_row(**overrides: Any) -> dict[str, Any]:
     return row
 
 
+def _market_regime_row(**overrides: Any) -> dict[str, Any]:
+    row: dict[str, Any] = {
+        "valid_date": "2026-04-20",
+        "regime": "RISK_OFF",
+        "confidence": "0.86",
+        "buy_enabled": False,
+        "position_size_multiplier": "0.25",
+        "source": "universe_scanner",
+        "rationale": ["weak breadth"],
+        "metrics": {"down_ratio": 0.82},
+        "created_at": "2026-04-20T00:00:00+00:00",
+    }
+    row.update(overrides)
+    return row
+
+
 class _PubSubRouter:
     """Routes pull / ack / publish on the gateway Pub/Sub transport."""
 
@@ -141,6 +157,7 @@ class _SupabaseRouter:
     daily_ohlcv_rows: list[list[dict[str, Any]]] = field(default_factory=list)
     trades_live_rows: list[list[dict[str, Any]]] = field(default_factory=list)
     trades_paper_rows: list[list[dict[str, Any]]] = field(default_factory=list)
+    market_regime_rows: list[list[dict[str, Any]]] = field(default_factory=list)
     disable_status: int = 204
     requests: list[httpx.Request] = field(default_factory=list)
 
@@ -159,6 +176,9 @@ class _SupabaseRouter:
             return httpx.Response(200, json=rows)
         if request.method == "GET" and path == "/rest/v1/daily_ohlcv":
             rows = self.daily_ohlcv_rows.pop(0) if self.daily_ohlcv_rows else []
+            return httpx.Response(200, json=rows)
+        if request.method == "GET" and path == "/rest/v1/market_regime":
+            rows = self.market_regime_rows.pop(0) if self.market_regime_rows else []
             return httpx.Response(200, json=rows)
         if request.method == "GET" and path == "/rest/v1/trades_live":
             rows = self.trades_live_rows.pop(0) if self.trades_live_rows else []
@@ -414,6 +434,267 @@ async def test_paper_mode_publishes_to_paper_orders() -> None:
 
     assert stats.approved == 1
     assert pubsub.published[0].url.path.endswith(f"/topics/{PAPER_TOPIC}:publish")
+
+
+async def test_market_regime_risk_off_logs_would_reject_without_blocking(caplog: Any) -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response(
+                [("a1", _unified_payload(action=Action.BUY, price="2500", stop_loss_price="2400"))]
+            )
+        ]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trade_mode="live")],
+        market_regime_rows=[[_market_regime_row(regime="RISK_OFF", buy_enabled=False)]],
+        positions_quantity_rows=[[]],
+        positions_price_rows=[[{"quantity": 100, "current_price": "2500", "entry_price": "2500"}]],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    caplog.set_level(logging.INFO, logger="gateway.streaming.runner")
+
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+
+    assert stats.approved == 1
+    assert stats.rejected == 0
+    assert len(pubsub.published) == 1
+    would_reject = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "market_regime_would_reject"
+    ]
+    assert len(would_reject) == 1
+    record = would_reject[0]
+    assert record.reason == "market_regime_risk_off"
+    assert record.market_regime == "RISK_OFF"
+    assert record.market_regime_buy_enabled is False
+    assert record.guard_enabled is False
+
+
+async def test_market_regime_guard_rejects_buy_when_enabled(caplog: Any) -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response(
+                [("a1", _unified_payload(action=Action.BUY, price="2500", stop_loss_price="2400"))]
+            )
+        ]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trade_mode="live")],
+        market_regime_rows=[[_market_regime_row(regime="CRASH", buy_enabled=False)]],
+        positions_quantity_rows=[],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    caplog.set_level(logging.INFO, logger="gateway.streaming.runner")
+
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        settings=_settings(market_regime_gateway_guard_enabled=True),
+        run_body=_body,
+    )
+
+    assert stats.approved == 0
+    assert stats.rejected == 1
+    assert pubsub.published == []
+    rejected = [
+        record for record in caplog.records if getattr(record, "event", None) == "signal_rejected"
+    ]
+    assert len(rejected) == 1
+    assert rejected[0].reason == "market_regime_risk_off"
+    position_reads = [
+        r for r in supabase.requests if r.method == "GET" and r.url.path == "/rest/v1/positions"
+    ]
+    assert position_reads == []
+
+
+async def test_market_regime_guard_does_not_block_sell() -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[_pull_response([("a1", _unified_payload(action=Action.SELL))])]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trade_mode="live")],
+        market_regime_rows=[[_market_regime_row(regime="CRASH", buy_enabled=False)]],
+        positions_quantity_rows=[[{"quantity": 300, "side": "LONG"}]],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        settings=_settings(market_regime_gateway_guard_enabled=True),
+        run_body=_body,
+    )
+
+    assert stats.approved == 1
+    assert pubsub.published[0].url.path.endswith(f"/topics/{LIVE_TOPIC}:publish")
+    regime_reads = [
+        r for r in supabase.requests if r.method == "GET" and r.url.path == "/rest/v1/market_regime"
+    ]
+    assert regime_reads == []
+
+
+async def test_soft_loss_throttle_logs_rule_buy_would_reject_without_blocking(
+    caplog: Any,
+) -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response(
+                [
+                    (
+                        "a1",
+                        _unified_payload(
+                            action=Action.BUY,
+                            signal_source=SignalSource.RULE,
+                            price="2500",
+                            stop_loss_price="2400",
+                        ),
+                    )
+                ]
+            )
+        ]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[
+            _system_status_row(
+                trade_mode="live",
+                daily_pnl="-25000",
+                daily_loss_limit="100000",
+            )
+        ],
+        positions_quantity_rows=[[]],
+        positions_price_rows=[[{"quantity": 100, "current_price": "2500", "entry_price": "2500"}]],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    caplog.set_level(logging.INFO, logger="gateway.streaming.runner")
+
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+
+    assert stats.approved == 1
+    assert stats.rejected == 0
+    assert len(pubsub.published) == 1
+    would_reject = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "soft_loss_throttle_would_reject"
+    ]
+    assert len(would_reject) == 1
+    record = would_reject[0]
+    assert record.reason == "soft_loss_rule_only_buy"
+    assert record.daily_pnl == -25000.0
+    assert record.soft_loss_limit_jpy == 20000.0
+    assert record.guard_enabled is False
+
+
+async def test_soft_loss_throttle_guard_rejects_rule_buy_when_enabled(
+    caplog: Any,
+) -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response(
+                [
+                    (
+                        "a1",
+                        _unified_payload(
+                            action=Action.BUY,
+                            signal_source=SignalSource.RULE,
+                            price="2500",
+                            stop_loss_price="2400",
+                        ),
+                    )
+                ]
+            )
+        ]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[
+            _system_status_row(
+                trade_mode="live",
+                daily_pnl="-25000",
+                daily_loss_limit="100000",
+            )
+        ],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    caplog.set_level(logging.INFO, logger="gateway.streaming.runner")
+
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        settings=_settings(soft_loss_throttle_guard_enabled=True),
+        run_body=_body,
+    )
+
+    assert stats.approved == 0
+    assert stats.rejected == 1
+    assert pubsub.published == []
+    rejected = [
+        record for record in caplog.records if getattr(record, "event", None) == "signal_rejected"
+    ]
+    assert len(rejected) == 1
+    assert rejected[0].reason == "soft_loss_rule_only_buy"
+    position_reads = [
+        r for r in supabase.requests if r.method == "GET" and r.url.path == "/rest/v1/positions"
+    ]
+    assert position_reads == []
+
+
+async def test_soft_loss_throttle_does_not_block_consensus_buy() -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response(
+                [
+                    (
+                        "a1",
+                        _unified_payload(
+                            action=Action.BUY,
+                            signal_source=SignalSource.CONSENSUS,
+                            price="2500",
+                            stop_loss_price="2400",
+                        ),
+                    )
+                ]
+            )
+        ]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[
+            _system_status_row(
+                trade_mode="live",
+                daily_pnl="-25000",
+                daily_loss_limit="100000",
+            )
+        ],
+        positions_quantity_rows=[[]],
+        positions_price_rows=[[{"quantity": 100, "current_price": "2500", "entry_price": "2500"}]],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        settings=_settings(soft_loss_throttle_guard_enabled=True),
+        run_body=_body,
+    )
+
+    assert stats.approved == 1
+    assert len(pubsub.published) == 1
 
 
 async def test_sell_uses_existing_long_quantity() -> None:

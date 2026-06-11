@@ -12,7 +12,7 @@
   1. Pub/Sub: ``infra/pubsub/topics.json`` に列挙された全トピックと
      ``infra/pubsub/subscriptions.json`` に列挙された全サブスクリプションが
      エミュレータ上に存在するか
-  2. Supabase: ``contracts/sql/`` 由来の主要 9 テーブルが PostgREST 経由で
+  2. Supabase: ``contracts/sql/`` 由来の主要テーブルが PostgREST 経由で
      可読か (``select=...&limit=0`` で空 200 を期待)
   3. Services: 各サービスの ``python -m <pkg> --help`` が returncode=0 で
      起動できるか (CLI が壊れていないかの煙テスト)
@@ -58,6 +58,7 @@ SUPABASE_TABLES: tuple[str, ...] = (
     "watchlist",
     "master_stocks",
     "daily_ohlcv",
+    "market_regime",
 )
 
 SERVICE_MODULES: tuple[str, ...] = (

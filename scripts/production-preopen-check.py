@@ -58,6 +58,7 @@ SUPABASE_TABLES = (
     "watchlist",
     "master_stocks",
     "daily_ohlcv",
+    "market_regime",
 )
 
 TARGET_SERVICES = ("strategy-ai", "aggregator", "gateway")

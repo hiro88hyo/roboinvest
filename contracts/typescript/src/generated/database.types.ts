@@ -105,6 +105,42 @@ export type Database = {
         }
         Relationships: []
       }
+      market_regime: {
+        Row: {
+          buy_enabled: boolean
+          confidence: number
+          created_at: string
+          metrics: Json
+          position_size_multiplier: number
+          rationale: Json
+          regime: string
+          source: string
+          valid_date: string
+        }
+        Insert: {
+          buy_enabled: boolean
+          confidence: number
+          created_at?: string
+          metrics?: Json
+          position_size_multiplier: number
+          rationale?: Json
+          regime: string
+          source?: string
+          valid_date: string
+        }
+        Update: {
+          buy_enabled?: boolean
+          confidence?: number
+          created_at?: string
+          metrics?: Json
+          position_size_multiplier?: number
+          rationale?: Json
+          regime?: string
+          source?: string
+          valid_date?: string
+        }
+        Relationships: []
+      }
       master_stocks: {
         Row: {
           is_active: boolean

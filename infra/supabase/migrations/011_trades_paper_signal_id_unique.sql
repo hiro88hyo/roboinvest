@@ -1,0 +1,1 @@
+../../../contracts/sql/010_trades_paper_signal_id_unique.sql

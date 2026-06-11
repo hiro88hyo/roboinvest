@@ -1,0 +1,1 @@
+../../../contracts/sql/012_dashboard_auth_rls.sql

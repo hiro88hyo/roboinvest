@@ -240,6 +240,68 @@ async def test_read_live_capital_in_use_raises_on_invalid_quantity() -> None:
             await client.read_live_capital_in_use()
 
 
+async def test_read_market_regime_returns_row() -> None:
+    captured: list[httpx.Request] = []
+
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "valid_date": "2026-06-11",
+                    "regime": "RISK_OFF",
+                    "confidence": "0.86",
+                    "buy_enabled": False,
+                    "position_size_multiplier": "0.25",
+                    "source": "universe_scanner",
+                    "rationale": ["weak breadth"],
+                    "metrics": {"down_ratio": 0.82},
+                    "created_at": "2026-06-11T00:00:00+00:00",
+                }
+            ],
+        )
+
+    async with _build_client(_handler) as client:
+        row = await client.read_market_regime(valid_date=datetime(2026, 6, 11).date())
+
+    assert row is not None
+    assert row.regime == "RISK_OFF"
+    assert str(row.confidence) == "0.86"
+    assert row.buy_enabled is False
+    assert str(row.position_size_multiplier) == "0.25"
+    assert row.rationale == ["weak breadth"]
+    assert row.metrics == {"down_ratio": 0.82}
+    assert captured[0].url.path == "/rest/v1/market_regime"
+    assert captured[0].url.params.get("valid_date") == "eq.2026-06-11"
+
+
+async def test_read_market_regime_returns_none_when_missing() -> None:
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[])
+
+    async with _build_client(_handler) as client:
+        row = await client.read_market_regime(valid_date=datetime(2026, 6, 11).date())
+
+    assert row is None
+
+
+async def test_read_market_regime_missing_table_is_noop() -> None:
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400,
+            json={
+                "code": "42P01",
+                "message": 'relation "public.market_regime" does not exist',
+            },
+        )
+
+    async with _build_client(_handler) as client:
+        row = await client.read_market_regime(valid_date=datetime(2026, 6, 11).date())
+
+    assert row is None
+
+
 async def test_read_latest_daily_close_retries_on_5xx() -> None:
     calls: list[httpx.Request] = []
 
