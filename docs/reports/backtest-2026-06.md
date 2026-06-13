@@ -71,12 +71,32 @@
 | 20 | 70 | 20 | 25 | 0.15 | 5136 | -178,488.901944 | 0.707018 | 195,071.247723 |
 | 30 | 70 | 20 | 25 | 0.05 | 6080 | -178,304.660925 | 0.757414 | 194,445.751054 |
 
+## Strategy-Level Validation
+
+CHK-10 用に、同じ `daily_ohlcv` export と train / validation split で
+`DEFAULT_STRATEGIES` の各戦略を個別に評価した。production default parameter は以下を使った。
+
+- `sma_crossover`: short SMA `5`, long SMA `25`, `min_gap_ratio=0.005`
+- `rsi_threshold`: buy `25`, sell `75`
+- `bollinger_breakout`: period `20`, tolerance `0.15`
+
+| Strategy | Train trades | Train PnL | Train PF | Val trades | Val PnL | Val PF | Val DD | Decision |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| `sma_crossover` | 23 | -4,282.20023 | 0.004616 | 766 | -220,169.09149 | 0.404078 | 229,196.658616 | remove from default |
+| `rsi_threshold` | 121 | 24,816.994818 | 72.423374 | 523 | 141,873.043728 | 9.2978 | 5,770.89127 | keep |
+| `bollinger_breakout` | 10 | 2,560.58157 | n/a | 282 | 81,132.007035 | 8.711496 | 7,857.76338 | keep |
+
+`sma_crossover` は validation PF < 1.0 かつ validation PnL が大きくマイナスだったため、
+`DEFAULT_STRATEGIES` と production compose/template の既定値から除外する。戦略実装と registry
+登録は残すため、明示的に `STRATEGIES_ENABLED=sma_crossover,...` を指定すれば再評価・再有効化できる。
+
 ## Interpretation
 
 現行 default の `RSI_BUY_THRESHOLD=25`, `RSI_SELL_THRESHOLD=75`,
 `Bollinger tolerance=0.15` は短期 validation では上位群に近い。ただし `SMA long=75`
 が支配的で、現行 strategy-rule の SMA 窓設定と同一ではない可能性があるため、このレポートだけで
-production parameter を変更しない。
+production parameter を変更しない。CHK-10 では parameter 増強ではなく、PF<1.0 の
+`sma_crossover` を default 有効戦略から外すだけに留める。
 
 PF < 1.0 の組み合わせは 32 / 243 あった。特に `SMA short=20`, `SMA long=25` は
 複数条件で悪く、短期窓が近すぎる crossover は除外候補。
@@ -85,5 +105,5 @@ PF < 1.0 の組み合わせは 32 / 243 あった。特に `SMA short=20`, `SMA 
 
 1. `daily_ohlcv` の履歴を最低2年分に拡張して同じ sweep を再実行する。
 2. `scripts/parameter-sweep.py` の戦略ロジックを production `strategy-rule` とさらに近づける。
-3. 戦略単位別の PF を出せるレポートに拡張してから、`DEFAULT_STRATEGIES` からの除外可否を判断する。
+3. `sma_crossover` は default から外した状態で paper-mode 観測し、次回月次 sweep で再採用可否を判断する。
 4. この短期レポートだけでは live 資金増額や live parameter 変更をしない。

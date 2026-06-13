@@ -41,6 +41,7 @@ def test_parser_parses_paths(tmp_path: Path) -> None:
 def test_run_backtest_writes_signals_for_sma_cross(
     tmp_path: Path,
     features_factory: Callable[..., ProcessedFeatures],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     base = datetime(2026, 4, 20, 9, 0, tzinfo=UTC)
     feats = [
@@ -60,6 +61,7 @@ def test_run_backtest_writes_signals_for_sma_cross(
     in_path = tmp_path / "features.jsonl"
     out_path = tmp_path / "signals.jsonl"
     _write_features(in_path, feats)
+    monkeypatch.setenv("STRATEGIES_ENABLED", "sma_crossover")
 
     rc = _run_backtest_cmd(input_path=in_path, output_path=out_path)
     assert rc == 0
