@@ -138,6 +138,15 @@ jobs:
         working-directory: infra
         run: supabase start
 
+      - name: Apply contract SQL to Supabase
+        run: |
+          cat contracts/sql/*.sql infra/supabase/seed.sql \
+            | docker exec -i supabase_db_trade-ai-agent \
+                psql -U postgres -d postgres -v ON_ERROR_STOP=1
+          docker exec supabase_db_trade-ai-agent \
+            psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c "notify pgrst, 'reload schema';"
+
       - name: Export Supabase env
         working-directory: infra
         run: |
