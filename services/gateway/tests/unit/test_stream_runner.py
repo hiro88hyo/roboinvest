@@ -147,6 +147,17 @@ class _PubSubRouter:
         return httpx.Response(404)
 
 
+class _FakeKabuWallet:
+    def __init__(self, outcomes: list[Decimal | Exception]) -> None:
+        self.outcomes = list(outcomes)
+
+    async def read_stock_account_wallet(self) -> Decimal:
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+
 @dataclass
 class _SupabaseRouter:
     """Stubs PostgREST responses in order for each endpoint."""
@@ -228,6 +239,7 @@ async def _with_runner(
     pubsub: _PubSubRouter,
     supabase: _SupabaseRouter,
     settings: GatewaySettings | None = None,
+    kabu: Any | None = None,
     run_body: Callable[[StreamRunner], Coroutine[None, None, Any]],
     sleep: Callable[[float], Awaitable[None]] | None = None,
     wall_clock: Callable[[], datetime] | None = None,
@@ -267,6 +279,7 @@ async def _with_runner(
                 live_topic=settings.pubsub_topic_live_orders,
                 paper_topic=settings.pubsub_topic_paper_orders,
             ),
+            kabu=kabu,
             idle_backoff_seconds=1.0,
             sleep=sleep or _noop_sleep,
             wall_clock=wall_clock or _default_wall_clock,
@@ -445,6 +458,71 @@ async def test_live_buy_is_rejected_when_existing_live_exposure_exhausts_budget(
     assert stats.approved == 0
     assert stats.rejected == 1
     assert pubsub.published == []
+
+
+async def test_live_buy_uses_kabu_wallet_as_capital() -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response([("a1", _unified_payload(action=Action.BUY, stop_loss_price="2400"))])
+        ]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trade_mode="live")],
+        positions_quantity_rows=[[]],
+        positions_price_rows=[
+            [{"current_price": "2500"}],
+            [],
+        ],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        kabu=_FakeKabuWallet([Decimal("500000")]),
+        run_body=_body,
+    )
+
+    assert stats.approved == 1
+    body = json.loads(pubsub.published[0].content.decode())
+    order = json.loads(base64.b64decode(body["messages"][0]["data"]).decode())
+    assert order["quantity"] == 100
+
+
+async def test_live_buy_uses_cached_wallet_after_kabu_failure(caplog: Any) -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response([("a1", _unified_payload(action=Action.BUY, stop_loss_price="2400"))])
+        ]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trade_mode="live")],
+        positions_quantity_rows=[[]],
+        positions_price_rows=[
+            [{"current_price": "2500"}],
+            [],
+        ],
+    )
+    caplog.set_level(logging.WARNING, logger="gateway.streaming.runner")
+
+    async def _body(runner: StreamRunner) -> Any:
+        runner._cached_live_capital = Decimal("500000")
+        return await runner.run_once()
+
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        kabu=_FakeKabuWallet([RuntimeError("wallet down")]),
+        run_body=_body,
+    )
+
+    assert stats.approved == 1
+    body = json.loads(pubsub.published[0].content.decode())
+    order = json.loads(base64.b64decode(body["messages"][0]["data"]).decode())
+    assert order["quantity"] == 100
+    assert "using cached live capital" in caplog.text
 
 
 async def test_paper_mode_publishes_to_paper_orders() -> None:

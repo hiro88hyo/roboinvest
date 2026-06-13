@@ -27,6 +27,11 @@ class GatewaySettings(BaseSettings):
     supabase_url: str = ""
     supabase_secret_key: str = ""
 
+    kabu_api_base_url: str = "http://localhost:18081/kabusapi"
+    kabu_api_password: str = ""
+    kabu_http_timeout_seconds: float = 10.0
+    kabu_token_cache_file: str = "/tmp/kabu_token_cache.json"
+
     pubsub_project_id: str = ""
     pubsub_emulator_host: str = ""
     pubsub_subscription_trade_signals: str = "gateway-trade-signals"

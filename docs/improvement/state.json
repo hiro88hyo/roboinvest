@@ -1,12 +1,12 @@
 {
-  "phase": "FIX",
+  "phase": "HITL",
   "audited_at": "2026-06-13T05:50:00Z",
   "findings": [
     {
       "id": "CHK-05",
       "priority": 3,
-      "status": "open",
-      "evidence": "services/gateway/src/gateway/config.py:37 still defines capital as Decimal(\"1000000\"), so Gateway sizing is not sourced from kabu buying power or Supabase.",
+      "status": "fixed",
+      "evidence": "fix/chk-05 adds Gateway KabuWalletClient and uses kabu /wallet/cash StockAccountWallet as live BUY capital, with cached and configured CAPITAL fallback on read failure.",
       "fix_instruction": "lot_calculator の総資金を kabu /wallet/cash 相当の値から取得するよう変更せよ。取得失敗時は直近キャッシュ値を使い WARNING を出す。フォールバックの既定値は現行の100万円。",
       "hitl_required": true
     },
@@ -37,6 +37,7 @@
     "CHK-08"
   ],
   "done": [
-    "CHK-09"
+    "CHK-09",
+    "CHK-05"
   ]
 }
