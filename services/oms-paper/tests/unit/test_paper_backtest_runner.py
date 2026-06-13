@@ -31,6 +31,12 @@ def test_book_received_before_order_enables_fill() -> None:
     assert summary.no_fill_count == 0
     assert "7203" in summary.final_positions
     assert summary.final_positions["7203"].quantity == 100
+    assert len(summary.execution_quality) == 1
+    quality = summary.execution_quality[0]
+    assert quality.fill_ratio == Decimal("1")
+    assert quality.opposite_depth_quantity == 200
+    assert quality.same_side_depth_quantity == 700
+    assert quality.spread_bps == Decimal("10.00500250125062531265632816")
 
 
 def test_book_at_same_timestamp_applies_before_order() -> None:
@@ -108,6 +114,8 @@ def test_partial_fill_recorded_with_filled_quantity() -> None:
     assert summary.fill_count == 1
     assert summary.fills[0].quantity == 50
     assert summary.final_positions["7203"].quantity == 50
+    assert summary.execution_quality[0].fill_ratio == Decimal("0.25")
+    assert summary.execution_quality[0].reason == "partial"
 
 
 def test_default_holding_type_applied_to_new_buy() -> None:

@@ -11,7 +11,7 @@ from trade_contracts.features import ProcessedFeatures
 from trade_contracts.market import OrderBookSnapshot, TickData
 
 from feature_engine.config import FeatureEngineSettings
-from feature_engine.indicators import bollinger, rsi, sma, vwap
+from feature_engine.indicators import bollinger, rsi, sma, volume_ratio, vwap
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +26,7 @@ def _default_buffer_size(settings: FeatureEngineSettings) -> int:
         settings.indicator_sma_long_window,
         settings.indicator_rsi_period,
         settings.indicator_vwap_window,
+        settings.indicator_volume_ratio_window,
         settings.indicator_bollinger_period,
     )
     return max_window * 2
@@ -83,6 +84,11 @@ class StreamingFeatureState:
             price_col="close",
             output_col="vwap",
         )
+        df = volume_ratio(
+            df,
+            self.settings.indicator_volume_ratio_window,
+            output_col="volume_ratio",
+        )
         df = bollinger(
             df,
             self.settings.indicator_bollinger_period,
@@ -98,6 +104,7 @@ class StreamingFeatureState:
             sma_long=_to_decimal(last.get("sma_long")),
             rsi=_to_decimal(last.get("rsi")),
             vwap=_to_decimal(last.get("vwap")),
+            volume_ratio=_to_decimal(last.get("volume_ratio")),
             bollinger_upper=_to_decimal(last.get("bollinger_upper")),
             bollinger_middle=_to_decimal(last.get("bollinger_middle")),
             bollinger_lower=_to_decimal(last.get("bollinger_lower")),

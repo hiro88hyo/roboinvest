@@ -31,6 +31,7 @@ closes the existing LONG quantity as-is.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import time
@@ -45,6 +46,7 @@ from zoneinfo import ZoneInfo
 from pydantic import ValidationError
 from trade_contracts.enums import Action, SignalSource, TradeMode, TradingStyle
 from trade_contracts.logging import event_extra
+from trade_contracts.order import OrderRequest
 from trade_contracts.risk import KillSwitchState
 from trade_contracts.signal import UnifiedTradeSignal
 
@@ -53,6 +55,7 @@ from ..clients.kabu import KabuWalletClient
 from ..clients.pubsub import PubSubPublisher, PubSubSubscriber, PulledMessage
 from ..clients.supabase import MarketRegimeState, SupabaseClient
 from ..config import GatewaySettings, RiskConfig
+from ..order_archive import OrderArchiveWriter
 from ..order_builder import build as build_order
 from ..router import TopicRouting, resolve_topic
 from ..validator import validate
@@ -83,6 +86,7 @@ class StreamRunner:
     risk_config: RiskConfig
     routing: TopicRouting
     kabu: KabuWalletClient | None = None
+    order_archive: OrderArchiveWriter | None = None
     idle_backoff_seconds: float = 0.5
     sleep: Sleep = field(default=asyncio.sleep)
     monotonic: MonotonicClock = field(default=time.monotonic)
@@ -297,17 +301,52 @@ class StreamRunner:
             default_stop_loss_spread_pct=self.risk_config.default_stop_loss_spread_pct,
             created_at=now,
         )
+        reservation_risk = self._risk_amount_for_order(order=order, entry_price=entry_price)
+        if reservation_risk is not None:
+            reservation = await self.supabase.reserve_order_risk(
+                order_id=order.order_id,
+                trade_mode=order.trade_mode,
+                trading_date=order.created_at.astimezone(
+                    ZoneInfo(self.settings.day_closeout_timezone)
+                ).date(),
+                symbol=order.symbol,
+                side=order.side.value,
+                risk_amount=reservation_risk,
+                notional_amount=(entry_price or Decimal("0")) * Decimal(order.quantity),
+            )
+            if not reservation.passed:
+                self._log_reject(signal, reservation.reason or "risk_reservation", trade_mode)
+                return _Decision(approved=False, kill_switch_fired=False)
+
         topic = resolve_topic(trade_mode, self.routing)
-        await self.publisher.publish(
-            topic,
-            data=order.model_dump_json().encode("utf-8"),
-            attributes={
-                "symbol": order.symbol,
-                "side": order.side.value,
-                "trade_mode": order.trade_mode.value,
-                "signal_source": order.signal_source.value,
-            },
-        )
+        try:
+            await self.publisher.publish(
+                topic,
+                data=order.model_dump_json().encode("utf-8"),
+                attributes={
+                    "symbol": order.symbol,
+                    "side": order.side.value,
+                    "trade_mode": order.trade_mode.value,
+                    "signal_source": order.signal_source.value,
+                },
+            )
+        except Exception:
+            if reservation_risk is not None:
+                with contextlib.suppress(Exception):
+                    await self.supabase.release_risk_reservation(
+                        order_id=order.order_id,
+                        reason="publish_failed",
+                    )
+            raise
+        if self.order_archive is not None:
+            try:
+                self.order_archive.record_order(order)
+            except Exception:
+                logger.exception(
+                    "order archive failed: symbol=%s order_id=%s",
+                    order.symbol,
+                    order.order_id,
+                )
         self._mark_pending_live_order(signal=signal, trade_mode=trade_mode)
         self._record_publish_summary(
             trade_mode=order.trade_mode.value,
@@ -334,6 +373,18 @@ class StreamRunner:
             ),
         )
         return _Decision(approved=True, kill_switch_fired=False)
+
+    def _risk_amount_for_order(
+        self, *, order: OrderRequest, entry_price: Decimal | None
+    ) -> Decimal | None:
+        if order.trade_mode is not TradeMode.LIVE or order.side.value != "BUY":
+            return None
+        if entry_price is None or order.stop_loss_price is None:
+            return None
+        risk_per_share = entry_price - order.stop_loss_price
+        if risk_per_share <= 0:
+            return None
+        return risk_per_share * Decimal(order.quantity)
 
     def _pending_live_order_key(self, signal: UnifiedTradeSignal) -> tuple[str, str]:
         return (signal.symbol, signal.action.value)

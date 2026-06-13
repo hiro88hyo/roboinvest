@@ -1,5 +1,145 @@
 # June 2026 Operations Log
 
+## 2026-06-13 Fable5 feedback status and remaining TODO
+
+Reviewed `docs/handoff/2026-06-fable5-feedback.md` and
+`docs/handoff/2026-06-fable5-additional-feedback.md` against the current working tree.
+
+Status by original checklist:
+
+- CHK-01 revenue metrics: done. OMS Paper backtest now reports net PnL, win rate,
+  profit factor, max drawdown, Sharpe ratio, expectancy, costs, tax, and slippage.
+- CHK-02 backtest PnL: done. `BacktestSummary.realized_pnl` exists and is covered by tests.
+- CHK-03 parameter sweep: done. `scripts/parameter-sweep.py` supports the required
+  strategy grid and the later 500-business-day focused sweep with walk-forward folds.
+- CHK-04 AI strategy silence monitoring: done. `AI_STRATEGY_SILENT` is logged during
+  market-hours silence and has tests.
+- CHK-05 dynamic capital: partial. Gateway can read live capital from kabu wallet,
+  cache it, and fall back to configured capital. `GatewaySettings.capital=1000000`
+  still exists as fallback, so treat this as not fully closed until the desired
+  capital source and failure semantics are explicitly accepted.
+- CHK-06 kill-switch/risk reservation atomicity: implemented in the working tree,
+  and `contracts/sql/016_gateway_risk_reservations.sql` was applied to production
+  Supabase by the user. RLS is enabled on `gateway_risk_reservations`. Service-role
+  verification passed for `gateway_risk_reservations` `limit=0`,
+  `gateway_check_and_reserve_risk` with a no-reserve `paper`/`SELL` payload, and
+  `gateway_release_risk_reservation` with a nonexistent order id. A live BUY verification
+  reservation with `risk_amount=1` also passed and was immediately released with
+  `reason="verify_cleanup"`. The SQL adds
+  `gateway_risk_reservations`, `gateway_check_and_reserve_risk`, and
+  `gateway_release_risk_reservation`. Gateway reserves worst-case live BUY risk before
+  Pub/Sub publish and releases it if publish fails.
+- CHK-07 OMS Live partial fill visibility: done. Partial-fill abandoned remainder is
+  logged as `partial_fill_abandoned` with `reason="partial_abandoned"` and tested.
+- CHK-08 look-ahead removal: done. Universe Scanner OHLCV ingestion/scoring uses
+  `previous_business_day(as_of)` and tests verify same-day data is excluded.
+- CHK-09 backtest report: done. `docs/reports/backtest-2026-06.md` records the
+  core metrics and long-horizon interpretation.
+- CHK-10 losing strategy stop: done. `sma_crossover` was removed from default
+  strategy enablement after validation PF < 1.0; explicit opt-in remains possible.
+
+Additional feedback status:
+
+- Project kill switch: done in `AGENTS.md` as Codex-facing policy. It pre-registers
+  the 2026-09-30 out-of-sample PF/DD condition and forbids silent weakening.
+- Codex migration note: done. `AGENTS.md` is the primary agent memo; old `AGENT.md`
+  references were corrected where found.
+- 1Password vault correction: done. Agent notes explicitly state `op://roboinvest/...`,
+  not `op://Trade AI/...`.
+- Capital-scale / purpose-function issue: not fully done. The kill switch captures
+  when to stop, but there is not yet a separate capital scaling plan or explicit
+  "this is research/platform value, not profit-maximization" decision document.
+
+Remaining TODO:
+
+1. Before production deploy, run one final pre-open style check and ensure the deployed
+   Gateway uses the same SQL contract (`gateway_check_and_reserve_risk` and
+   `gateway_release_risk_reservation`) now verified in production Supabase.
+2. Close CHK-05 explicitly. Decide whether kabu wallet plus cached fallback is
+   sufficient, or whether configured `capital` should become paper/backtest-only.
+3. Write a short capital-scale / project-purpose note before increasing live size.
+   This should state whether the project is optimizing profit, research data, or
+   AI-assisted engineering reference value.
+4. After the next paper session, run `scripts/run-paper-postmortem.sh` on real
+   `/data/orders` and `/data/books`, then compare execution quality gates before
+   considering any live parameter change.
+
+CHK-06 implementation note:
+
+- Risk reservations are conservative: active live BUY risk remains reserved for the
+  trading date unless publish fails and Gateway releases it immediately. This prevents
+  worst-case concurrent overshoot, but can under-use capital if an order fills cleanly.
+- A future enhancement can release or settle reservations from OMS Live terminal order
+  state (`filled`, `partial`, `cancelled`, `broker rejected`) once that event path is
+  designed end-to-end.
+- Verification after this change: `make lint-all` passed, `make test-all` passed with
+  Python `1004 passed, 21 skipped` and dashboard `47 passed`.
+- Production env compose rendering passed:
+  `op run --env-file infra/env.production -- docker compose ... config --quiet`.
+- Production pre-open check passed in no-smoke / kabu-offline mode after applying
+  `contracts/sql/016_gateway_risk_reservations.sql`:
+  `OK 62 / WARN 0 / NG 0 / SKIP 0`. The run used a temporary readable host
+  credential at `/tmp/roboinvest-gcp-pubsub-sa.json`, then removed it. The normal
+  tmpfs credential path `/dev/shm/roboinvest/gcp-pubsub-sa.json` was root-owned
+  (`root:root`, `0600`) at verification time, so host-side checks could not read it
+  without sudo; containers were still already running from the existing mount.
+- Follow-up hardening: `production-preopen-check.py` now reports an unreadable
+  GCP credential path as a clean `NG` instead of surfacing a Python traceback.
+  `scripts/deploy-production.sh` can pass `--gcp-credentials` and
+  `--no-pubsub-smoke` through to the post-check. Syntax/help verification passed
+  for both scripts, and `make lint-all` plus `make test-all` passed afterward
+  (`1004 passed, 21 skipped`; dashboard `47 passed`).
+
+## 2026-06-13 paper backtest reliability follow-up
+
+Backtest confidence work after the long-horizon parameter sweep:
+
+- Kept `ENTRY_VOLUME_RATIO_MIN=2.0` as a paper-only candidate. Do not enable it for live
+  until live-like paper archive postmortems show stable fills and execution quality.
+- Added paper postmortem archive tooling so approved Gateway orders and feature-engine
+  order books can be replayed through OMS Paper after a session.
+- `run-paper-archive-backtest.py` now fails fast when the archived orders file exists
+  but contains zero nonblank orders, and writes `metadata.json` with order/book/fill/no-fill counts.
+- `summarize-paper-backtest.py` can include that metadata so a Markdown summary clearly
+  states the replay input size, not just PnL and gate status.
+- Gateway order archive partitions are based on the configured trading timezone
+  (`day_closeout_timezone`, default `Asia/Tokyo`) so UTC boundary timestamps do not
+  land in the wrong trading date.
+
+Verification:
+
+- `make lint-all` passed.
+- `make test-all` passed: Python `1002 passed, 21 skipped`; dashboard `47 passed`.
+- Postmortem smoke using `/tmp/roboinvest-paper-archive-smoke` passed with
+  `orders=1`, `books=1`, `fills=1`, `no_fills=0`, gate `PASS`.
+- Local daily OHLCV CSV archive dry-run passed:
+  `2,109,772` rows from `2024-05-27` through `2026-06-12`.
+- Targeted Gateway archive timezone tests passed after the JST partition fix.
+
+## 2026-06-10 full trading halt due to kabu station login failure
+
+Local kabu station login was unavailable, so kabu API was considered unavailable for the full day.
+Decision: stop all trading for `2026-06-10`.
+
+Actions taken around `22:43 UTC`:
+
+- Patched production Supabase `system_status.id=1` to `is_trading_allowed=false`.
+- Confirmed pre-halt state was `trade_mode=live`, `trading_style=day`, `daily_pnl=-40,310円`,
+  `daily_loss_limit=100,000円`.
+- Confirmed `positions` was empty before and after the halt.
+- Stopped production compose trading services:
+  `feeder`, `feature-engine`, `strategy-rule`, `strategy-ai`, `aggregator`, `gateway`,
+  `oms-live`, `oms-paper`.
+- Verified production compose then only showed `otel-collector` running.
+
+Resume checklist for the next trading day:
+
+1. Start kabu station / Windows proxy and confirm kabu API login.
+2. Start production trading services intentionally; do not rely on restart policy.
+3. Run `scripts/production-preopen-check.py --timeout 30 --refresh-kabu-token` without
+   `--kabu-offline`.
+4. Only after checks pass, set `system_status.is_trading_allowed=true` for the intended mode.
+
 ## 2026-06-08 risk-off paper close review and parity fixes
 
 Monday `2026-06-08` was intentionally run in production paper mode because the user expected

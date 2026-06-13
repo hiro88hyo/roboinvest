@@ -8,6 +8,7 @@ import sys
 from collections.abc import Awaitable, Callable
 from datetime import date, datetime
 from pathlib import Path
+from typing import Protocol
 from zoneinfo import ZoneInfo
 
 from trade_contracts.logging import configure_logging
@@ -17,6 +18,7 @@ from .clients.pubsub import PubSubPublisher, PubSubSubscriber
 from .clients.supabase import SupabaseReader, SupabaseWriter
 from .config import FeatureEngineSettings
 from .scheduler import run_pnl_reset_scheduler
+from .storage.book import BookWarmWriter
 from .storage.warm import WarmWriter
 from .streaming.feature_state import StreamingFeatureState
 from .streaming.runner import StreamRunner
@@ -26,6 +28,10 @@ JST = ZoneInfo("Asia/Tokyo")
 OutputFormat = str  # "jsonl" | "parquet" | "both"
 
 logger = logging.getLogger(__name__)
+
+
+class FlushableWriter(Protocol):
+    def flush(self) -> list[Path]: ...
 
 
 def _parse_date(raw: str | None) -> date:
@@ -143,7 +149,7 @@ async def _run_backtest_cmd(
 
 
 async def _periodic_warm_flush(
-    writer: WarmWriter,
+    writer: FlushableWriter,
     *,
     interval: float,
     iterations: int | None = None,
@@ -201,6 +207,7 @@ async def _run_stream_cmd(
             base_dir=settings.storage_warm_dir,
             resolution=settings.storage_tick_resolution,
         )
+        book_writer = BookWarmWriter(base_dir=settings.storage_book_dir)
         runner = StreamRunner(
             subscriber=subscriber,
             publisher=publisher,
@@ -210,6 +217,7 @@ async def _run_stream_cmd(
             tick_session=TickSession(),
             settings=settings,
             warm_writer=warm_writer,
+            book_writer=book_writer,
         )
 
         scheduler_task = asyncio.create_task(
@@ -220,15 +228,20 @@ async def _run_stream_cmd(
             _periodic_warm_flush(warm_writer, interval=warm_flush_interval),
             name="warm-flush",
         )
+        book_flush_task = asyncio.create_task(
+            _periodic_warm_flush(book_writer, interval=warm_flush_interval),
+            name="book-warm-flush",
+        )
 
         try:
             await runner.run(iterations=iterations)
         finally:
-            for task in (scheduler_task, flush_task):
+            for task in (scheduler_task, flush_task, book_flush_task):
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
             warm_writer.flush()
+            book_writer.flush()
 
     logger.info("stream done: iterations=%s", iterations)
     return 0

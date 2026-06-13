@@ -61,6 +61,7 @@ class GatewaySettings(BaseSettings):
     live_day_new_buy_cutoff_time: str = "14:30"
     day_closeout_time: str = "14:50"
     day_closeout_timezone: str = "Asia/Tokyo"
+    order_archive_dir: Path = Path("./data/orders")
 
     backtest_output_dir: Path = Path("./out/gateway")
 

@@ -9,6 +9,7 @@ import logging
 import sys
 from decimal import Decimal
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from trade_contracts.kabu_token import KabuTokenCache
 from trade_contracts.logging import configure_logging
@@ -19,6 +20,7 @@ from .clients.kabu import KabuWalletClient
 from .clients.pubsub import PubSubPublisher, PubSubSubscriber
 from .clients.supabase import SupabaseClient
 from .config import GatewaySettings, RiskConfig
+from .order_archive import OrderArchiveWriter
 from .router import TopicRouting
 from .streaming.runner import StreamRunner
 
@@ -221,6 +223,10 @@ async def _run_stream_cmd(*, iterations: int | None) -> int:
             settings=settings,
             risk_config=risk_config,
             routing=routing,
+            order_archive=OrderArchiveWriter(
+                settings.order_archive_dir,
+                timezone=ZoneInfo(settings.day_closeout_timezone),
+            ),
         )
         await runner.run(iterations=iterations)
 

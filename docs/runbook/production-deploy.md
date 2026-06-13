@@ -21,6 +21,19 @@ bash scripts/deploy-production.sh --apply --kabu-offline
 - post-deploy に `docker compose ps` と `gateway` / `oms-live` の tail log を確認する。
 - `scripts/production-preopen-check.py --timeout 30 --kabu-offline` を実行する。
 
+host 側で `/dev/shm/roboinvest/gcp-pubsub-sa.json` が読めない場合は、1Password から
+一時ファイルへ materialize し、post-check に明示パスを渡す。
+
+```bash
+set -a && . infra/.op.service-account.env && set +a
+umask 077
+op read "op://roboinvest/production/GOOGLE_APPLICATION_CREDENTIALS_JSON" > /tmp/roboinvest-gcp-pubsub-sa.json
+bash scripts/deploy-production.sh --apply --kabu-offline \
+  --gcp-credentials /tmp/roboinvest-gcp-pubsub-sa.json \
+  --no-pubsub-smoke
+rm -f /tmp/roboinvest-gcp-pubsub-sa.json
+```
+
 成功条件:
 
 - GitHub Actions run の conclusion が `success`。
@@ -55,6 +68,9 @@ set -a && . infra/.op.service-account.env && set +a
 op run --env-file infra/env.production -- \
   uv run python scripts/production-preopen-check.py --timeout 30
 ```
+
+副作用なしで managed Pub/Sub の topic/subscription 存在確認までに留める場合は
+`--no-pubsub-smoke` を追加する。
 
 ## 低出力運用
 

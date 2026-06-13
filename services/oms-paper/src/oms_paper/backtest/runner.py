@@ -25,7 +25,7 @@ from trade_contracts.order import OrderRequest
 from ..fill_simulator import simulate_fill
 from ..models import PaperFillRecord, PaperPosition
 from ..position_updater import apply_fill, build_fill_record
-from .report import ClosedTrade
+from .report import ClosedTrade, ExecutionQualityRecord
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +49,7 @@ class BacktestSummary:
     no_fills: list[NoFillRecord]
     final_positions: dict[str, PaperPosition]
     closed_trades: list[ClosedTrade]
+    execution_quality: list[ExecutionQualityRecord]
     realized_pnl: Decimal = Decimal("0")
 
     @property
@@ -107,6 +108,7 @@ def run_backtest(
     fills: list[PaperFillRecord] = []
     no_fills: list[NoFillRecord] = []
     closed_trades: list[ClosedTrade] = []
+    execution_quality: list[ExecutionQualityRecord] = []
     realized_pnl = Decimal("0")
 
     for _ts, kind, payload in _merge_events(orders, books):
@@ -123,6 +125,11 @@ def run_backtest(
             continue
 
         fill = simulate_fill(order=order, book=book)
+        execution_quality.append(
+            _execution_quality_for_order(
+                order=order, book=book, filled_quantity=fill.filled_quantity, reason=fill.reason
+            )
+        )
         if fill.filled_quantity == 0 or fill.fill_price is None:
             no_fills.append(_to_no_fill(order, reason=fill.reason))
             continue
@@ -157,6 +164,7 @@ def run_backtest(
         no_fills=no_fills,
         final_positions=positions,
         closed_trades=closed_trades,
+        execution_quality=execution_quality,
         realized_pnl=realized_pnl,
     )
     logger.info(
@@ -204,3 +212,49 @@ def _closed_trade_for_fill(
         net_pnl_before_tax=gross_pnl - commission,
         executed_at=record.executed_at,
     )
+
+
+def _execution_quality_for_order(
+    *,
+    order: OrderRequest,
+    book: OrderBookSnapshot,
+    filled_quantity: int,
+    reason: str,
+) -> ExecutionQualityRecord:
+    bid_qty = sum(level.quantity for level in book.bids)
+    ask_qty = sum(level.quantity for level in book.asks)
+    best_bid = book.bids[0].price if book.bids else None
+    best_ask = book.asks[0].price if book.asks else None
+    return ExecutionQualityRecord(
+        unified_signal_id=order.unified_signal_id,
+        symbol=order.symbol,
+        side=order.side,
+        requested_quantity=order.quantity,
+        filled_quantity=filled_quantity,
+        fill_ratio=Decimal(filled_quantity) / Decimal(order.quantity),
+        reason=reason,
+        order_created_at=order.created_at,
+        book_timestamp=book.timestamp,
+        best_bid=best_bid,
+        best_ask=best_ask,
+        spread_bps=_spread_bps(best_bid=best_bid, best_ask=best_ask),
+        opposite_depth_quantity=ask_qty if order.side is Side.BUY else bid_qty,
+        same_side_depth_quantity=bid_qty if order.side is Side.BUY else ask_qty,
+        order_book_imbalance=_book_imbalance(bid_qty=bid_qty, ask_qty=ask_qty),
+    )
+
+
+def _spread_bps(*, best_bid: Decimal | None, best_ask: Decimal | None) -> Decimal | None:
+    if best_bid is None or best_ask is None:
+        return None
+    mid = (best_bid + best_ask) / Decimal("2")
+    if mid <= 0:
+        return None
+    return ((best_ask - best_bid) / mid) * Decimal("10000")
+
+
+def _book_imbalance(*, bid_qty: int, ask_qty: int) -> Decimal | None:
+    total = bid_qty + ask_qty
+    if total <= 0:
+        return None
+    return Decimal(bid_qty - ask_qty) / Decimal(total)

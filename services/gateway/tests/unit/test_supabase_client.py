@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
+from decimal import Decimal
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -139,6 +141,103 @@ async def test_check_kill_switch_raises_on_invalid_payload() -> None:
     async with _build_client(_handler) as client:
         with pytest.raises(SupabaseError, match="returned no rows"):
             await client.check_kill_switch()
+
+
+async def test_reserve_order_risk_posts_rpc_and_parses_decision() -> None:
+    captured: list[httpx.Request] = []
+    order_id = uuid4()
+
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "passed": True,
+                    "reason": None,
+                    "reserved": True,
+                    "active_risk_before": "1000",
+                    "active_risk_after": "3000",
+                    "daily_pnl": "-100",
+                    "daily_loss_limit": "10000",
+                    "weekly_pnl": "0",
+                    "weekly_loss_limit": "30000",
+                    "monthly_pnl": "0",
+                    "monthly_loss_limit": "100000",
+                }
+            ],
+        )
+
+    async with _build_client(_handler) as client:
+        decision = await client.reserve_order_risk(
+            order_id=order_id,
+            trade_mode=TradeMode.LIVE,
+            trading_date=datetime(2026, 4, 20).date(),
+            symbol="7203",
+            side="BUY",
+            risk_amount=Decimal("2000"),
+            notional_amount=Decimal("500000"),
+        )
+
+    assert decision.passed is True
+    assert decision.reserved is True
+    assert decision.reason is None
+    assert decision.active_risk_before == Decimal("1000")
+    assert decision.active_risk_after == Decimal("3000")
+    req = captured[0]
+    assert req.method == "POST"
+    assert req.url.path == "/rest/v1/rpc/gateway_check_and_reserve_risk"
+    assert json.loads(req.content.decode()) == {
+        "p_order_id": str(order_id),
+        "p_trade_mode": "live",
+        "p_trading_date": "2026-04-20",
+        "p_symbol": "7203",
+        "p_side": "BUY",
+        "p_risk_amount": "2000",
+        "p_notional_amount": "500000",
+    }
+
+
+async def test_reserve_order_risk_raises_on_invalid_payload() -> None:
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[])
+
+    async with _build_client(_handler) as client:
+        with pytest.raises(SupabaseError, match="returned no rows"):
+            await client.reserve_order_risk(
+                order_id=uuid4(),
+                trade_mode=TradeMode.LIVE,
+                trading_date=datetime(2026, 4, 20).date(),
+                symbol="7203",
+                side="BUY",
+                risk_amount=Decimal("2000"),
+                notional_amount=Decimal("500000"),
+            )
+
+
+async def test_release_risk_reservation_posts_rpc() -> None:
+    captured: list[httpx.Request] = []
+    order_id = uuid4()
+
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(
+            200,
+            json=[{"released": True, "order_id": str(order_id), "status": "released"}],
+        )
+
+    async with _build_client(_handler) as client:
+        released = await client.release_risk_reservation(
+            order_id=order_id,
+            reason="publish_failed",
+        )
+
+    assert released is True
+    assert captured[0].url.path == "/rest/v1/rpc/gateway_release_risk_reservation"
+    assert json.loads(captured[0].content.decode()) == {
+        "p_order_id": str(order_id),
+        "p_reason": "publish_failed",
+    }
 
 
 async def test_read_long_quantity_returns_zero_when_no_row() -> None:

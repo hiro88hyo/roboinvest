@@ -18,6 +18,7 @@ def _settings() -> FeatureEngineSettings:
         indicator_sma_long_window=5,
         indicator_rsi_period=3,
         indicator_vwap_window=3,
+        indicator_volume_ratio_window=3,
         indicator_bollinger_period=3,
         indicator_bollinger_stddev=2.0,
     )
@@ -55,6 +56,7 @@ def test_first_tick_returns_features_with_null_indicators() -> None:
     assert features.sma_long is None
     assert features.rsi is None
     assert features.bollinger_middle is None
+    assert features.volume_ratio is None
     assert features.order_book is None
 
 
@@ -69,6 +71,16 @@ def test_sma_short_fills_after_window_reached() -> None:
     assert features.sma_short == Decimal("200.0")
     # sma_long(5) はまだ 3 本しかないので null
     assert features.sma_long is None
+
+
+def test_volume_ratio_fills_after_window_reached() -> None:
+    state = StreamingFeatureState.from_settings(_settings())
+    base = datetime(2026, 4, 20, 9, 0, tzinfo=UTC)
+    state.record_tick(_tick("7203", base, "100", volume=100))
+    state.record_tick(_tick("7203", base + timedelta(seconds=1), "100", volume=100))
+    features = state.record_tick(_tick("7203", base + timedelta(seconds=2), "100", volume=400))
+
+    assert features.volume_ratio == Decimal("2.0")
 
 
 def test_buffer_rolls_after_exceeding_size() -> None:

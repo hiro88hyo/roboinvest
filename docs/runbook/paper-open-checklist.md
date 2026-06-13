@@ -96,6 +96,39 @@ set -a && . infra/.op.service-account.env && set +a
 op run --env-file infra/env.production --   docker compose -f infra/docker-compose.prod.yml logs --tail=100 feeder feature-engine strategy-rule strategy-ai aggregator gateway oms-paper
 ```
 
+任意の paper 実験:
+
+- `ENTRY_VOLUME_RATIO_MIN=2.0` を設定すると、RSI / Bollinger の BUY entry は直近出来高が
+  20 日平均の 2.0 倍以上のときだけ出る。2026-06 の長期日足バックテストでは次の paper 候補だが、
+  fold 安定性が不足しているため live には設定しない。
+- feature-engine は板スナップショットを `/data/books` に Parquet 保存する。paper 後に
+  `uv run python scripts/order-book-archive-to-jsonl.py --book-dir <books> --date YYYY-MM-DD --output books.jsonl`
+  で OMS Paper backtest 用の `OrderBookSnapshot` JSONL に変換できる。
+- gateway は承認済み `OrderRequest` を `/data/orders/trade_mode=paper/date=YYYY-MM-DD/orders.jsonl`
+  に追記保存する。paper 後はこの `orders.jsonl` と変換済み `books.jsonl` を
+  `oms-paper backtest --orders ... --books ...` に渡して再現検証する。
+- Docker volume からホストへ取り出す場合は
+  `bash scripts/export-paper-archives.sh --date YYYY-MM-DD --output-dir out/paper-archive-YYYY-MM-DD`
+  を使う。`gateway:/data/orders` と `feature-engine:/data/books` をコピーする。
+- 通常の postmortem は
+  `bash scripts/run-paper-postmortem.sh --date YYYY-MM-DD --output-dir out/paper-archive-YYYY-MM-DD`
+  を使う。archive export、OMS Paper backtest、gate、Markdown summary まで実行する。
+  `backtest/metadata.json` には archive 注文件数、板件数、fill / no-fill 件数が残る。
+- gate 閾値だけ変えて再実行する場合は
+  `bash scripts/run-paper-postmortem.sh --date YYYY-MM-DD --output-dir out/paper-archive-YYYY-MM-DD --skip-export --gate-arg --min-profit-factor --gate-arg 1.2`
+  のように `--skip-export` で既存 archive を再利用する。
+- export 済み archive を再検証する場合は
+  `uv run python scripts/run-paper-archive-backtest.py --date YYYY-MM-DD --orders-dir out/paper-archive-YYYY-MM-DD/orders --book-dir out/paper-archive-YYYY-MM-DD/books --output-dir out/paper-archive-YYYY-MM-DD/backtest --run-gate --summary`
+  を使う。`books.jsonl` 生成から OMS Paper backtest report / gate report / Markdown summary 出力まで実行する。
+- report の機械判定は
+  `uv run python scripts/check-paper-backtest-report.py --report out/paper-YYYY-MM-DD/backtest_report.json --output out/paper-YYYY-MM-DD/gate_report.json`
+  を使う。必要なら `--min-profit-factor`, `--max-drawdown`, `--max-average-spread-bps` で閾値を厳しくする。
+- summary だけ作り直す場合は
+  `uv run python scripts/summarize-paper-backtest.py --date YYYY-MM-DD --report out/paper-YYYY-MM-DD/backtest_report.json --gate out/paper-YYYY-MM-DD/gate_report.json --metadata out/paper-YYYY-MM-DD/metadata.json --output out/paper-YYYY-MM-DD/summary.md`
+  を使う。
+- 判断記録は `docs/reports/paper-postmortem-template.md` をコピーして使う。`summary.md` を貼り、
+  gate status と `no live change | continue paper | prepare live change proposal` の判断を明記する。
+
 ## 6. Abort Conditions
 
 次のどれかなら寄り付き前でも無理に進めない。

@@ -7,16 +7,20 @@ from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
 import httpx
-from gateway.clients.pubsub import PubSubPublisher, PubSubSubscriber
+import pytest
+from gateway.clients.pubsub import PubSubError, PubSubPublisher, PubSubSubscriber
 from gateway.clients.supabase import SupabaseClient
 from gateway.config import GatewaySettings, RiskConfig
+from gateway.order_archive import OrderArchiveWriter
 from gateway.router import TopicRouting
 from gateway.streaming.runner import StreamRunner
 from trade_contracts.enums import Action, SignalSource, TradeMode, TradingStyle
+from trade_contracts.order import OrderRequest
 from trade_contracts.signal import UnifiedTradeSignal
 
 Handler = Callable[[httpx.Request], Coroutine[None, None, httpx.Response]]
@@ -128,8 +132,9 @@ def _market_regime_row(**overrides: Any) -> dict[str, Any]:
 class _PubSubRouter:
     """Routes pull / ack / publish on the gateway Pub/Sub transport."""
 
-    def __init__(self, *, pull_batches: list[dict[str, Any]]) -> None:
+    def __init__(self, *, pull_batches: list[dict[str, Any]], publish_status: int = 200) -> None:
         self.pull_batches = list(pull_batches)
+        self.publish_status = publish_status
         self.published: list[httpx.Request] = []
         self.acked: list[httpx.Request] = []
 
@@ -143,6 +148,8 @@ class _PubSubRouter:
             return httpx.Response(200, json={})
         if path.endswith(":publish"):
             self.published.append(request)
+            if self.publish_status >= 300:
+                return httpx.Response(self.publish_status, text="publish failed")
             return httpx.Response(200, json={"messageIds": [f"pub-{len(self.published)}"]})
         return httpx.Response(404)
 
@@ -169,6 +176,8 @@ class _SupabaseRouter:
     trades_live_rows: list[list[dict[str, Any]]] = field(default_factory=list)
     trades_paper_rows: list[list[dict[str, Any]]] = field(default_factory=list)
     market_regime_rows: list[list[dict[str, Any]]] = field(default_factory=list)
+    risk_reservation_rows: list[dict[str, Any]] = field(default_factory=list)
+    released_risk_order_ids: list[str] = field(default_factory=list)
     disable_status: int = 204
     requests: list[httpx.Request] = field(default_factory=list)
 
@@ -180,6 +189,36 @@ class _SupabaseRouter:
             if row is None:
                 return httpx.Response(200, json=[])
             return httpx.Response(200, json=[_kill_switch_decision_row(row)])
+        if request.method == "POST" and path == "/rest/v1/rpc/gateway_check_and_reserve_risk":
+            if self.risk_reservation_rows:
+                return httpx.Response(200, json=[self.risk_reservation_rows.pop(0)])
+            payload = json.loads(request.content.decode())
+            risk_amount = Decimal(str(payload["p_risk_amount"]))
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "passed": True,
+                        "reason": None,
+                        "reserved": True,
+                        "active_risk_before": "0",
+                        "active_risk_after": str(risk_amount),
+                        "daily_pnl": "0",
+                        "daily_loss_limit": "10000",
+                        "weekly_pnl": "0",
+                        "weekly_loss_limit": "30000",
+                        "monthly_pnl": "0",
+                        "monthly_loss_limit": "100000",
+                    }
+                ],
+            )
+        if request.method == "POST" and path == "/rest/v1/rpc/gateway_release_risk_reservation":
+            payload = json.loads(request.content.decode())
+            self.released_risk_order_ids.append(str(payload["p_order_id"]))
+            return httpx.Response(
+                200,
+                json=[{"released": True, "order_id": payload["p_order_id"], "status": "released"}],
+            )
         if request.method == "GET" and path == "/rest/v1/system_status":
             row = self.system_status_rows.pop(0) if self.system_status_rows else None
             return httpx.Response(200, json=[row] if row is not None else [])
@@ -243,6 +282,7 @@ async def _with_runner(
     run_body: Callable[[StreamRunner], Coroutine[None, None, Any]],
     sleep: Callable[[float], Awaitable[None]] | None = None,
     wall_clock: Callable[[], datetime] | None = None,
+    order_archive: OrderArchiveWriter | None = None,
 ) -> Any:
     settings = settings or _settings()
 
@@ -280,6 +320,7 @@ async def _with_runner(
                 paper_topic=settings.pubsub_topic_paper_orders,
             ),
             kabu=kabu,
+            order_archive=order_archive,
             idle_backoff_seconds=1.0,
             sleep=sleep or _noop_sleep,
             wall_clock=wall_clock or _default_wall_clock,
@@ -340,8 +381,92 @@ async def test_buy_with_no_existing_position_publishes_to_live_orders() -> None:
     assert order["quantity"] == 200
     assert order["trade_mode"] == "live"
     assert order["order_type"] == "MARKET"
+    reserve_requests = [
+        req
+        for req in supabase.requests
+        if req.url.path == "/rest/v1/rpc/gateway_check_and_reserve_risk"
+    ]
+    assert len(reserve_requests) == 1
+    reserve_payload = json.loads(reserve_requests[0].content.decode())
+    assert reserve_payload["p_trade_mode"] == "live"
+    assert reserve_payload["p_symbol"] == "7203"
+    assert reserve_payload["p_side"] == "BUY"
+    assert reserve_payload["p_risk_amount"] == "20000"
+    assert reserve_payload["p_notional_amount"] == "500000"
 
     assert json.loads(pubsub.acked[0].content.decode()) == {"ackIds": ["a1"]}
+
+
+async def test_live_buy_rejected_when_risk_reservation_fails(caplog: Any) -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response(
+                [("a1", _unified_payload(action=Action.BUY, price="2500", stop_loss_price="2400"))]
+            )
+        ]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trade_mode="live")],
+        positions_quantity_rows=[[]],
+        risk_reservation_rows=[
+            {
+                "passed": False,
+                "reason": "daily_loss_reservation_limit",
+                "reserved": False,
+                "active_risk_before": "9000",
+                "active_risk_after": "9000",
+                "daily_pnl": "0",
+                "daily_loss_limit": "10000",
+                "weekly_pnl": "0",
+                "weekly_loss_limit": "30000",
+                "monthly_pnl": "0",
+                "monthly_loss_limit": "100000",
+            }
+        ],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    caplog.set_level(logging.INFO, logger="gateway.streaming.runner")
+
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+
+    assert stats.approved == 0
+    assert stats.rejected == 1
+    assert pubsub.published == []
+    assert "daily_loss_reservation_limit" in caplog.text
+
+
+async def test_live_buy_releases_risk_reservation_when_publish_fails() -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response(
+                [("a1", _unified_payload(action=Action.BUY, price="2500", stop_loss_price="2400"))]
+            )
+        ],
+        publish_status=503,
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trade_mode="live")],
+        positions_quantity_rows=[[]],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        with pytest.raises(PubSubError):
+            await runner.run_once()
+
+    await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+
+    assert len(pubsub.published) == 3
+    assert len(supabase.released_risk_order_ids) == 1
+    release_requests = [
+        req
+        for req in supabase.requests
+        if req.url.path == "/rest/v1/rpc/gateway_release_risk_reservation"
+    ]
+    assert len(release_requests) == 1
+    assert json.loads(release_requests[0].content.decode())["p_reason"] == "publish_failed"
 
 
 async def test_order_publish_summary_logs_counts(caplog: Any) -> None:
@@ -525,7 +650,7 @@ async def test_live_buy_uses_cached_wallet_after_kabu_failure(caplog: Any) -> No
     assert "using cached live capital" in caplog.text
 
 
-async def test_paper_mode_publishes_to_paper_orders() -> None:
+async def test_paper_mode_publishes_to_paper_orders(tmp_path: Path) -> None:
     pubsub = _PubSubRouter(
         pull_batches=[
             _pull_response([("a1", _unified_payload(action=Action.BUY, stop_loss_price="2400"))])
@@ -540,10 +665,22 @@ async def test_paper_mode_publishes_to_paper_orders() -> None:
     async def _body(runner: StreamRunner) -> Any:
         return await runner.run_once()
 
-    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+    archive = OrderArchiveWriter(tmp_path / "orders")
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        order_archive=archive,
+        run_body=_body,
+    )
 
     assert stats.approved == 1
     assert pubsub.published[0].url.path.endswith(f"/topics/{PAPER_TOPIC}:publish")
+    archive_path = tmp_path / "orders" / "trade_mode=paper" / "date=2026-04-20" / "orders.jsonl"
+    rows = archive_path.read_text(encoding="utf-8").splitlines()
+    assert len(rows) == 1
+    archived = OrderRequest.model_validate_json(rows[0])
+    assert archived.trade_mode is TradeMode.PAPER
+    assert archived.symbol == "7203"
 
 
 async def test_market_regime_risk_off_logs_would_reject_without_blocking(caplog: Any) -> None:

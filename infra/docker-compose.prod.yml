@@ -82,11 +82,13 @@ services:
       STORAGE_TICK_RESOLUTION: ${STORAGE_TICK_RESOLUTION:-1s}
       STORAGE_WARM_DIR: /data/warm
       STORAGE_COLD_DIR: /data/cold
+      STORAGE_BOOK_DIR: /data/books
       MAX_HOLD_MINUTES: ${MAX_HOLD_MINUTES:-45}
     volumes:
       - trade-ai-logs:/app/logs
       - feature-warm-data:/data/warm
       - feature-cold-data:/data/cold
+      - feature-book-data:/data/books
       - ${GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH:-/dev/shm/roboinvest/gcp-pubsub-sa.json}:/run/secrets/gcp-pubsub-sa.json:ro
 
   strategy-rule:
@@ -109,6 +111,7 @@ services:
       RSI_BUY_THRESHOLD: ${RSI_BUY_THRESHOLD:-25.0}
       RSI_SELL_THRESHOLD: ${RSI_SELL_THRESHOLD:-75.0}
       BOLLINGER_BREAKOUT_TOLERANCE: ${BOLLINGER_BREAKOUT_TOLERANCE:-0.15}
+      ENTRY_VOLUME_RATIO_MIN: ${ENTRY_VOLUME_RATIO_MIN:-}
 
   strategy-ai:
     <<: *stream-service
@@ -184,8 +187,10 @@ services:
       SOFT_LOSS_LIMIT_JPY: ${SOFT_LOSS_LIMIT_JPY:-20000}
       LIVE_DAY_NEW_BUY_START_TIME: ${LIVE_DAY_NEW_BUY_START_TIME:-09:15}
       LIVE_DAY_NEW_BUY_CUTOFF_TIME: ${LIVE_DAY_NEW_BUY_CUTOFF_TIME:-14:30}
+      ORDER_ARCHIVE_DIR: /data/orders
     volumes:
       - trade-ai-logs:/app/logs
+      - gateway-order-data:/data/orders
       - kabu-token-cache:/var/lib/kabu
       - ${GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH:-/dev/shm/roboinvest/gcp-pubsub-sa.json}:/run/secrets/gcp-pubsub-sa.json:ro
 
@@ -254,7 +259,9 @@ services:
 
 volumes:
   kabu-token-cache:
+  feature-book-data:
   feature-warm-data:
   feature-cold-data:
+  gateway-order-data:
   trade-ai-logs:
   otel-collector-state:

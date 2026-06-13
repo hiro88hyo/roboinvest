@@ -20,6 +20,7 @@ def _settings() -> FeatureEngineSettings:
         indicator_sma_long_window=5,
         indicator_rsi_period=3,
         indicator_vwap_window=3,
+        indicator_volume_ratio_window=3,
         indicator_bollinger_period=3,
         indicator_bollinger_stddev=2.0,
         backtest_lookback_days=10,
@@ -71,6 +72,7 @@ def test_compute_features_adds_all_indicator_columns() -> None:
         "sma_long",
         "rsi",
         "vwap",
+        "volume_ratio",
         "bollinger_upper",
         "bollinger_middle",
         "bollinger_lower",
@@ -111,6 +113,7 @@ def test_to_processed_features_emits_decimal_and_null() -> None:
     last = features[-1]
     assert last.sma_short is not None
     assert isinstance(last.sma_short, Decimal)
+    assert last.volume_ratio is not None
     # 大引け (15:00 JST) の timestamp が入る
     assert last.timestamp.hour == 15
     assert last.timestamp.tzinfo is not None

@@ -128,6 +128,10 @@ op run --env-file infra/env.production -- \
   uv run python scripts/production-preopen-check.py --kabu-offline
 ```
 
+host 側の `/dev/shm/roboinvest/gcp-pubsub-sa.json` が読めない場合は、
+`--gcp-credentials <readable-host-path>` で一時 credential を明示する。
+Pub/Sub の smoke publish/pull/ack を避ける検証では `--no-pubsub-smoke` を使う。
+
 期待値:
 
 - `AI_MAX_OUTPUT_TOKENS=2048`

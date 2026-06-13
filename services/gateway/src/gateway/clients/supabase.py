@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Self
+from uuid import UUID
 
 import httpx
 from pydantic import ValidationError
@@ -68,6 +69,21 @@ class KillSwitchDecision:
     passed: bool
     reason: str | None
     disabled: bool
+
+
+@dataclass(frozen=True, slots=True)
+class RiskReservationDecision:
+    passed: bool
+    reason: str | None
+    reserved: bool
+    active_risk_before: Decimal
+    active_risk_after: Decimal
+    daily_pnl: Decimal
+    daily_loss_limit: Decimal
+    weekly_pnl: Decimal
+    weekly_loss_limit: Decimal
+    monthly_pnl: Decimal
+    monthly_loss_limit: Decimal
 
 
 @dataclass(slots=True)
@@ -154,19 +170,7 @@ class SupabaseClient:
                 f"rpc failed: rpc=gateway_check_kill_switch status={resp.status_code} "
                 f"body={resp.text[:200]}"
             )
-        payload = resp.json()
-        if isinstance(payload, list):
-            if not payload:
-                raise SupabaseError("gateway_check_kill_switch returned no rows")
-            row = payload[0]
-        elif isinstance(payload, dict):
-            row = payload
-        else:
-            raise SupabaseError(
-                f"unexpected gateway_check_kill_switch payload: {type(payload).__name__}"
-            )
-        if not isinstance(row, dict):
-            raise SupabaseError(f"unexpected gateway_check_kill_switch row: {type(row).__name__}")
+        row = _single_rpc_row(resp.json(), rpc="gateway_check_kill_switch")
 
         state_payload = {k: v for k, v in row.items() if k in _KILL_SWITCH_STATE_FIELDS}
         try:
@@ -180,6 +184,91 @@ class SupabaseClient:
             reason=_parse_optional_str(row.get("reason"), field="reason"),
             disabled=_parse_rpc_bool(row.get("disabled"), field="disabled"),
         )
+
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((httpx.HTTPError, SupabaseError)),
+    )
+    async def reserve_order_risk(
+        self,
+        *,
+        order_id: UUID,
+        trade_mode: TradeMode,
+        trading_date: date,
+        symbol: str,
+        side: str,
+        risk_amount: Decimal,
+        notional_amount: Decimal,
+    ) -> RiskReservationDecision:
+        """Atomically reserve worst-case risk for an approved live BUY order."""
+        assert self._client is not None
+        payload = {
+            "p_order_id": str(order_id),
+            "p_trade_mode": trade_mode.value,
+            "p_trading_date": trading_date.isoformat(),
+            "p_symbol": symbol,
+            "p_side": side,
+            "p_risk_amount": str(risk_amount),
+            "p_notional_amount": str(notional_amount),
+        }
+        resp = await self._client.post(
+            "/rest/v1/rpc/gateway_check_and_reserve_risk",
+            json=payload,
+        )
+        if resp.status_code >= 500:
+            raise SupabaseError(
+                "transient error: rpc=gateway_check_and_reserve_risk "
+                f"status={resp.status_code} body={resp.text[:200]}"
+            )
+        if resp.status_code >= 300:
+            raise SupabaseError(
+                "rpc failed: rpc=gateway_check_and_reserve_risk "
+                f"status={resp.status_code} body={resp.text[:200]}"
+            )
+        row = _single_rpc_row(resp.json(), rpc="gateway_check_and_reserve_risk")
+        return RiskReservationDecision(
+            passed=_parse_rpc_bool(row.get("passed"), field="passed"),
+            reason=_parse_optional_str(row.get("reason"), field="reason"),
+            reserved=_parse_rpc_bool(row.get("reserved"), field="reserved"),
+            active_risk_before=_parse_decimal(
+                row.get("active_risk_before"), field="active_risk_before"
+            ),
+            active_risk_after=_parse_decimal(
+                row.get("active_risk_after"), field="active_risk_after"
+            ),
+            daily_pnl=_parse_decimal(row.get("daily_pnl"), field="daily_pnl"),
+            daily_loss_limit=_parse_decimal(row.get("daily_loss_limit"), field="daily_loss_limit"),
+            weekly_pnl=_parse_decimal(row.get("weekly_pnl"), field="weekly_pnl"),
+            weekly_loss_limit=_parse_decimal(
+                row.get("weekly_loss_limit"), field="weekly_loss_limit"
+            ),
+            monthly_pnl=_parse_decimal(row.get("monthly_pnl"), field="monthly_pnl"),
+            monthly_loss_limit=_parse_decimal(
+                row.get("monthly_loss_limit"), field="monthly_loss_limit"
+            ),
+        )
+
+    async def release_risk_reservation(self, *, order_id: UUID, reason: str) -> bool:
+        """Release an active reservation when publishing the order fails."""
+        assert self._client is not None
+        resp = await self._client.post(
+            "/rest/v1/rpc/gateway_release_risk_reservation",
+            json={"p_order_id": str(order_id), "p_reason": reason},
+        )
+        if resp.status_code >= 500:
+            raise SupabaseError(
+                "transient error: rpc=gateway_release_risk_reservation "
+                f"status={resp.status_code} body={resp.text[:200]}"
+            )
+        if resp.status_code >= 300:
+            raise SupabaseError(
+                "rpc failed: rpc=gateway_release_risk_reservation "
+                f"status={resp.status_code} body={resp.text[:200]}"
+            )
+        row = _single_rpc_row(resp.json(), rpc="gateway_release_risk_reservation")
+        return _parse_rpc_bool(row.get("released"), field="released")
 
     @retry(
         reraise=True,
@@ -518,10 +607,31 @@ def _parse_bool(value: Any, *, field: str) -> bool:
 def _parse_rpc_bool(value: Any, *, field: str) -> bool:
     if isinstance(value, bool):
         return value
-    raise SupabaseError(f"invalid gateway_check_kill_switch {field}: {value!r}")
+    raise SupabaseError(f"invalid rpc bool {field}: {value!r}")
 
 
 def _parse_optional_str(value: Any, *, field: str) -> str | None:
     if value is None or isinstance(value, str):
         return value
-    raise SupabaseError(f"invalid gateway_check_kill_switch {field}: {value!r}")
+    raise SupabaseError(f"invalid rpc string {field}: {value!r}")
+
+
+def _parse_decimal(value: Any, *, field: str) -> Decimal:
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise SupabaseError(f"invalid rpc decimal {field}: {value!r}") from exc
+
+
+def _single_rpc_row(payload: Any, *, rpc: str) -> dict[str, Any]:
+    if isinstance(payload, list):
+        if not payload:
+            raise SupabaseError(f"{rpc} returned no rows")
+        row = payload[0]
+    elif isinstance(payload, dict):
+        row = payload
+    else:
+        raise SupabaseError(f"unexpected {rpc} payload: {type(payload).__name__}")
+    if not isinstance(row, dict):
+        raise SupabaseError(f"unexpected {rpc} row: {type(row).__name__}")
+    return row
