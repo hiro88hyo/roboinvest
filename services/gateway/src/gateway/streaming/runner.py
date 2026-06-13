@@ -49,6 +49,7 @@ from trade_contracts.risk import KillSwitchState
 from trade_contracts.signal import UnifiedTradeSignal
 
 from .. import lot_calculator
+from ..clients.kabu import KabuWalletClient
 from ..clients.pubsub import PubSubPublisher, PubSubSubscriber, PulledMessage
 from ..clients.supabase import MarketRegimeState, SupabaseClient
 from ..config import GatewaySettings, RiskConfig
@@ -81,6 +82,7 @@ class StreamRunner:
     settings: GatewaySettings
     risk_config: RiskConfig
     routing: TopicRouting
+    kabu: KabuWalletClient | None = None
     idle_backoff_seconds: float = 0.5
     sleep: Sleep = field(default=asyncio.sleep)
     monotonic: MonotonicClock = field(default=time.monotonic)
@@ -96,6 +98,7 @@ class StreamRunner:
     _pending_live_order_deadlines: dict[tuple[str, str], float] = field(
         default_factory=dict, init=False
     )
+    _cached_live_capital: Decimal | None = field(default=None, init=False)
 
     async def run(self, *, iterations: int | None = None) -> list[BatchStats]:
         results: list[BatchStats] = []
@@ -374,14 +377,15 @@ class StreamRunner:
         if entry_price is None:
             return quantity
 
+        live_capital = await self._resolve_live_capital()
         live_exposure = await self.supabase.read_live_capital_in_use()
-        remaining_capital = self.risk_config.capital - live_exposure
+        remaining_capital = live_capital - live_exposure
         if remaining_capital <= 0:
             logger.warning(
                 "live buy budget exhausted: symbol=%s exposure=%s capital=%s",
                 signal.symbol,
                 live_exposure,
-                self.risk_config.capital,
+                live_capital,
             )
             return None
 
@@ -413,6 +417,28 @@ class StreamRunner:
                 remaining_capital,
             )
         return rebudgeted
+
+    async def _resolve_live_capital(self) -> Decimal:
+        if self.kabu is None:
+            return self.risk_config.capital
+        try:
+            capital = await self.kabu.read_stock_account_wallet()
+        except Exception as exc:
+            if self._cached_live_capital is not None:
+                logger.warning(
+                    "kabu wallet read failed; using cached live capital: capital=%s error=%r",
+                    self._cached_live_capital,
+                    exc,
+                )
+                return self._cached_live_capital
+            logger.warning(
+                "kabu wallet read failed; using configured capital fallback: capital=%s error=%r",
+                self.risk_config.capital,
+                exc,
+            )
+            return self.risk_config.capital
+        self._cached_live_capital = capital
+        return capital
 
     def _signal_age_seconds(self, *, signal: UnifiedTradeSignal, now: datetime) -> float:
         return max(0.0, (now - signal.created_at).total_seconds())

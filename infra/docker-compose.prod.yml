@@ -167,6 +167,9 @@ services:
       PUBSUB_SUBSCRIPTION_TRADE_SIGNALS: ${PUBSUB_SUBSCRIPTION_TRADE_SIGNALS:-gateway-trade-signals}
       PUBSUB_TOPIC_LIVE_ORDERS: ${PUBSUB_TOPIC_LIVE_ORDERS:-live-orders}
       PUBSUB_TOPIC_PAPER_ORDERS: ${PUBSUB_TOPIC_PAPER_ORDERS:-paper-orders}
+      KABU_API_BASE_URL: ${KABU_API_BASE_URL:?KABU_API_BASE_URL is required}
+      KABU_API_PASSWORD: ${KABU_API_PASSWORD:?KABU_API_PASSWORD is required}
+      KABU_TOKEN_CACHE_FILE: /var/lib/kabu/token_cache.json
       CAPITAL: ${CAPITAL:-1000000}
       MAX_RISK_PER_TRADE_PCT: ${MAX_RISK_PER_TRADE_PCT:-0.02}
       SWING_RISK_SCALE: ${SWING_RISK_SCALE:-0.5}
@@ -181,6 +184,10 @@ services:
       SOFT_LOSS_LIMIT_JPY: ${SOFT_LOSS_LIMIT_JPY:-20000}
       LIVE_DAY_NEW_BUY_START_TIME: ${LIVE_DAY_NEW_BUY_START_TIME:-09:15}
       LIVE_DAY_NEW_BUY_CUTOFF_TIME: ${LIVE_DAY_NEW_BUY_CUTOFF_TIME:-14:30}
+    volumes:
+      - trade-ai-logs:/app/logs
+      - kabu-token-cache:/var/lib/kabu
+      - ${GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH:-/dev/shm/roboinvest/gcp-pubsub-sa.json}:/run/secrets/gcp-pubsub-sa.json:ro
 
   oms-live:
     <<: *stream-service

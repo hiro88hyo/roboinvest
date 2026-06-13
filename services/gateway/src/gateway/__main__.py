@@ -10,10 +10,12 @@ import sys
 from decimal import Decimal
 from pathlib import Path
 
+from trade_contracts.kabu_token import KabuTokenCache
 from trade_contracts.logging import configure_logging
 from trade_contracts.risk import KillSwitchState
 
 from .backtest import iter_unified_signals, run_backtest, write_jsonl
+from .clients.kabu import KabuWalletClient
 from .clients.pubsub import PubSubPublisher, PubSubSubscriber
 from .clients.supabase import SupabaseClient
 from .config import GatewaySettings, RiskConfig
@@ -180,6 +182,8 @@ async def _run_stream_cmd(*, iterations: int | None) -> int:
     if not settings.pubsub_project_id:
         logger.error("PUBSUB_PROJECT_ID が未設定です")
         return 2
+    if not settings.kabu_api_password:
+        logger.warning("KABU_API_PASSWORD is not set; Gateway will use CAPITAL fallback")
 
     risk_config = RiskConfig.from_settings(settings)
     routing = TopicRouting(
@@ -200,11 +204,20 @@ async def _run_stream_cmd(*, iterations: int | None) -> int:
             url=settings.supabase_url,
             secret_key=settings.supabase_secret_key,
         ) as supabase,
+        KabuWalletClient(
+            base_url=settings.kabu_api_base_url,
+            api_password=settings.kabu_api_password,
+            timeout_seconds=settings.kabu_http_timeout_seconds,
+            token_cache=KabuTokenCache(Path(settings.kabu_token_cache_file))
+            if settings.kabu_token_cache_file
+            else None,
+        ) as kabu,
     ):
         runner = StreamRunner(
             subscriber=subscriber,
             publisher=publisher,
             supabase=supabase,
+            kabu=kabu if settings.kabu_api_password else None,
             settings=settings,
             risk_config=risk_config,
             routing=routing,
