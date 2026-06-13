@@ -89,6 +89,15 @@ CHK-06 implementation note:
   `--no-pubsub-smoke` through to the post-check. Syntax/help verification passed
   for both scripts, and `make lint-all` plus `make test-all` passed afterward
   (`1004 passed, 21 skipped`; dashboard `47 passed`).
+- Production deploy completed after PR #90 was merged to `main`.
+  Deploy Production run `27467929469` deployed `ffb618d` with
+  `dry_run=false`; the workflow concluded `success`. Production compose
+  recreated all trading services and showed `strategy-ai`, `aggregator`,
+  `gateway`, `feature-engine`, `strategy-rule`, `oms-live`, `oms-paper`, and
+  `feeder` all `Up`. Post-check passed with
+  `OK 62 / WARN 0 / NG 0 / SKIP 0`; live positions were empty, `trade_mode`
+  was `live`, `OMS_LIVE_DRY_RUN=false`, managed Pub/Sub topic/subscription
+  checks passed, and feeder kabu logs ended at `unregister/all 200`.
 
 ## 2026-06-13 paper backtest reliability follow-up
 
