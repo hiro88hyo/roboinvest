@@ -416,6 +416,9 @@ def check_pubsub(reporter: Reporter, args: argparse.Namespace) -> None:
     if not credentials.exists():
         reporter.emit("NG", "GOOGLE_APPLICATION_CREDENTIALS", f"missing host file: {credentials}")
         return
+    if not os.access(credentials, os.R_OK):
+        reporter.emit("NG", "GOOGLE_APPLICATION_CREDENTIALS", f"not readable: {credentials}")
+        return
     old_credentials = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str(credentials)
     try:

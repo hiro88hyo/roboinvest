@@ -27,12 +27,14 @@ def _make_rsi(settings: StrategyRuleSettings) -> RsiThresholdStrategy:
     return RsiThresholdStrategy(
         buy_threshold=settings.rsi_buy_threshold,
         sell_threshold=settings.rsi_sell_threshold,
+        volume_ratio_min=settings.entry_volume_ratio_min,
     )
 
 
 def _make_bollinger(settings: StrategyRuleSettings) -> BollingerBreakoutStrategy:
     return BollingerBreakoutStrategy(
         tolerance=settings.bollinger_breakout_tolerance,
+        volume_ratio_min=settings.entry_volume_ratio_min,
     )
 
 

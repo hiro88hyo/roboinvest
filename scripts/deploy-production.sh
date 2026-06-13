@@ -10,6 +10,8 @@ POLL_SECONDS=10
 POST_CHECK=1
 KABU_OFFLINE=0
 LOG_TAIL=80
+GCP_CREDENTIALS=""
+NO_PUBSUB_SMOKE=0
 
 usage() {
   cat <<'USAGE'
@@ -22,6 +24,9 @@ Options:
   --ref REF           Git ref to deploy. Default: main.
   --kabu-offline      Run post-check with kabu connectivity treated as offline.
   --skip-post-check   Skip production-preopen-check after a successful deploy.
+  --gcp-credentials PATH
+                      Host path to GCP credentials for post-check Pub/Sub checks.
+  --no-pubsub-smoke   Skip post-check Pub/Sub smoke publish/pull/ack.
   --log-tail N        Tail gateway/oms-live logs after deploy. Use 0 to skip.
   --poll-seconds N    Poll GitHub Actions every N seconds. Default: 10.
   -h, --help          Show this help.
@@ -52,6 +57,18 @@ while [ "$#" -gt 0 ]; do
       ;;
     --skip-post-check)
       POST_CHECK=0
+      shift
+      ;;
+    --gcp-credentials)
+      if [ "$#" -lt 2 ]; then
+        echo "missing value for --gcp-credentials" >&2
+        exit 2
+      fi
+      GCP_CREDENTIALS="$2"
+      shift 2
+      ;;
+    --no-pubsub-smoke)
+      NO_PUBSUB_SMOKE=1
       shift
       ;;
     --log-tail)
@@ -187,6 +204,12 @@ if [ "$POST_CHECK" -eq 1 ]; then
   check_args=(--timeout 30)
   if [ "$KABU_OFFLINE" -eq 1 ]; then
     check_args+=(--kabu-offline)
+  fi
+  if [ -n "$GCP_CREDENTIALS" ]; then
+    check_args+=(--gcp-credentials "$GCP_CREDENTIALS")
+  fi
+  if [ "$NO_PUBSUB_SMOKE" -eq 1 ]; then
+    check_args+=(--no-pubsub-smoke)
   fi
   op run --env-file infra/env.production -- \
     uv run python scripts/production-preopen-check.py "${check_args[@]}"

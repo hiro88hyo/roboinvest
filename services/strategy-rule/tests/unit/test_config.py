@@ -13,6 +13,7 @@ def test_defaults() -> None:
     assert s.sma_min_gap_ratio == Decimal("0.005")
     assert s.sma_full_confidence_gap_ratio == Decimal("0.02")
     assert s.bollinger_breakout_tolerance == Decimal("0.15")
+    assert s.entry_volume_ratio_min is None
 
 
 def test_strategies_enabled_accepts_csv_string() -> None:
@@ -28,3 +29,13 @@ def test_strategies_enabled_accepts_list() -> None:
 def test_strategies_enabled_drops_blank_entries() -> None:
     s = StrategyRuleSettings(strategies_enabled="a, , b,")
     assert s.strategies_enabled == ["a", "b"]
+
+
+def test_entry_volume_ratio_min_accepts_decimal_string() -> None:
+    s = StrategyRuleSettings(entry_volume_ratio_min="2.0")
+    assert s.entry_volume_ratio_min == Decimal("2.0")
+
+
+def test_entry_volume_ratio_min_treats_empty_string_as_none() -> None:
+    s = StrategyRuleSettings(entry_volume_ratio_min="")
+    assert s.entry_volume_ratio_min is None

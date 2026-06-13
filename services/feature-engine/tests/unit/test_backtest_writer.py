@@ -20,6 +20,7 @@ def _sample_feature() -> ProcessedFeatures:
         sma_long=None,
         rsi=Decimal("55.5"),
         vwap=Decimal("2490.0"),
+        volume_ratio=Decimal("1.5"),
         bollinger_upper=Decimal("2600.0"),
         bollinger_middle=Decimal("2500.0"),
         bollinger_lower=Decimal("2400.0"),

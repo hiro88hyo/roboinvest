@@ -17,6 +17,7 @@ class ProcessedFeatures(BaseModel):
     sma_long: Decimal | None = None
     rsi: Decimal | None = None
     vwap: Decimal | None = None
+    volume_ratio: Decimal | None = None
     bollinger_upper: Decimal | None = None
     bollinger_middle: Decimal | None = None
     bollinger_lower: Decimal | None = None

@@ -1,7 +1,8 @@
-# AGENT.md
+# AGENTS.md
 
-Codex / coding AI 向けの作業メモ。Claude Code からの引き継ぎ資料
-`docs/HANDOFF.md` とルート `CLAUDE.md` を読んだ上での理解をまとめる。
+Codex / coding AI 向けの作業メモ。Claude Code 時代の引き継ぎ資料
+`docs/HANDOFF.md` とルート `CLAUDE.md` は参照資料として残っているが、
+現在の主な作業入口はこの `AGENTS.md` とする。
 
 ## Project Overview
 
@@ -44,11 +45,12 @@ Next.js Dashboard で構成されている。
 
 作業開始時は、最低限これらを確認する。
 
-1. `CLAUDE.md`: アーキテクチャ、Pub/Sub、Supabase、リスクルール、規約
+1. `AGENTS.md`: Codex 向けの現行作業メモ
 2. `docs/HANDOFF.md`: 最新の引き継ぎメモ
-3. 対象サービスの `services/<name>/CLAUDE.md`
-4. `contracts/`: Pydantic / SQL / TypeScript の Single Source of Truth
-5. `git status --short` と直近の履歴
+3. `CLAUDE.md`: 旧 Claude Code 向けのアーキテクチャ、Pub/Sub、Supabase、リスクルール、規約
+4. 対象サービスの `services/<name>/CLAUDE.md`
+5. `contracts/`: Pydantic / SQL / TypeScript の Single Source of Truth
+6. `git status --short` と直近の履歴
 
 ## Core Principles
 
@@ -58,6 +60,25 @@ Next.js Dashboard で構成されている。
 - OMS Live は本番資金に直結するため、変更は最小限にし、先に OMS Paper で検証する。
 - 純関数ロジックとストリーミング層を分離する。
 - 既存のサービスごとの設計、fixture、テスト命名規約に合わせる。
+
+## Project Kill Switch
+
+資金ではなく、プロジェクト継続そのものに適用する反証契約。
+戦略開発・live 拡大・資本増額の前に、この条件を優先して扱う。
+
+- 期限: 2026-09-30
+- 判定条件: アウトオブサンプル期間で `profit_factor > 1.2` かつ
+  `max_drawdown < capital * 0.10` を達成すること。
+- 判定対象: 事前登録した戦略・パラメータ・コスト前提のみ。判定期間開始後に
+  都合よくパラメータを変更した結果は合格扱いにしない。
+- 条件未達の場合: live 戦略開発を停止し、本リポジトリの資産を以下へ転用する。
+  1. AI 協働開発リファレンスとしての公開・記事化
+  2. 板・tick アーカイブの研究データセット化
+  3. トレード再開は、資本スケール計画を先に文書化した場合のみ
+- このルールを変更する場合は、変更理由を文書化し、少なくとも 1 週間の
+  cooling-off 期間を置く。
+- Codex は、この条件を弱める変更、判定先送り、判定後の後付け例外を
+  通常の改善として扱わない。必要ならユーザーに明示確認する。
 
 ## Common Commands
 
@@ -88,6 +109,12 @@ Pub/Sub は `PUBSUB_EMULATOR_HOST` / `PUBSUB_PROJECT_ID`、Supabase は `SUPABAS
 
 ## Important Operational Notes
 
+- 1Password 経由で env を読むときは、先に `infra/.op.service-account.env`
+  があるか確認し、`set -a && . infra/.op.service-account.env && set +a`
+  で読み込む。`OP_SERVICE_ACCOUNT_TOKEN` を手入力・別ファイルから流用しない。
+  別 vault / 別用途の 1Password API token を使うと、`op run` は通っても
+  必要な secrets が空または別値になり得る。token 値は terminal に表示しない。
+- 1Password secret 参照は `op://roboinvest/...` が正。`op://Trade AI/...` ではない。
 - Pub/Sub topics は 7 件、subscriptions は現行 `infra/pubsub/subscriptions.json` で 9 件が前提。
 - Pub/Sub emulator は長時間稼働で OOM することがある。再起動後は topic/subscription の再 seed が必要。
 - 市場開始前の主な失敗要因は subscription 未作成、`daily_ohlcv` 空、`watchlist` 未更新。

@@ -12,6 +12,7 @@
 from .bollinger import bollinger
 from .moving_average import sma
 from .rsi import rsi
+from .volume_ratio import volume_ratio
 from .vwap import vwap
 
-__all__ = ["bollinger", "rsi", "sma", "vwap"]
+__all__ = ["bollinger", "rsi", "sma", "volume_ratio", "vwap"]

@@ -8,6 +8,8 @@ from trade_contracts.enums import Action, SignalSource
 from trade_contracts.features import ProcessedFeatures
 from trade_contracts.signal import StrategySignal
 
+from .entry_filters import passes_buy_entry_filters
+
 
 class RsiThresholdStrategy:
     """Stateless RSI band trigger.
@@ -27,9 +29,11 @@ class RsiThresholdStrategy:
         *,
         buy_threshold: Decimal = Decimal("30"),
         sell_threshold: Decimal = Decimal("70"),
+        volume_ratio_min: Decimal | None = None,
     ) -> None:
         self._buy = buy_threshold
         self._sell = sell_threshold
+        self._volume_ratio_min = volume_ratio_min
 
     def evaluate(
         self,
@@ -42,6 +46,11 @@ class RsiThresholdStrategy:
             return None
 
         if rsi <= self._buy:
+            if not passes_buy_entry_filters(
+                features,
+                volume_ratio_min=self._volume_ratio_min,
+            ):
+                return None
             action = Action.BUY
             confidence = 0.5 + 0.5 * float((self._buy - rsi) / self._buy) if self._buy > 0 else 1.0
             reasoning = f"rsi={rsi} <= buy_threshold={self._buy}"

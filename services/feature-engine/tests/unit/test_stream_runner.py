@@ -12,6 +12,7 @@ import httpx
 from feature_engine.clients.pubsub import PubSubPublisher, PubSubSubscriber
 from feature_engine.clients.supabase import SupabaseReader, SupabaseWriter
 from feature_engine.config import FeatureEngineSettings
+from feature_engine.storage.book import BookWarmWriter
 from feature_engine.storage.warm import WarmWriter
 from feature_engine.streaming.feature_state import StreamingFeatureState
 from feature_engine.streaming.runner import StreamRunner
@@ -161,6 +162,7 @@ async def _with_runner(
     settings: FeatureEngineSettings | None = None,
     sleep: Callable[[float], Awaitable[None]] | None = None,
     warm_writer: WarmWriter | None = None,
+    book_writer: BookWarmWriter | None = None,
     run_body: Callable[[StreamRunner], Coroutine[None, None, Any]],
 ) -> Any:
     settings = settings or _settings()
@@ -201,6 +203,7 @@ async def _with_runner(
             tick_session=TickSession(),
             settings=settings,
             warm_writer=warm_writer,
+            book_writer=book_writer,
             sleep=sleep or _noop_sleep,
         )
         return await run_body(runner)
@@ -487,6 +490,28 @@ async def test_accepted_tick_is_persisted_to_warm(tmp_path: Any) -> None:
     df = pl.read_parquet(files[0])
     assert df.height == 1
     assert df.get_column("price").to_list() == [2500.0]
+
+
+async def test_order_book_is_persisted_to_book_warm(tmp_path: Any) -> None:
+    import polars as pl
+
+    pubsub = _PubSubRouter(pull_batches=[_make_pull_response([("a1", _book_payload())])])
+    supabase = _SupabaseRouter(positions=[])
+    books = BookWarmWriter(base_dir=tmp_path, flush_threshold=1)
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(
+        pubsub_router=pubsub, supabase_router=supabase, book_writer=books, run_body=_body
+    )
+    assert stats.books_processed == 1
+    files = list(tmp_path.rglob("*.parquet"))
+    assert len(files) == 1
+    df = pl.read_parquet(files[0])
+    assert df.height == 1
+    assert df.get_column("bids_json").to_list() == ['[{"price":"2499","quantity":100}]']
+    assert df.get_column("asks_json").to_list() == ['[{"price":"2501","quantity":100}]']
 
 
 async def test_dropped_tick_is_not_persisted_to_warm(tmp_path: Any) -> None:

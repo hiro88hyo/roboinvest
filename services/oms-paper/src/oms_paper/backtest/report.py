@@ -3,8 +3,10 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 from math import sqrt
+from uuid import UUID
 
 from pydantic import BaseModel
+from trade_contracts.enums import Side
 
 _SLIPPAGE_RATE = Decimal("0.0005")
 _TAX_RATE = Decimal("0.20315")
@@ -35,9 +37,39 @@ class BacktestReport(BaseModel):
     max_drawdown: Decimal
     sharpe_ratio: Decimal | None
     expectancy: Decimal
+    execution_quality_count: int = 0
+    average_spread_bps: Decimal | None = None
+    max_spread_bps: Decimal | None = None
+    average_fill_ratio: Decimal = Decimal("0")
+    partial_fill_count: int = 0
+    buy_order_count: int = 0
+    sell_order_count: int = 0
+    average_opposite_depth_quantity: Decimal = Decimal("0")
+    average_order_book_imbalance: Decimal | None = None
 
 
-def build_backtest_report(closed_trades: list[ClosedTrade]) -> BacktestReport:
+class ExecutionQualityRecord(BaseModel):
+    unified_signal_id: UUID | None = None
+    symbol: str
+    side: Side
+    requested_quantity: int
+    filled_quantity: int
+    fill_ratio: Decimal
+    reason: str
+    order_created_at: datetime
+    book_timestamp: datetime
+    best_bid: Decimal | None = None
+    best_ask: Decimal | None = None
+    spread_bps: Decimal | None = None
+    opposite_depth_quantity: int
+    same_side_depth_quantity: int
+    order_book_imbalance: Decimal | None = None
+
+
+def build_backtest_report(
+    closed_trades: list[ClosedTrade],
+    execution_quality: list[ExecutionQualityRecord] | None = None,
+) -> BacktestReport:
     """閉じたトレード列から収益指標を作る。
 
     手数料は runner 側で約定代金 0.099% として ClosedTrade に入っている。
@@ -69,6 +101,10 @@ def build_backtest_report(closed_trades: list[ClosedTrade]) -> BacktestReport:
     gross_profit = sum(gains, Decimal("0"))
     gross_loss = abs(sum(losses, Decimal("0")))
 
+    quality = execution_quality or []
+    spreads = [q.spread_bps for q in quality if q.spread_bps is not None]
+    imbalances = [q.order_book_imbalance for q in quality if q.order_book_imbalance is not None]
+
     return BacktestReport(
         closed_trade_count=closed_count,
         total_gross_pnl=total_gross,
@@ -81,6 +117,18 @@ def build_backtest_report(closed_trades: list[ClosedTrade]) -> BacktestReport:
         max_drawdown=_max_drawdown(trade_pnls_before_tax),
         sharpe_ratio=_sharpe_ratio(trade_pnls_before_tax),
         expectancy=_ratio(total_net, Decimal(closed_count)),
+        execution_quality_count=len(quality),
+        average_spread_bps=_average(spreads),
+        max_spread_bps=max(spreads) if spreads else None,
+        average_fill_ratio=_average([q.fill_ratio for q in quality]) or Decimal("0"),
+        partial_fill_count=sum(1 for q in quality if 0 < q.filled_quantity < q.requested_quantity),
+        buy_order_count=sum(1 for q in quality if q.side is Side.BUY),
+        sell_order_count=sum(1 for q in quality if q.side is Side.SELL),
+        average_opposite_depth_quantity=_average(
+            [Decimal(q.opposite_depth_quantity) for q in quality]
+        )
+        or Decimal("0"),
+        average_order_book_imbalance=_average(imbalances),
     )
 
 
@@ -88,6 +136,12 @@ def _ratio(numerator: Decimal, denominator: Decimal) -> Decimal:
     if denominator == 0:
         return Decimal("0")
     return numerator / denominator
+
+
+def _average(values: list[Decimal]) -> Decimal | None:
+    if not values:
+        return None
+    return sum(values, Decimal("0")) / Decimal(len(values))
 
 
 def _max_drawdown(pnls: list[Decimal]) -> Decimal:

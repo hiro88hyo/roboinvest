@@ -40,6 +40,7 @@ class StrategyRuleSettings(BaseSettings):
     rsi_buy_threshold: Decimal = Decimal("25")
     rsi_sell_threshold: Decimal = Decimal("75")
     bollinger_breakout_tolerance: Decimal = Decimal("0.15")
+    entry_volume_ratio_min: Decimal | None = None
 
     backtest_output_dir: Path = Path("./out/strategy-rule")
 
@@ -48,4 +49,11 @@ class StrategyRuleSettings(BaseSettings):
     def _split_strategies(cls, v: Any) -> Any:
         if isinstance(v, str):
             return [s.strip() for s in v.split(",") if s.strip()]
+        return v
+
+    @field_validator("entry_volume_ratio_min", mode="before")
+    @classmethod
+    def _empty_entry_volume_ratio_min_to_none(cls, v: Any) -> Any:
+        if v == "":
+            return None
         return v

@@ -11,7 +11,7 @@ import polars as pl
 from trade_contracts.features import ProcessedFeatures
 
 from ..config import FeatureEngineSettings
-from ..indicators import bollinger, rsi, sma, vwap
+from ..indicators import bollinger, rsi, sma, volume_ratio, vwap
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,8 @@ def compute_features(
     """`daily_ohlcv` に指標列を付与した DataFrame を返す。
 
     入力カラム: symbol, date, open, high, low, close, volume, turnover
-    出力は入力 + sma_short / sma_long / rsi / vwap / bollinger_upper/middle/lower。
+    出力は入力 + sma_short / sma_long / rsi / vwap / volume_ratio /
+    bollinger_upper/middle/lower。
     """
     if ohlcv.is_empty():
         return ohlcv
@@ -58,6 +59,11 @@ def compute_features(
     df = sma(df, settings.indicator_sma_long_window, output_col="sma_long")
     df = rsi(df, settings.indicator_rsi_period, output_col="rsi")
     df = vwap(df, settings.indicator_vwap_window, output_col="vwap")
+    df = volume_ratio(
+        df,
+        settings.indicator_volume_ratio_window,
+        output_col="volume_ratio",
+    )
     df = bollinger(
         df,
         settings.indicator_bollinger_period,
@@ -85,6 +91,7 @@ def to_processed_features(df: pl.DataFrame) -> list[ProcessedFeatures]:
         "sma_long",
         "rsi",
         "vwap",
+        "volume_ratio",
         "bollinger_upper",
         "bollinger_middle",
         "bollinger_lower",
@@ -107,6 +114,7 @@ def to_processed_features(df: pl.DataFrame) -> list[ProcessedFeatures]:
                 sma_long=_to_decimal(row["sma_long"]),
                 rsi=_to_decimal(row["rsi"]),
                 vwap=_to_decimal(row["vwap"]),
+                volume_ratio=_to_decimal(row["volume_ratio"]),
                 bollinger_upper=_to_decimal(row["bollinger_upper"]),
                 bollinger_middle=_to_decimal(row["bollinger_middle"]),
                 bollinger_lower=_to_decimal(row["bollinger_lower"]),

@@ -22,6 +22,7 @@ class FeatureEngineSettings(BaseSettings):
     indicator_sma_long_window: int = 25
     indicator_rsi_period: int = 14
     indicator_vwap_window: int = 20
+    indicator_volume_ratio_window: int = 20
     indicator_bollinger_period: int = 20
     indicator_bollinger_stddev: float = 2.0
 
@@ -42,5 +43,6 @@ class FeatureEngineSettings(BaseSettings):
     storage_tick_resolution: TickResolution = "1s"
     storage_warm_dir: Path = Path("./data/warm")
     storage_cold_dir: Path = Path("./data/cold")
+    storage_book_dir: Path = Path("./data/books")
 
     log_level: str = "INFO"

@@ -5,7 +5,7 @@
 次回セッションでは ADR-0001 の本番デプロイ実装を開始する。
 最初に読む順番は以下。
 
-1. `AGENT.md`
+1. `AGENTS.md`
 2. `docs/HANDOFF.md`
 3. `docs/adr/0001-deployment-architecture.md`
 4. `docs/adr/0001-implementation-checklist.md`

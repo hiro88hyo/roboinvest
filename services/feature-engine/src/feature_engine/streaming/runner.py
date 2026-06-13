@@ -17,6 +17,7 @@ from trade_contracts.market import OrderBookSnapshot, TickData
 from feature_engine.clients.pubsub import PubSubPublisher, PubSubSubscriber, PulledMessage
 from feature_engine.clients.supabase import PositionSnapshot, SupabaseReader, SupabaseWriter
 from feature_engine.config import FeatureEngineSettings
+from feature_engine.storage.book import BookWarmWriter
 from feature_engine.storage.warm import WarmWriter
 from feature_engine.streaming.exit_orders import (
     ExitOrderMonitor,
@@ -73,6 +74,7 @@ class StreamRunner:
     tick_session: TickSession
     settings: FeatureEngineSettings
     warm_writer: WarmWriter | None = None
+    book_writer: BookWarmWriter | None = None
     exit_monitor: ExitOrderMonitor = field(default_factory=ExitOrderMonitor)
     idle_backoff_seconds: float = 1.0
     sleep: Sleep = field(default=asyncio.sleep)
@@ -159,6 +161,15 @@ class StreamRunner:
 
         try:
             if isinstance(parsed, OrderBookSnapshot):
+                if self.book_writer is not None:
+                    try:
+                        self.book_writer.record_book(parsed)
+                    except Exception:
+                        logger.exception(
+                            "book persist failed: symbol=%s timestamp=%s",
+                            parsed.symbol,
+                            parsed.timestamp,
+                        )
                 self.feature_state.record_order_book(parsed)
                 return "book_processed"
             return await self._handle_tick(parsed)

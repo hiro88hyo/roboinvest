@@ -168,7 +168,10 @@ def _run_backtest_cmd(
     if output_rejected is not None:
         write_jsonl(summary.no_fills, output_rejected)
     report_path = output_report or (output_positions.parent / "backtest_report.json")
-    write_backtest_report(build_backtest_report(summary.closed_trades), report_path)
+    write_backtest_report(
+        build_backtest_report(summary.closed_trades, summary.execution_quality),
+        report_path,
+    )
 
     logger.info(
         "backtest done: orders=%d fills=%d (%s) no_fills=%d (%s) "

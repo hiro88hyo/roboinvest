@@ -54,6 +54,20 @@ def test_above_upper_emits_sell(features_factory: Callable[..., ProcessedFeature
     assert signal.confidence == 1.0
 
 
+def test_buy_volume_ratio_filter_blocks_low_volume(
+    features_factory: Callable[..., ProcessedFeatures],
+) -> None:
+    strategy = BollingerBreakoutStrategy(volume_ratio_min=Decimal("2.0"))
+    f = features_factory(
+        price=Decimal("90"),
+        bollinger_upper=Decimal("110"),
+        bollinger_middle=Decimal("100"),
+        bollinger_lower=Decimal("95"),
+        volume_ratio=Decimal("1.5"),
+    )
+    assert strategy.evaluate(f, {}) is None
+
+
 def test_inside_band_returns_none(features_factory: Callable[..., ProcessedFeatures]) -> None:
     strategy = BollingerBreakoutStrategy()
     f = features_factory(

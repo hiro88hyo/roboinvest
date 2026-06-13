@@ -8,6 +8,8 @@ from trade_contracts.enums import Action, SignalSource
 from trade_contracts.features import ProcessedFeatures
 from trade_contracts.signal import StrategySignal
 
+from .entry_filters import passes_buy_entry_filters
+
 
 class BollingerBreakoutStrategy:
     """Mean-reversion trigger when price punches outside the Bollinger band.
@@ -21,8 +23,14 @@ class BollingerBreakoutStrategy:
 
     name = "bollinger_breakout"
 
-    def __init__(self, *, tolerance: Decimal = Decimal("0")) -> None:
+    def __init__(
+        self,
+        *,
+        tolerance: Decimal = Decimal("0"),
+        volume_ratio_min: Decimal | None = None,
+    ) -> None:
         self._tolerance = tolerance
+        self._volume_ratio_min = volume_ratio_min
 
     def evaluate(
         self,
@@ -43,6 +51,11 @@ class BollingerBreakoutStrategy:
         price = features.price
 
         if price < lower - margin:
+            if not passes_buy_entry_filters(
+                features,
+                volume_ratio_min=self._volume_ratio_min,
+            ):
+                return None
             action = Action.BUY
             distance = (lower - price) / band_width
             reasoning = f"price={price} below lower band={lower} (band_width={band_width})"
