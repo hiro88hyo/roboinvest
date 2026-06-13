@@ -71,6 +71,40 @@ def test_score_top_n_truncates():
     assert result.height == 2
 
 
+def test_score_ignores_as_of_date_to_avoid_lookahead():
+    ohlcv = pl.DataFrame(
+        [
+            {
+                "symbol": "A",
+                "date": d,
+                "open": c,
+                "high": c,
+                "low": c,
+                "close": c,
+                "volume": 1000,
+                "turnover": c * 1000,
+            }
+            for d, c in [
+                (date(2026, 4, 13), 100.0),
+                (date(2026, 4, 14), 100.0),
+                (date(2026, 4, 15), 100.0),
+                (date(2026, 4, 16), 100.0),
+                (date(2026, 4, 17), 100.0),
+                (date(2026, 4, 20), 10000.0),
+            ]
+        ]
+    )
+
+    result = score_candidates(
+        candidates=_candidates(["A"]),
+        ohlcv=ohlcv,
+        config=DynamicScoringConfig(top_n=1, momentum_window=5),
+        as_of=date(2026, 4, 20),
+    )
+
+    assert result.get_column("momentum").to_list() == [0.0]
+
+
 def test_score_returns_empty_for_empty_candidates():
     ohlcv = pl.DataFrame(_series("A", [100.0] * 25, [1000] * 25))
     result = score_candidates(

@@ -4,7 +4,7 @@ import base64
 import json
 import logging
 from collections.abc import Awaitable, Callable, Coroutine, MutableMapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
@@ -27,7 +27,7 @@ TOPIC = "strategy-signals-b"
 SUPABASE_URL = "https://example.supabase.co"
 
 
-def _settings() -> StrategyAiSettings:
+def _settings(*, ai_silence_warn_seconds: float = 3600.0) -> StrategyAiSettings:
     return StrategyAiSettings(
         supabase_url=SUPABASE_URL,
         supabase_secret_key="k",
@@ -36,6 +36,7 @@ def _settings() -> StrategyAiSettings:
         pubsub_subscription_features=SUBSCRIPTION,
         pubsub_topic_signals=TOPIC,
         pubsub_pull_max_messages=10,
+        ai_silence_warn_seconds=ai_silence_warn_seconds,
     )
 
 
@@ -292,6 +293,87 @@ async def test_no_signal_acks_without_publish_or_log_write(
     assert record.symbol == "7203"
     assert record.trigger_action == "BUY"
     assert record.trigger_confidence == 0.9
+
+
+async def test_market_hours_no_signal_for_threshold_logs_silent_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    first_ts = "2026-04-20T00:00:00+00:00"  # 09:00 JST
+    second_ts = "2026-04-20T01:01:00+00:00"  # 10:01 JST
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _make_pull_response([("a1", _trigger_payload(ts=first_ts))]),
+            _make_pull_response([("a2", _trigger_payload(ts=second_ts))]),
+        ]
+    )
+    supabase = _SupabaseRouter()
+    engine = StrategyAiEngine([_FakeAsyncStrategy("silent", action=None)])
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run(iterations=2)
+
+    caplog.set_level(logging.ERROR, logger="strategy_ai.streaming.runner")
+
+    await _with_runner(
+        pubsub_router=pubsub,
+        supabase_router=supabase,
+        engine=engine,
+        settings=_settings(ai_silence_warn_seconds=3600.0),
+        run_body=_body,
+    )
+
+    silent_errors = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "ai_strategy_silent"
+    ]
+    assert len(silent_errors) == 1
+    record: Any = silent_errors[0]
+    assert record.getMessage() == "AI_STRATEGY_SILENT"
+    assert record.symbol == "7203"
+    assert record.silence_seconds == 3660.0
+    assert record.threshold_seconds == 3600.0
+
+
+async def test_signal_resets_silence_window(caplog: pytest.LogCaptureFixture) -> None:
+    t0 = datetime(2026, 4, 20, 0, 0, tzinfo=UTC)  # 09:00 JST
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _make_pull_response([("a1", _trigger_payload(ts=t0.isoformat()))]),
+            _make_pull_response(
+                [("a2", _trigger_payload(ts=(t0 + timedelta(minutes=30)).isoformat()))]
+            ),
+            _make_pull_response(
+                [("a3", _trigger_payload(ts=(t0 + timedelta(minutes=91)).isoformat()))]
+            ),
+        ]
+    )
+    supabase = _SupabaseRouter()
+    engine = StrategyAiEngine(
+        [
+            _FakeAsyncStrategy("silent_1", action=None),
+            _FakeAsyncStrategy("buy", action=Action.BUY),
+        ]
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run(iterations=3)
+
+    caplog.set_level(logging.ERROR, logger="strategy_ai.streaming.runner")
+
+    await _with_runner(
+        pubsub_router=pubsub,
+        supabase_router=supabase,
+        engine=engine,
+        settings=_settings(ai_silence_warn_seconds=3600.0),
+        run_body=_body,
+    )
+
+    assert [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "ai_strategy_silent"
+    ] == []
 
 
 async def test_acknowledges_each_message_without_waiting_for_batch_end() -> None:

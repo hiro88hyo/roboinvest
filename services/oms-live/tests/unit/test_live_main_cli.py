@@ -7,11 +7,11 @@ from oms_live.__main__ import main
 
 
 def test_cli_stream_requires_pubsub_project(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("PUBSUB_PROJECT_ID", raising=False)
-    monkeypatch.delenv("SUPABASE_URL", raising=False)
-    monkeypatch.delenv("SUPABASE_SECRET_KEY", raising=False)
-    monkeypatch.delenv("KABU_API_PASSWORD", raising=False)
-    monkeypatch.delenv("KABU_ORDER_PASSWORD", raising=False)
+    monkeypatch.setenv("PUBSUB_PROJECT_ID", "")
+    monkeypatch.setenv("SUPABASE_URL", "")
+    monkeypatch.setenv("SUPABASE_SECRET_KEY", "")
+    monkeypatch.setenv("KABU_API_PASSWORD", "")
+    monkeypatch.setenv("KABU_ORDER_PASSWORD", "")
     rc = main(["stream", "--iterations", "0"])
     assert rc == 2
 
@@ -19,8 +19,8 @@ def test_cli_stream_requires_pubsub_project(monkeypatch: pytest.MonkeyPatch) -> 
 def test_cli_stream_requires_supabase(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PUBSUB_PROJECT_ID", "trade-ai-dev")
     monkeypatch.setenv("PUBSUB_EMULATOR_HOST", "pubsub:8085")
-    monkeypatch.delenv("SUPABASE_URL", raising=False)
-    monkeypatch.delenv("SUPABASE_SECRET_KEY", raising=False)
+    monkeypatch.setenv("SUPABASE_URL", "")
+    monkeypatch.setenv("SUPABASE_SECRET_KEY", "")
     rc = main(["stream", "--iterations", "0"])
     assert rc == 2
 
@@ -30,8 +30,8 @@ def test_cli_stream_requires_kabu_passwords(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setenv("PUBSUB_EMULATOR_HOST", "pubsub:8085")
     monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
     monkeypatch.setenv("SUPABASE_SECRET_KEY", "k")
-    monkeypatch.delenv("KABU_API_PASSWORD", raising=False)
-    monkeypatch.delenv("KABU_ORDER_PASSWORD", raising=False)
+    monkeypatch.setenv("KABU_API_PASSWORD", "")
+    monkeypatch.setenv("KABU_ORDER_PASSWORD", "")
     rc = main(["stream", "--iterations", "0"])
     assert rc == 2
 

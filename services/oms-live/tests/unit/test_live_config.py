@@ -6,7 +6,7 @@ from oms_live.config import OmsLiveSettings
 
 
 def _settings(**overrides: object) -> OmsLiveSettings:
-    return OmsLiveSettings(**overrides)  # type: ignore[arg-type]
+    return OmsLiveSettings(_env_file=None, **overrides)  # type: ignore[arg-type]
 
 
 def test_allowed_symbol_set_is_empty_by_default() -> None:

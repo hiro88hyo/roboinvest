@@ -45,6 +45,7 @@ def test_cli_backtest_writes_fills_and_positions(tmp_path: Path) -> None:
     fills_path = out_dir / "fills.jsonl"
     positions_path = out_dir / "positions.json"
     rejected_path = out_dir / "rejects.jsonl"
+    report_path = out_dir / "backtest_report.json"
 
     rc = main(
         [
@@ -65,6 +66,7 @@ def test_cli_backtest_writes_fills_and_positions(tmp_path: Path) -> None:
     assert fills_path.exists()
     assert positions_path.exists()
     assert rejected_path.exists()
+    assert report_path.exists()
 
     fills_lines = [ln for ln in fills_path.read_text(encoding="utf-8").splitlines() if ln]
     assert len(fills_lines) == 1  # 7203 だけ約定
@@ -75,6 +77,9 @@ def test_cli_backtest_writes_fills_and_positions(tmp_path: Path) -> None:
     positions = json.loads(positions_path.read_text(encoding="utf-8"))
     assert "7203" in positions
     assert positions["7203"]["quantity"] == 100
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["closed_trade_count"] == 0
+    assert report["total_net_pnl"] == "0"
 
 
 def test_cli_backtest_with_initial_positions(tmp_path: Path) -> None:
@@ -154,9 +159,9 @@ def test_cli_backtest_missing_orders_file(tmp_path: Path) -> None:
 
 
 def test_cli_stream_requires_pubsub_project(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("PUBSUB_PROJECT_ID", raising=False)
-    monkeypatch.delenv("SUPABASE_URL", raising=False)
-    monkeypatch.delenv("SUPABASE_SECRET_KEY", raising=False)
+    monkeypatch.setenv("PUBSUB_PROJECT_ID", "")
+    monkeypatch.setenv("SUPABASE_URL", "")
+    monkeypatch.setenv("SUPABASE_SECRET_KEY", "")
     rc = main(["stream", "--iterations", "0"])
     assert rc == 2
 
@@ -164,8 +169,8 @@ def test_cli_stream_requires_pubsub_project(monkeypatch: pytest.MonkeyPatch) -> 
 def test_cli_stream_requires_supabase(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PUBSUB_PROJECT_ID", "trade-ai-dev")
     monkeypatch.setenv("PUBSUB_EMULATOR_HOST", "pubsub:8085")
-    monkeypatch.delenv("SUPABASE_URL", raising=False)
-    monkeypatch.delenv("SUPABASE_SECRET_KEY", raising=False)
+    monkeypatch.setenv("SUPABASE_URL", "")
+    monkeypatch.setenv("SUPABASE_SECRET_KEY", "")
     rc = main(["stream", "--iterations", "0"])
     assert rc == 2
 

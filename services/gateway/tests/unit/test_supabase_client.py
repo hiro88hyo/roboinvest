@@ -82,6 +82,65 @@ async def test_read_system_status_raises_on_invalid_row() -> None:
             await client.read_system_status()
 
 
+async def test_check_kill_switch_posts_rpc_and_parses_decision() -> None:
+    captured: list[httpx.Request] = []
+
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    **_system_status_row(is_trading_allowed=False, daily_pnl="-10000"),
+                    "passed": False,
+                    "reason": "daily_loss_limit",
+                    "disabled": True,
+                }
+            ],
+        )
+
+    async with _build_client(_handler) as client:
+        decision = await client.check_kill_switch()
+
+    assert decision.passed is False
+    assert decision.reason == "daily_loss_limit"
+    assert decision.disabled is True
+    assert decision.state.is_trading_allowed is False
+    assert len(captured) == 1
+    assert captured[0].method == "POST"
+    assert captured[0].url.path == "/rest/v1/rpc/gateway_check_kill_switch"
+    assert json.loads(captured[0].content.decode()) == {}
+
+
+async def test_check_kill_switch_accepts_object_payload() -> None:
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                **_system_status_row(),
+                "passed": True,
+                "reason": None,
+                "disabled": False,
+            },
+        )
+
+    async with _build_client(_handler) as client:
+        decision = await client.check_kill_switch()
+
+    assert decision.passed is True
+    assert decision.reason is None
+    assert decision.disabled is False
+
+
+async def test_check_kill_switch_raises_on_invalid_payload() -> None:
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[])
+
+    async with _build_client(_handler) as client:
+        with pytest.raises(SupabaseError, match="returned no rows"):
+            await client.check_kill_switch()
+
+
 async def test_read_long_quantity_returns_zero_when_no_row() -> None:
     async def _handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=[])

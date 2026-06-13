@@ -48,7 +48,7 @@ from trade_contracts.logging import event_extra
 from trade_contracts.risk import KillSwitchState
 from trade_contracts.signal import UnifiedTradeSignal
 
-from .. import kill_switch, lot_calculator
+from .. import lot_calculator
 from ..clients.pubsub import PubSubPublisher, PubSubSubscriber, PulledMessage
 from ..clients.supabase import MarketRegimeState, SupabaseClient
 from ..config import GatewaySettings, RiskConfig
@@ -61,10 +61,6 @@ logger = logging.getLogger(__name__)
 Sleep = Callable[[float], Awaitable[None]]
 MonotonicClock = Callable[[], float]
 WallClock = Callable[[], datetime]
-
-# Kill-switch reasons whose Supabase state needs to be flipped false.
-# ``kill_switch_off`` is already false so no UPDATE is required.
-_PNL_LIMIT_REASONS = frozenset({"daily_loss_limit", "weekly_loss_limit", "monthly_loss_limit"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,20 +152,19 @@ class StreamRunner:
         )
 
     async def _process(self, signal: UnifiedTradeSignal) -> _Decision:
-        state = await self.supabase.read_system_status()
+        kill_switch_decision = await self.supabase.check_kill_switch()
+        state = kill_switch_decision.state
         trade_mode = state.trade_mode
         now = self.wall_clock()
 
         # Kill-switch first — cheapest reject, and avoids price/position reads
         # when trading is already off or a pnl limit has been breached.
-        ks = kill_switch.evaluate(state)
-        if not ks.passed:
-            kill_switch_fired = False
-            if ks.reason in _PNL_LIMIT_REASONS:
-                await self.supabase.disable_trading(now=now)
-                kill_switch_fired = True
-            self._log_reject(signal, ks.reason or "kill_switch", trade_mode)
-            return _Decision(approved=False, kill_switch_fired=kill_switch_fired)
+        if not kill_switch_decision.passed:
+            self._log_reject(signal, kill_switch_decision.reason or "kill_switch", trade_mode)
+            return _Decision(
+                approved=False,
+                kill_switch_fired=kill_switch_decision.disabled,
+            )
 
         if self._is_stale_live_signal(signal=signal, trade_mode=trade_mode, now=now):
             self._log_reject(signal, "stale_signal", trade_mode)

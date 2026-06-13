@@ -312,8 +312,8 @@ def test_backtest_positions_file_must_be_object(
 
 
 def test_stream_requires_supabase_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("SUPABASE_URL", raising=False)
-    monkeypatch.delenv("SUPABASE_SECRET_KEY", raising=False)
+    monkeypatch.setenv("SUPABASE_URL", "")
+    monkeypatch.setenv("SUPABASE_SECRET_KEY", "")
     monkeypatch.setenv("PUBSUB_PROJECT_ID", "trade-ai-dev")
 
     rc = main(["stream", "--iterations", "0"])
@@ -323,7 +323,7 @@ def test_stream_requires_supabase_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_stream_requires_pubsub_project(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
     monkeypatch.setenv("SUPABASE_SECRET_KEY", "k")
-    monkeypatch.delenv("PUBSUB_PROJECT_ID", raising=False)
+    monkeypatch.setenv("PUBSUB_PROJECT_ID", "")
 
     rc = main(["stream", "--iterations", "0"])
     assert rc == 2

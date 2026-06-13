@@ -84,7 +84,12 @@ async def run_pipeline(
         candidates = apply_static_filter(master=master, ohlcv=ohlcv, config=static_config)
         logger.info("static filter: candidates=%d", candidates.height)
 
-        scored = score_candidates(candidates=candidates, ohlcv=ohlcv, config=scoring_config)
+        scored = score_candidates(
+            candidates=candidates,
+            ohlcv=ohlcv,
+            config=scoring_config,
+            as_of=target_date,
+        )
         if scored.is_empty():
             raise EmptyWatchlistError(
                 f"watchlist would be empty for {target_date}; keeping previous day's list"

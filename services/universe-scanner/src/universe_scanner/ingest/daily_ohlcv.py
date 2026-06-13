@@ -71,12 +71,13 @@ async def ingest_daily_ohlcv(
     as_of: date,
     lookback_days: int,
 ) -> pl.DataFrame:
-    """`as_of` までの直近 `lookback_days` 営業日分の日次 OHLCV を取得して Supabase に upsert する。
+    """`as_of` の前営業日までの直近 `lookback_days` 営業日分の日次 OHLCV を取得する。
 
-    - `as_of` が営業日でない場合は直前営業日にずらす
+    - Universe Scanner は寄り前に実行されるため、`as_of` 当日の OHLCV は使わない
+    - `as_of` が非営業日の場合も、その日より前の直近営業日までを使う
     - J-Quants `daily_quotes` は日付単位で全銘柄を返すので、期間分ループで取得する
     """
-    end = as_of if is_tse_business_day(as_of) else previous_business_day(as_of)
+    end = previous_business_day(as_of)
     start = business_days_back(end, lookback_days)
 
     frames: list[pl.DataFrame] = []
