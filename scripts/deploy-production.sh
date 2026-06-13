@@ -12,6 +12,7 @@ KABU_OFFLINE=0
 LOG_TAIL=80
 GCP_CREDENTIALS=""
 NO_PUBSUB_SMOKE=0
+EXPECTED_TRADE_MODE="live"
 
 usage() {
   cat <<'USAGE'
@@ -27,6 +28,8 @@ Options:
   --gcp-credentials PATH
                       Host path to GCP credentials for post-check Pub/Sub checks.
   --no-pubsub-smoke   Skip post-check Pub/Sub smoke publish/pull/ack.
+  --expected-trade-mode MODE
+                      Expected post-check TRADE_MODE/system_status.trade_mode: live or paper.
   --log-tail N        Tail gateway/oms-live logs after deploy. Use 0 to skip.
   --poll-seconds N    Poll GitHub Actions every N seconds. Default: 10.
   -h, --help          Show this help.
@@ -70,6 +73,14 @@ while [ "$#" -gt 0 ]; do
     --no-pubsub-smoke)
       NO_PUBSUB_SMOKE=1
       shift
+      ;;
+    --expected-trade-mode)
+      if [ "$#" -lt 2 ]; then
+        echo "missing value for --expected-trade-mode" >&2
+        exit 2
+      fi
+      EXPECTED_TRADE_MODE="$2"
+      shift 2
       ;;
     --log-tail)
       if [ "$#" -lt 2 ]; then
@@ -115,6 +126,11 @@ fi
 
 if ! [[ "$LOG_TAIL" =~ ^[0-9]+$ ]]; then
   echo "--log-tail must be a non-negative integer" >&2
+  exit 2
+fi
+
+if [ "$EXPECTED_TRADE_MODE" != "live" ] && [ "$EXPECTED_TRADE_MODE" != "paper" ]; then
+  echo "--expected-trade-mode must be live or paper" >&2
   exit 2
 fi
 
@@ -201,7 +217,7 @@ fi
 
 if [ "$POST_CHECK" -eq 1 ]; then
   echo "[4/4] production post-check"
-  check_args=(--timeout 30)
+  check_args=(--timeout 30 --expected-trade-mode "$EXPECTED_TRADE_MODE")
   if [ "$KABU_OFFLINE" -eq 1 ]; then
     check_args+=(--kabu-offline)
   fi

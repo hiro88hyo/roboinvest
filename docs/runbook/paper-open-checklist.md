@@ -12,13 +12,15 @@ production compose / Cloud Supabase / managed Pub/Sub を前提に、寄り付�
 - `main` が最新であること
 - 1Password service account token が `infra/.op.service-account.env` で読めること
 - `infra/env.production` が J-Quants API v2 / Supabase / kabu / GCP secrets を参照していること
-- `infra/secrets/gcp-pubsub-sa.json` が存在すること
+- GCP Pub/Sub service account JSON が tmpfs の
+  `/dev/shm/roboinvest/gcp-pubsub-sa.json`、または `--gcp-credentials` で渡す
+  readable host path に materialize されていること
 
 確認:
 
 ```bash
 set -a && . infra/.op.service-account.env && set +a
-op run --env-file infra/env.production -- docker compose -f infra/docker-compose.prod.yml config >/dev/null
+op run --env-file infra/env.production -- docker compose --env-file infra/env.production -f infra/docker-compose.prod.yml config >/dev/null
 ```
 
 ## 2. Run Universe Scanner
@@ -63,6 +65,21 @@ op run --env-file infra/env.production --   uv run python scripts/health-check.p
 - `system_status` が読める
 
 必要なら SQL / REST で当日 `watchlist` 件数も spot check する。
+
+production compose / Supabase / managed Pub/Sub / container env をまとめて確認する場合は、
+paper 期待値で pre-open check を実行する。
+
+```bash
+set -a && . infra/.op.service-account.env && set +a
+op run --env-file infra/env.production -- \
+  uv run python scripts/production-preopen-check.py \
+    --timeout 30 \
+    --expected-trade-mode paper
+```
+
+host 側の `/dev/shm/roboinvest/gcp-pubsub-sa.json` が読めない場合は、
+`--gcp-credentials <readable-host-path>` を追加する。Pub/Sub smoke publish/pull/ack を
+避ける予行では `--no-pubsub-smoke` を追加する。
 
 ## 4. Start Production Compose
 

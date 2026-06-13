@@ -34,6 +34,9 @@ bash scripts/deploy-production.sh --apply --kabu-offline \
 rm -f /tmp/roboinvest-gcp-pubsub-sa.json
 ```
 
+paper mode の反映・再起動で post-check も paper を期待する場合は
+`--expected-trade-mode paper` を追加する。
+
 成功条件:
 
 - GitHub Actions run の conclusion が `success`。

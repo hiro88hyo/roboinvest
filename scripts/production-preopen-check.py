@@ -119,6 +119,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument("--no-pubsub-smoke", action="store_true")
     parser.add_argument(
+        "--expected-trade-mode",
+        choices=("live", "paper"),
+        default="live",
+        help="Expected TRADE_MODE and system_status.trade_mode.",
+    )
+    parser.add_argument(
         "--refresh-kabu-token",
         action="store_true",
         help=(
@@ -183,7 +189,7 @@ def _subscription_path(project_id: str, subscription: str) -> str:
     return pubsub_v1.SubscriberClient.subscription_path(project_id, subscription)
 
 
-def check_expected_env(reporter: Reporter) -> None:
+def check_expected_env(reporter: Reporter, args: argparse.Namespace) -> None:
     reporter.section("production env")
     for key, expected in EXPECTED_ENV.items():
         actual = os.environ.get(key, "")
@@ -194,7 +200,19 @@ def check_expected_env(reporter: Reporter) -> None:
         else:
             reporter.emit("NG", key, f"missing expected={expected}")
 
-    for key in ("TRADE_MODE", "OMS_LIVE_DRY_RUN", "GEMINI_MODEL", "OMS_LIVE_MAX_QTY_PER_ORDER"):
+    value = os.environ.get("TRADE_MODE", "")
+    if value == args.expected_trade_mode:
+        reporter.emit("OK", "TRADE_MODE", value)
+    elif value:
+        reporter.emit(
+            "NG",
+            "TRADE_MODE",
+            f"actual={value} expected={args.expected_trade_mode}",
+        )
+    else:
+        reporter.emit("NG", "TRADE_MODE", f"missing expected={args.expected_trade_mode}")
+
+    for key in ("OMS_LIVE_DRY_RUN", "GEMINI_MODEL", "OMS_LIVE_MAX_QTY_PER_ORDER"):
         value = os.environ.get(key, "")
         reporter.emit("OK" if value else "WARN", key, value or "missing")
 
@@ -309,6 +327,8 @@ def check_container_env(reporter: Reporter, args: argparse.Namespace) -> None:
                 seen[key] = value
         for key in keys:
             expected = EXPECTED_ENV.get(key)
+            if key == "TRADE_MODE":
+                expected = args.expected_trade_mode
             value = seen.get(key, "")
             if expected is None:
                 reporter.emit("OK" if value else "WARN", f"{service}:{key}", value or "missing")
@@ -363,9 +383,9 @@ def check_supabase(reporter: Reporter, args: argparse.Namespace) -> None:
                 daily_loss_limit = Decimal(str(row.get("daily_loss_limit", "0")))
                 reporter.emit("OK" if allowed else "NG", "is_trading_allowed", str(allowed).lower())
                 reporter.emit(
-                    "OK" if trade_mode == "live" else "WARN",
+                    "OK" if trade_mode == args.expected_trade_mode else "NG",
                     "trade_mode",
-                    str(trade_mode),
+                    f"{trade_mode} expected={args.expected_trade_mode}",
                 )
                 reporter.emit(
                     "OK" if trading_style == "day" else "WARN",
@@ -548,7 +568,7 @@ def main() -> int:
     args = parse_args()
     reporter = Reporter(quiet=args.quiet)
 
-    check_expected_env(reporter)
+    check_expected_env(reporter, args)
     if args.refresh_kabu_token:
         refresh_kabu_token(reporter, args)
     check_compose(reporter, args)

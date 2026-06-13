@@ -96,6 +96,13 @@ CHK-06 implementation note:
   `OK 62 / WARN 0 / NG 0 / SKIP 0`; live positions were empty, `trade_mode`
   was `live`, `OMS_LIVE_DRY_RUN=false`, managed Pub/Sub topic/subscription
   checks passed, and feeder kabu logs ended at `unregister/all 200`.
+- Paper-test preparation fix: `production-preopen-check.py` and
+  `scripts/deploy-production.sh` now accept `--expected-trade-mode live|paper`
+  so Monday paper checks can require `TRADE_MODE=paper` and
+  `system_status.trade_mode=paper` without false `live` assumptions. The paper
+  runbook was updated with the paper-mode pre-open command and tmpfs credential
+  note. Verification passed for the current live production state:
+  `OK 62 / WARN 0 / NG 0 / SKIP 0` with no Pub/Sub smoke.
 
 ## 2026-06-13 paper backtest reliability follow-up
 
