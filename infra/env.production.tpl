@@ -54,7 +54,7 @@ CLOSEOUT_ORDER_FILL_TIMEOUT_SECONDS=2400
 OMS_LIVE_ALLOWED_SYMBOLS=7203
 
 # Strategy parameters known from the verified local setup.
-STRATEGIES_ENABLED=sma_crossover,rsi_threshold,bollinger_breakout
+STRATEGIES_ENABLED=rsi_threshold,bollinger_breakout
 AI_TRIGGER_MIN_CONFIDENCE=0.8
 PUBSUB_TOPIC_AI_TRIGGERS=strategy-ai-triggers
 SMA_MIN_GAP_RATIO=0.005

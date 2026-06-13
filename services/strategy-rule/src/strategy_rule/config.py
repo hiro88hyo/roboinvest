@@ -7,7 +7,7 @@ from typing import Annotated, Any
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-DEFAULT_STRATEGIES = ("sma_crossover", "rsi_threshold", "bollinger_breakout")
+DEFAULT_STRATEGIES = ("rsi_threshold", "bollinger_breakout")
 
 
 class StrategyRuleSettings(BaseSettings):

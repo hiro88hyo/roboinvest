@@ -1,5 +1,5 @@
 {
-  "phase": "HITL",
+  "phase": "AUDIT",
   "audited_at": "2026-06-13T05:50:00Z",
   "findings": [
     {
@@ -21,8 +21,8 @@
     {
       "id": "CHK-10",
       "priority": 4,
-      "status": "open",
-      "evidence": "docs/reports/backtest-2026-06.md is parameter-combination based, not strategy-name based, so PF<1.0 strategy removal cannot yet be evaluated against services/strategy-rule/src/strategy_rule/config.py:10 DEFAULT_STRATEGIES.",
+      "status": "fixed",
+      "evidence": "docs/reports/backtest-2026-06.md now includes strategy-level validation PF. sma_crossover validation PF=0.404078, so it was removed from services/strategy-rule/src/strategy_rule/config.py DEFAULT_STRATEGIES and production defaults.",
       "fix_instruction": "レポートで PF<1.0 の戦略名を DEFAULT_STRATEGIES から除外する PR を作れ。理由をPR本文に書け。",
       "hitl_required": false
     }
@@ -38,6 +38,7 @@
   ],
   "done": [
     "CHK-09",
-    "CHK-05"
+    "CHK-05",
+    "CHK-10"
   ]
 }
