@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 
 import polars as pl
+
+from ..calendar import previous_business_day
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,12 +32,14 @@ def score_candidates(
     candidates: pl.DataFrame,
     ohlcv: pl.DataFrame,
     config: DynamicScoringConfig,
+    as_of: date | None = None,
 ) -> pl.DataFrame:
     """第2段階の動的スコアリング。
 
     入力:
       - candidates: 静的フィルタ通過後の銘柄集合 (symbol, symbol_name, ...)
       - ohlcv: 直近期間の日次 OHLCV (symbol, date, close, volume, ...)
+      - as_of: 指定時は as_of の前営業日までの OHLCV だけを使う
     出力カラム:
       - symbol, symbol_name, score, selected_reasons (struct),
         volatility, volume_surge, momentum
@@ -52,7 +57,11 @@ def score_candidates(
         )
 
     target_symbols = candidates.get_column("symbol").to_list()
-    data = ohlcv.filter(pl.col("symbol").is_in(target_symbols)).sort(["symbol", "date"])
+    data = ohlcv.filter(pl.col("symbol").is_in(target_symbols))
+    if as_of is not None:
+        scoring_end = previous_business_day(as_of)
+        data = data.filter(pl.col("date") <= scoring_end)
+    data = data.sort(["symbol", "date"])
 
     # 銘柄ごとにメトリクス算出。window は末尾からの固定本数で見る。
     with_returns = data.with_columns(

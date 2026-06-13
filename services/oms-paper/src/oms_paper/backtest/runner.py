@@ -3,9 +3,8 @@
 OrderRequest と OrderBookSnapshot をタイムスタンプ順にマージし、最新の板で
 擬似約定する。fill / position transition は Phase 1 の純関数を呼ぶだけ。
 
-ここでは pnl は計算しない (paper では daily_pnl はキルスイッチ集計外であり、
-評価損益は Feature Engine の責務)。Phase 2 はあくまで「板情報による約定が
-妥当か」「Position 状態が想定通り遷移するか」の検証ツールとして機能する。
+評価損益は Feature Engine の責務だが、backtest の収益評価に必要な実現損益は
+summary に含める。paper の daily_pnl / kill switch には反映しない。
 """
 
 from __future__ import annotations
@@ -14,6 +13,7 @@ import logging
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
@@ -25,8 +25,11 @@ from trade_contracts.order import OrderRequest
 from ..fill_simulator import simulate_fill
 from ..models import PaperFillRecord, PaperPosition
 from ..position_updater import apply_fill, build_fill_record
+from .report import ClosedTrade
 
 logger = logging.getLogger(__name__)
+
+_COMMISSION_RATE = Decimal("0.00099")
 
 
 class NoFillRecord(BaseModel):
@@ -45,6 +48,8 @@ class BacktestSummary:
     fills: list[PaperFillRecord]
     no_fills: list[NoFillRecord]
     final_positions: dict[str, PaperPosition]
+    closed_trades: list[ClosedTrade]
+    realized_pnl: Decimal = Decimal("0")
 
     @property
     def order_count(self) -> int:
@@ -94,12 +99,15 @@ def run_backtest(
     * BUY で新規ポジションを作る場合の ``holding_type`` は
       ``default_holding_type`` を使う (``OrderRequest`` は holding_type を持たない)。
     * 既存ポジションがある場合の ``holding_type`` は既存値を維持する。
-    * pnl 計算・スイング自動決済は対象外 (Phase 4 以降)。
+    * 実現損益は SELL 決済時に計算し、約定代金 0.099% の往復手数料を控除する。
+      評価損益・スイング自動決済は対象外 (Phase 4 以降)。
     """
     positions: dict[str, PaperPosition] = dict(initial_positions or {})
     book_cache: dict[str, OrderBookSnapshot] = {}
     fills: list[PaperFillRecord] = []
     no_fills: list[NoFillRecord] = []
+    closed_trades: list[ClosedTrade] = []
+    realized_pnl = Decimal("0")
 
     for _ts, kind, payload in _merge_events(orders, books):
         if kind == "book":
@@ -135,18 +143,29 @@ def run_backtest(
         record = build_fill_record(order=order, fill=fill, executed_at=order.created_at)
         if record is not None:
             fills.append(record)
+            closed = _closed_trade_for_fill(record=record, existing=existing)
+            if closed is not None:
+                closed_trades.append(closed)
+                realized_pnl += closed.net_pnl_before_tax
         if update.delete:
             positions.pop(order.symbol, None)
         elif update.position is not None:
             positions[order.symbol] = update.position
 
-    summary = BacktestSummary(fills=fills, no_fills=no_fills, final_positions=positions)
+    summary = BacktestSummary(
+        fills=fills,
+        no_fills=no_fills,
+        final_positions=positions,
+        closed_trades=closed_trades,
+        realized_pnl=realized_pnl,
+    )
     logger.info(
-        "backtest done: orders=%d fills=%d no_fills=%d positions=%d",
+        "backtest done: orders=%d fills=%d no_fills=%d positions=%d realized_pnl=%s",
         summary.order_count,
         summary.fill_count,
         summary.no_fill_count,
         len(summary.final_positions),
+        summary.realized_pnl,
     )
     return summary
 
@@ -159,4 +178,29 @@ def _to_no_fill(order: OrderRequest, *, reason: str) -> NoFillRecord:
         quantity=order.quantity,
         reason=reason,
         created_at=order.created_at,
+    )
+
+
+def _closed_trade_for_fill(
+    *, record: PaperFillRecord, existing: PaperPosition | None
+) -> ClosedTrade | None:
+    if record.side is not Side.SELL or existing is None:
+        return None
+
+    qty = Decimal(record.quantity)
+    entry_notional = existing.entry_price * qty
+    exit_notional = record.price * qty
+    gross_pnl = exit_notional - entry_notional
+    commission = (entry_notional + exit_notional) * _COMMISSION_RATE
+    return ClosedTrade(
+        symbol=record.symbol,
+        quantity=record.quantity,
+        entry_price=existing.entry_price,
+        exit_price=record.price,
+        entry_notional=entry_notional,
+        exit_notional=exit_notional,
+        gross_pnl=gross_pnl,
+        commission=commission,
+        net_pnl_before_tax=gross_pnl - commission,
+        executed_at=record.executed_at,
     )

@@ -18,10 +18,12 @@ from trade_contracts.enums import TradingStyle
 from trade_contracts.logging import configure_logging
 
 from .backtest import (
+    build_backtest_report,
     iter_order_books,
     iter_order_requests,
     read_positions_json,
     run_backtest,
+    write_backtest_report,
     write_jsonl,
     write_positions_json,
 )
@@ -88,6 +90,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="不約定ログ JSONL (NoFillRecord) の出力先。省略時は書き出さない。",
     )
     bt.add_argument(
+        "--output-report",
+        dest="output_report",
+        type=Path,
+        default=None,
+        help=(
+            "収益指標 JSON (BacktestReport) の出力先。省略時は output-positions と"
+            "同じディレクトリの backtest_report.json。"
+        ),
+    )
+    bt.add_argument(
         "--default-holding-type",
         dest="default_holding_type",
         type=TradingStyle,
@@ -125,6 +137,7 @@ def _run_backtest_cmd(
     output_fills: Path,
     output_positions: Path,
     output_rejected: Path | None,
+    output_report: Path | None,
     default_holding_type: TradingStyle | None,
 ) -> int:
     settings = OmsPaperSettings()
@@ -154,15 +167,20 @@ def _run_backtest_cmd(
     write_positions_json(summary.final_positions, output_positions)
     if output_rejected is not None:
         write_jsonl(summary.no_fills, output_rejected)
+    report_path = output_report or (output_positions.parent / "backtest_report.json")
+    write_backtest_report(build_backtest_report(summary.closed_trades), report_path)
 
     logger.info(
-        "backtest done: orders=%d fills=%d (%s) no_fills=%d (%s) positions=%s",
+        "backtest done: orders=%d fills=%d (%s) no_fills=%d (%s) "
+        "positions=%s report=%s realized_pnl=%s",
         summary.order_count,
         summary.fill_count,
         output_fills,
         summary.no_fill_count,
         output_rejected if output_rejected is not None else "<suppressed>",
         output_positions,
+        report_path,
+        summary.realized_pnl,
     )
     return 0
 
@@ -224,6 +242,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             output_fills=args.output_fills,
             output_positions=args.output_positions,
             output_rejected=args.output_rejected,
+            output_report=args.output_report,
             default_holding_type=args.default_holding_type,
         )
     if args.command == "stream":

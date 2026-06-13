@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -48,6 +49,9 @@ def _settings(**overrides: Any) -> OmsLiveSettings:
         pubsub_pull_max_messages=10,
         order_fill_poll_interval_seconds=0.0,
         order_fill_timeout_seconds=5.0,
+        oms_live_allowed_symbols="",
+        oms_live_dry_run=False,
+        oms_live_max_qty_per_order=None,
     )
     base.update(overrides)
     return OmsLiveSettings(**base)
@@ -374,6 +378,55 @@ async def test_run_once_buy_new_position_writes_trade_and_position_and_acks() ->
     assert len(pubsub.acked) == 1
     body = json.loads(pubsub.acked[0].content.decode())
     assert body == {"ackIds": ["a1"]}
+
+
+async def test_run_once_partial_fill_logs_abandoned_remainder(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    order = make_order_request(side=Side.BUY, quantity=200)
+    pubsub = _PubSubRouter(batches=[_pull_response([("a1", order.model_dump_json().encode())])])
+    supabase = _SupabaseRouter(live_position_rows=[[]])
+    kabu = _KabuRouter(
+        sendorder_responses=[{"Result": 0, "OrderId": "OID-PARTIAL"}],
+        order_states={
+            "OID-PARTIAL": [
+                _kabu_order_payload(
+                    order_id="OID-PARTIAL",
+                    state=5,
+                    cum_qty=50,
+                    order_qty=200,
+                    detail_price=1000,
+                )
+            ]
+        },
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    caplog.set_level(logging.WARNING, logger="oms_live.streaming.runner")
+
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, kabu=kabu, run_body=_body)
+
+    assert stats.filled == 1
+    insert_req = next(
+        r for r in supabase.requests if r.method == "POST" and r.url.path == "/rest/v1/trades_live"
+    )
+    inserted = json.loads(insert_req.content.decode())[0]
+    assert inserted["quantity"] == 50
+
+    partial_logs = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "partial_fill_abandoned"
+    ]
+    assert len(partial_logs) == 1
+    record: Any = partial_logs[0]
+    assert record.reason == "partial_abandoned"
+    assert record.requested_quantity == 200
+    assert record.filled_quantity == 50
+    assert record.remaining_quantity == 150
+    assert record.broker_order_id == "OID-PARTIAL"
 
 
 async def test_run_once_skips_when_order_id_already_in_trades_live() -> None:

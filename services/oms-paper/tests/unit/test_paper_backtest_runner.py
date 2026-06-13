@@ -60,6 +60,7 @@ def test_buy_then_sell_full_close() -> None:
     assert summary.fill_count == 2
     assert summary.no_fill_count == 0
     assert summary.final_positions == {}  # SELL で全決済 → DELETE
+    assert summary.realized_pnl == Decimal("9792.1")
 
 
 def test_initial_positions_seed_used_for_sell() -> None:
@@ -69,6 +70,15 @@ def test_initial_positions_seed_used_for_sell() -> None:
     summary = run_backtest(orders=[sell], books=[book], initial_positions=seed)
     assert summary.fill_count == 1
     assert summary.final_positions["7203"].quantity == 100  # 200 - 100
+    assert summary.realized_pnl == Decimal("9811.9")
+
+
+def test_open_buy_does_not_count_as_realized_pnl() -> None:
+    book = make_order_book(symbol="7203", asks=(("1000", 200),), timestamp=_ts(0))
+    buy = make_order_request(symbol="7203", side=Side.BUY, quantity=100, created_at=_ts(1))
+    summary = run_backtest(orders=[buy], books=[book])
+    assert summary.fill_count == 1
+    assert summary.realized_pnl == Decimal("0")
 
 
 def test_oversell_logged_as_no_fill_and_position_unchanged() -> None:

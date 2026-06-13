@@ -16,6 +16,7 @@ def test_defaults() -> None:
     assert settings.ai_min_interval_seconds == 300.0
     assert settings.ai_temperature == Decimal("0.0")
     assert settings.ai_max_output_tokens == 2048
+    assert settings.ai_silence_warn_seconds == 3600.0
     assert settings.pubsub_pull_max_messages == 5
     assert settings.pubsub_subscription_features == "strategy-ai-rule-signals"
 

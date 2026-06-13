@@ -164,6 +164,11 @@ class _SupabaseRouter:
     async def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
         path = request.url.path
+        if request.method == "POST" and path == "/rest/v1/rpc/gateway_check_kill_switch":
+            row = self.system_status_rows.pop(0) if self.system_status_rows else None
+            if row is None:
+                return httpx.Response(200, json=[])
+            return httpx.Response(200, json=[_kill_switch_decision_row(row)])
         if request.method == "GET" and path == "/rest/v1/system_status":
             row = self.system_status_rows.pop(0) if self.system_status_rows else None
             return httpx.Response(200, json=[row] if row is not None else [])
@@ -189,6 +194,33 @@ class _SupabaseRouter:
         if request.method == "PATCH" and path == "/rest/v1/system_status":
             return httpx.Response(self.disable_status)
         return httpx.Response(404, text=f"unmocked: {request.method} {path}")
+
+
+def _kill_switch_decision_row(row: dict[str, Any]) -> dict[str, Any]:
+    reason: str | None = None
+    disabled = False
+    if not row["is_trading_allowed"]:
+        reason = "kill_switch_off"
+    elif row["trade_mode"] == "live":
+        daily_pnl = Decimal(str(row["daily_pnl"]))
+        weekly_pnl = Decimal(str(row["weekly_pnl"]))
+        monthly_pnl = Decimal(str(row["monthly_pnl"]))
+        daily_limit = Decimal(str(row["daily_loss_limit"]))
+        weekly_limit = Decimal(str(row["weekly_loss_limit"]))
+        monthly_limit = Decimal(str(row["monthly_loss_limit"]))
+        if daily_pnl <= -daily_limit:
+            reason = "daily_loss_limit"
+        elif weekly_pnl <= -weekly_limit:
+            reason = "weekly_loss_limit"
+        elif monthly_pnl <= -monthly_limit:
+            reason = "monthly_loss_limit"
+
+    result = dict(row)
+    if reason in {"daily_loss_limit", "weekly_loss_limit", "monthly_loss_limit"}:
+        result["is_trading_allowed"] = False
+        disabled = True
+    result.update({"passed": reason is None, "reason": reason, "disabled": disabled})
+    return result
 
 
 async def _with_runner(
@@ -1666,10 +1698,11 @@ async def test_daily_loss_limit_flips_kill_switch() -> None:
     assert stats.rejected == 1
     assert stats.kill_switch_triggered == 1
     patch_calls = [r for r in supabase.requests if r.method == "PATCH"]
-    assert len(patch_calls) == 1
-    body = json.loads(patch_calls[0].content.decode())
-    assert body["is_trading_allowed"] is False
-    assert body["updated_at"].startswith("2026-04-20T01:00:00")
+    assert patch_calls == []
+    rpc_calls = [
+        r for r in supabase.requests if r.url.path == "/rest/v1/rpc/gateway_check_kill_switch"
+    ]
+    assert len(rpc_calls) == 1
     assert pubsub.published == []
 
 

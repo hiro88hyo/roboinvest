@@ -32,6 +32,23 @@ class SupabaseError(RuntimeError):
     """Supabase (PostgREST) error wrapper."""
 
 
+_KILL_SWITCH_STATE_FIELDS = frozenset(
+    {
+        "id",
+        "is_trading_allowed",
+        "trade_mode",
+        "trading_style",
+        "daily_pnl",
+        "weekly_pnl",
+        "monthly_pnl",
+        "daily_loss_limit",
+        "weekly_loss_limit",
+        "monthly_loss_limit",
+        "updated_at",
+    }
+)
+
+
 @dataclass(frozen=True, slots=True)
 class MarketRegimeState:
     valid_date: date
@@ -43,6 +60,14 @@ class MarketRegimeState:
     rationale: list[Any]
     metrics: dict[str, Any]
     created_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class KillSwitchDecision:
+    state: KillSwitchState
+    passed: bool
+    reason: str | None
+    disabled: bool
 
 
 @dataclass(slots=True)
@@ -103,6 +128,58 @@ class SupabaseClient:
             return KillSwitchState.model_validate(row)
         except ValidationError as exc:
             raise SupabaseError(f"invalid system_status row: {exc}") from exc
+
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((httpx.HTTPError, SupabaseError)),
+    )
+    async def check_kill_switch(self) -> KillSwitchDecision:
+        """Atomically read, evaluate, and possibly disable the gateway kill switch.
+
+        The database function locks the singleton ``system_status`` row while it
+        evaluates live-mode PnL limits and flips ``is_trading_allowed=false``.
+        This avoids the streaming runner's previous read-then-patch race.
+        """
+        assert self._client is not None
+        resp = await self._client.post("/rest/v1/rpc/gateway_check_kill_switch", json={})
+        if resp.status_code >= 500:
+            raise SupabaseError(
+                f"transient error: rpc=gateway_check_kill_switch status={resp.status_code} "
+                f"body={resp.text[:200]}"
+            )
+        if resp.status_code >= 300:
+            raise SupabaseError(
+                f"rpc failed: rpc=gateway_check_kill_switch status={resp.status_code} "
+                f"body={resp.text[:200]}"
+            )
+        payload = resp.json()
+        if isinstance(payload, list):
+            if not payload:
+                raise SupabaseError("gateway_check_kill_switch returned no rows")
+            row = payload[0]
+        elif isinstance(payload, dict):
+            row = payload
+        else:
+            raise SupabaseError(
+                f"unexpected gateway_check_kill_switch payload: {type(payload).__name__}"
+            )
+        if not isinstance(row, dict):
+            raise SupabaseError(f"unexpected gateway_check_kill_switch row: {type(row).__name__}")
+
+        state_payload = {k: v for k, v in row.items() if k in _KILL_SWITCH_STATE_FIELDS}
+        try:
+            state = KillSwitchState.model_validate(state_payload)
+        except ValidationError as exc:
+            raise SupabaseError(f"invalid gateway_check_kill_switch row: {exc}") from exc
+
+        return KillSwitchDecision(
+            state=state,
+            passed=_parse_rpc_bool(row.get("passed"), field="passed"),
+            reason=_parse_optional_str(row.get("reason"), field="reason"),
+            disabled=_parse_rpc_bool(row.get("disabled"), field="disabled"),
+        )
 
     @retry(
         reraise=True,
@@ -436,3 +513,15 @@ def _parse_bool(value: Any, *, field: str) -> bool:
         if lowered == "false":
             return False
     raise SupabaseError(f"invalid market_regime {field}: {value!r}")
+
+
+def _parse_rpc_bool(value: Any, *, field: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    raise SupabaseError(f"invalid gateway_check_kill_switch {field}: {value!r}")
+
+
+def _parse_optional_str(value: Any, *, field: str) -> str | None:
+    if value is None or isinstance(value, str):
+        return value
+    raise SupabaseError(f"invalid gateway_check_kill_switch {field}: {value!r}")

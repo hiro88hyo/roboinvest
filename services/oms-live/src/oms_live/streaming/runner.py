@@ -415,6 +415,13 @@ class StreamRunner:
         if record is None:
             return "no_fill"
 
+        _log_partial_fill_abandoned(
+            order=order,
+            fill=fill,
+            broker_order_id=kabu_order_id,
+            phase="live_order",
+        )
+
         # 書込順序: trades_live INSERT → positions の write → realized PnL 加算
         await self.supabase.insert_trade_live(record)
         await self._write_position_change(
@@ -1021,6 +1028,13 @@ class StreamRunner:
         if record is None:
             return "no_fill", Decimal("0")
 
+        _log_partial_fill_abandoned(
+            order=order,
+            fill=fill,
+            broker_order_id=kabu_order_id,
+            phase="closeout",
+        )
+
         await self.supabase.insert_trade_live(record)
         await self._write_position_change(existing=existing, update=update, symbol=order.symbol)
         logger.info(
@@ -1081,6 +1095,39 @@ def _summarize_order_state(state: Any) -> dict[str, Any]:
             for d in state.details
         ],
     }
+
+
+def _log_partial_fill_abandoned(
+    *,
+    order: OrderRequest,
+    fill: FillResult,
+    broker_order_id: str,
+    phase: str,
+) -> None:
+    if fill.reason != "partial":
+        return
+    remaining = max(order.quantity - fill.filled_quantity, 0)
+    logger.warning(
+        "partial fill abandoned: symbol=%s side=%s filled=%d remaining=%d",
+        order.symbol,
+        order.side.value,
+        fill.filled_quantity,
+        remaining,
+        extra=event_extra(
+            "partial_fill_abandoned",
+            phase=phase,
+            reason="partial_abandoned",
+            symbol=order.symbol,
+            side=order.side.value,
+            requested_quantity=order.quantity,
+            filled_quantity=fill.filled_quantity,
+            remaining_quantity=remaining,
+            fill_price=str(fill.fill_price) if fill.fill_price is not None else None,
+            order_id=str(order.order_id),
+            broker_order_id=broker_order_id,
+            unified_signal_id=str(order.unified_signal_id) if order.unified_signal_id else None,
+        ),
+    )
 
 
 def _broker_error_fields(exc: KabuApiError) -> tuple[Any, Any]:

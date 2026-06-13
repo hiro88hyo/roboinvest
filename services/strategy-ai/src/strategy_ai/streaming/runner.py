@@ -5,7 +5,9 @@ import json
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import datetime, time
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ValidationError
 from trade_contracts.features import ProcessedFeatures
@@ -20,6 +22,9 @@ from strategy_ai.engine import StrategyAiEngine
 logger = logging.getLogger(__name__)
 
 Sleep = Callable[[float], Awaitable[None]]
+_JST = ZoneInfo("Asia/Tokyo")
+_MARKET_OPEN = time(9, 0)
+_MARKET_CLOSE = time(15, 0)
 
 
 class RuleSignalTrigger(BaseModel):
@@ -66,6 +71,8 @@ class StreamRunner:
     settings: StrategyAiSettings
     idle_backoff_seconds: float = 1.0
     sleep: Sleep = field(default=asyncio.sleep)
+    _silence_started_at: datetime | None = field(default=None, init=False)
+    _silence_alerted: bool = field(default=False, init=False)
 
     async def run(self, *, iterations: int | None = None) -> list[BatchStats]:
         """pull ループ本体。`iterations=None` で無限ループ、値指定でテスト向けに有限化。
@@ -159,6 +166,17 @@ class StreamRunner:
                         feature_timestamp=trigger.features.timestamp.isoformat(),
                     ),
                 )
+                self._observe_signal_health(
+                    feature_timestamp=trigger.features.timestamp,
+                    emitted_count=0,
+                    symbol=trigger.features.symbol,
+                )
+            else:
+                self._observe_signal_health(
+                    feature_timestamp=trigger.features.timestamp,
+                    emitted_count=len(signals),
+                    symbol=trigger.features.symbol,
+                )
             await self._dispatch_signals(trigger.features.symbol, signals)
         except Exception:
             logger.exception("process failed: message_id=%s", msg.message_id)
@@ -176,6 +194,39 @@ class StreamRunner:
             )
         await self.writer.insert_strategy_logs(signals)
 
+    def _observe_signal_health(
+        self,
+        *,
+        feature_timestamp: datetime,
+        emitted_count: int,
+        symbol: str,
+    ) -> None:
+        if emitted_count > 0:
+            self._silence_started_at = None
+            self._silence_alerted = False
+            return
+        if not _is_market_time(feature_timestamp):
+            return
+        if self._silence_started_at is None:
+            self._silence_started_at = feature_timestamp
+            self._silence_alerted = False
+            return
+        elapsed = (feature_timestamp - self._silence_started_at).total_seconds()
+        if elapsed < self.settings.ai_silence_warn_seconds or self._silence_alerted:
+            return
+        self._silence_alerted = True
+        logger.error(
+            "AI_STRATEGY_SILENT",
+            extra=event_extra(
+                "ai_strategy_silent",
+                symbol=symbol,
+                silence_started_at=self._silence_started_at.isoformat(),
+                feature_timestamp=feature_timestamp.isoformat(),
+                silence_seconds=elapsed,
+                threshold_seconds=self.settings.ai_silence_warn_seconds,
+            ),
+        )
+
 
 def _parse_trigger(data: bytes) -> RuleSignalTrigger | None:
     """ペイロード (JSON bytes) を `RuleSignalTrigger` にパースする。"""
@@ -189,3 +240,11 @@ def _parse_trigger(data: bytes) -> RuleSignalTrigger | None:
         return RuleSignalTrigger.model_validate(payload)
     except ValidationError:
         return None
+
+
+def _is_market_time(ts: datetime) -> bool:
+    jst = ts.astimezone(_JST)
+    if jst.weekday() >= 5:
+        return False
+    current = jst.time()
+    return _MARKET_OPEN <= current <= _MARKET_CLOSE

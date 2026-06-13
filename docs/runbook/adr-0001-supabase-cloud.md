@@ -44,6 +44,11 @@ Cloud project の SQL Editor で `contracts/sql/` を番号順に実行する。
 9. `contracts/sql/009_daily_ohlcv.sql`
 10. `contracts/sql/010_trades_live_order_id.sql`
 11. `contracts/sql/010_trades_paper_signal_id_unique.sql`
+12. `contracts/sql/011_dashboard_anon_read_policies.sql`
+13. `contracts/sql/012_dashboard_auth_rls.sql`
+14. `contracts/sql/013_market_regime.sql`
+15. `contracts/sql/014_service_role_table_grants.sql`
+16. `contracts/sql/015_gateway_kill_switch_rpc.sql`
 
 各 SQL は `create table if not exists` / `create index if not exists` 形式を基本にしている。途中で失敗した場合は、失敗箇所を直して同じ順番で再実行する。
 

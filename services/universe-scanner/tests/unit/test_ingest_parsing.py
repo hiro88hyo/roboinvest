@@ -1,6 +1,7 @@
+from datetime import date
 from typing import Any
 
-from universe_scanner.ingest.daily_ohlcv import daily_quotes_to_frame
+from universe_scanner.ingest.daily_ohlcv import daily_quotes_to_frame, ingest_daily_ohlcv
 from universe_scanner.ingest.master_stocks import listed_info_to_frame
 
 
@@ -135,3 +136,47 @@ def test_daily_quotes_to_frame_deduplicates_legacy_and_normalized_symbols():
     df = daily_quotes_to_frame(rows)
     assert df.height == 1
     assert df.get_column("symbol").to_list() == ["278A"]
+
+
+async def test_ingest_daily_ohlcv_fetches_only_through_previous_business_day() -> None:
+    fetched_dates: list[date] = []
+    upserts: list[tuple[str, list[dict[str, Any]], str]] = []
+
+    class _FakeJQuants:
+        async def daily_quotes(self, *, target_date: date) -> list[dict[str, Any]]:
+            fetched_dates.append(target_date)
+            return [
+                {
+                    "Code": "7203",
+                    "Date": target_date.isoformat(),
+                    "Close": 1000.0,
+                    "Volume": 100,
+                    "TurnoverValue": 100000.0,
+                }
+            ]
+
+    class _FakeSupabase:
+        async def upsert(
+            self,
+            table: str,
+            rows: list[dict[str, Any]],
+            *,
+            on_conflict: str,
+        ) -> None:
+            upserts.append((table, rows, on_conflict))
+
+        async def delete_where(self, table: str, *, filters: dict[str, str]) -> None:
+            raise AssertionError(f"unexpected delete_where: {table} {filters}")
+
+    df = await ingest_daily_ohlcv(
+        _FakeJQuants(),  # type: ignore[arg-type]
+        _FakeSupabase(),  # type: ignore[arg-type]
+        as_of=date(2026, 4, 20),
+        lookback_days=2,
+    )
+
+    assert fetched_dates == [date(2026, 4, 16), date(2026, 4, 17)]
+    assert date(2026, 4, 20) not in fetched_dates
+    assert df.get_column("date").max() == date(2026, 4, 17)
+    assert upserts[0][0] == "daily_ohlcv"
+    assert {row["date"] for row in upserts[0][1]} == {"2026-04-16", "2026-04-17"}

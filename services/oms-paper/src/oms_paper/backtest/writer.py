@@ -8,6 +8,7 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from ..models import PaperPosition
+from .report import BacktestReport
 
 logger = logging.getLogger(__name__)
 
@@ -38,3 +39,12 @@ def write_positions_json(positions: Mapping[str, PaperPosition], path: Path) -> 
         f.write("\n")
     logger.info("wrote positions json: path=%s rows=%d", path, len(positions))
     return len(positions)
+
+
+def write_backtest_report(report: BacktestReport, path: Path) -> None:
+    """BacktestReport を整形 JSON で書き出す。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(report.model_dump(mode="json"), f, indent=2, ensure_ascii=False)
+        f.write("\n")
+    logger.info("wrote backtest report: path=%s", path)
