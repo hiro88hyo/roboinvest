@@ -1,0 +1,42 @@
+{
+  "phase": "FIX",
+  "audited_at": "2026-06-13T05:50:00Z",
+  "findings": [
+    {
+      "id": "CHK-05",
+      "priority": 3,
+      "status": "open",
+      "evidence": "services/gateway/src/gateway/config.py:37 still defines capital as Decimal(\"1000000\"), so Gateway sizing is not sourced from kabu buying power or Supabase.",
+      "fix_instruction": "lot_calculator の総資金を kabu /wallet/cash 相当の値から取得するよう変更せよ。取得失敗時は直近キャッシュ値を使い WARNING を出す。フォールバックの既定値は現行の100万円。",
+      "hitl_required": true
+    },
+    {
+      "id": "CHK-09",
+      "priority": 2,
+      "status": "fixed",
+      "evidence": "docs/reports/backtest-2026-06.md records a parameter sweep over exported Cloud Supabase daily_ohlcv rows with validation PnL, win rate, profit factor, max drawdown, Sharpe ratio, and expectancy.",
+      "fix_instruction": "CHK-01〜03 完了後、scripts/parameter-sweep.py を実行し、結果を docs/reports/backtest-YYYY-MM.md として保存せよ。",
+      "hitl_required": false
+    },
+    {
+      "id": "CHK-10",
+      "priority": 4,
+      "status": "open",
+      "evidence": "docs/reports/backtest-2026-06.md is parameter-combination based, not strategy-name based, so PF<1.0 strategy removal cannot yet be evaluated against services/strategy-rule/src/strategy_rule/config.py:10 DEFAULT_STRATEGIES.",
+      "fix_instruction": "レポートで PF<1.0 の戦略名を DEFAULT_STRATEGIES から除外する PR を作れ。理由をPR本文に書け。",
+      "hitl_required": false
+    }
+  ],
+  "passed": [
+    "CHK-01",
+    "CHK-02",
+    "CHK-03",
+    "CHK-04",
+    "CHK-06",
+    "CHK-07",
+    "CHK-08"
+  ],
+  "done": [
+    "CHK-09"
+  ]
+}
