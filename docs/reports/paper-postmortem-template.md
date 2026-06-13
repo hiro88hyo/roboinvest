@@ -21,6 +21,29 @@ bash scripts/run-paper-postmortem.sh \
 - decision reason:
   - `...`
 
+## Validation Questions
+
+This paper run is a validation run, not a live-size increase signal by itself.
+Answer these before any live change proposal:
+
+- Safety routing: were live trades/orders unchanged for the trading date?
+- Mode consistency: did production env, Gateway container env, and
+  `system_status.trade_mode` all stay on `paper`?
+- Archive coverage: did Gateway write approved paper orders and did
+  Feature Engine write matching book snapshots for the same JST date?
+- Replayability: did `run-paper-postmortem.sh` complete from exported archives
+  without manual data repair?
+- Execution quality: were fill ratio, no-fill count, partial count, spread bps,
+  and slippage within the gate thresholds?
+- Strategy quality: did total net PnL, profit factor, max drawdown, Sharpe ratio,
+  and expectancy support continuing paper observation?
+- Candidate filter: if `ENTRY_VOLUME_RATIO_MIN=2.0` was enabled, did it reduce
+  weak entries without eliminating useful signals?
+- AI liveness: were AI parse/call failures visible, and was there no unexplained
+  `AI_STRATEGY_SILENT` condition during market hours?
+- Decision discipline: does the result justify `no live change`,
+  `continue paper`, or a separate live-change proposal with rollback?
+
 ## Summary
 
 Paste `out/paper-archive-YYYY-MM-DD/backtest/summary.md` below.

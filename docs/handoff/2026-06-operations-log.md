@@ -103,6 +103,12 @@ CHK-06 implementation note:
   runbook was updated with the paper-mode pre-open command and tmpfs credential
   note. Verification passed for the current live production state:
   `OK 62 / WARN 0 / NG 0 / SKIP 0` with no Pub/Sub smoke.
+- Monday paper validation intent: use the paper session to validate safety
+  routing, mode consistency, archive coverage, replayability, execution quality,
+  strategy quality, optional `ENTRY_VOLUME_RATIO_MIN=2.0` behavior, and AI
+  liveness. Treat a passing day as evidence for continued paper observation or
+  a separate live-change proposal only; it is not by itself a live-size increase
+  signal. The checklist is recorded in `docs/reports/paper-postmortem-template.md`.
 
 ## 2026-06-13 paper backtest reliability follow-up
 
