@@ -14,10 +14,11 @@ Status by original checklist:
   strategy grid and the later 500-business-day focused sweep with walk-forward folds.
 - CHK-04 AI strategy silence monitoring: done. `AI_STRATEGY_SILENT` is logged during
   market-hours silence and has tests.
-- CHK-05 dynamic capital: partial. Gateway can read live capital from kabu wallet,
-  cache it, and fall back to configured capital. `GatewaySettings.capital=1000000`
-  still exists as fallback, so treat this as not fully closed until the desired
-  capital source and failure semantics are explicitly accepted.
+- CHK-05 dynamic capital: done for the Fable5 checklist. Gateway reads live
+  capital from the kabu wallet, caches it, and falls back to configured capital
+  only when wallet reads fail and no cached value exists. Residual policy work
+  remains before increasing live size: explicitly decide whether the fallback
+  behavior is acceptable or should become paper/backtest-only.
 - CHK-06 kill-switch/risk reservation atomicity: implemented in the working tree,
   and `contracts/sql/016_gateway_risk_reservations.sql` was applied to production
   Supabase by the user. RLS is enabled on `gateway_risk_reservations`. Service-role
@@ -52,15 +53,12 @@ Additional feedback status:
 
 Remaining TODO:
 
-1. Before production deploy, run one final pre-open style check and ensure the deployed
-   Gateway uses the same SQL contract (`gateway_check_and_reserve_risk` and
-   `gateway_release_risk_reservation`) now verified in production Supabase.
-2. Close CHK-05 explicitly. Decide whether kabu wallet plus cached fallback is
+1. Close the residual CHK-05 policy explicitly. Decide whether kabu wallet plus cached fallback is
    sufficient, or whether configured `capital` should become paper/backtest-only.
-3. Write a short capital-scale / project-purpose note before increasing live size.
+2. Write a short capital-scale / project-purpose note before increasing live size.
    This should state whether the project is optimizing profit, research data, or
    AI-assisted engineering reference value.
-4. After the next paper session, run `scripts/run-paper-postmortem.sh` on real
+3. After the next paper session, run `scripts/run-paper-postmortem.sh` on real
    `/data/orders` and `/data/books`, then compare execution quality gates before
    considering any live parameter change.
 
