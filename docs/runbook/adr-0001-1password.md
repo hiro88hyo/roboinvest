@@ -10,7 +10,7 @@ secret 実値は repo に書かない。`infra/env.production.tpl` は `op://...
 Vault:
 
 ```text
-Trade AI
+roboinvest
 ```
 
 Items and fields:
@@ -34,7 +34,7 @@ field 名は env var 名と完全一致させる。
 
 ## 2. Create Vault And Items
 
-1Password app または web console で vault `Trade AI` を作る。
+1Password app または web console で vault `roboinvest` を作る。
 その中に以下の item を作る。
 
 - `production`
@@ -70,12 +70,12 @@ item type は `Secure Note` でも `Password` でもよいが、fields を明示
 登録後、`infra/env.production.tpl` の参照と一致していることを確認する。
 
 ```bash
-op read "op://Trade AI/production/PUBSUB_PROJECT_ID"
-op read "op://Trade AI/production/SUPABASE_URL"
-op read "op://Trade AI/jquants/JQUANTS_API_KEY"
-op read "op://Trade AI/kabu/KABU_API_PASSWORD"
-op read "op://Trade AI/kabu/KABU_ORDER_PASSWORD"
-op read "op://Trade AI/ai/GEMINI_API_KEY"
+op read "op://roboinvest/production/PUBSUB_PROJECT_ID"
+op read "op://roboinvest/production/SUPABASE_URL"
+op read "op://roboinvest/jquants/JQUANTS_API_KEY"
+op read "op://roboinvest/kabu/KABU_API_PASSWORD"
+op read "op://roboinvest/kabu/KABU_ORDER_PASSWORD"
+op read "op://roboinvest/ai/GEMINI_API_KEY"
 ```
 
 画面共有やログ保存中は実行しない。値が表示されるため、確認後は shell history の扱いに注意する。
@@ -86,7 +86,7 @@ Google Cloud Console で `trade-ai-pubsub-runtime` の service account key JSON 
 ダウンロードした JSON は 1Password の以下 field に、改行を含む JSON 全体として保存する。
 
 ```text
-op://Trade AI/production/GOOGLE_APPLICATION_CREDENTIALS_JSON
+op://roboinvest/production/GOOGLE_APPLICATION_CREDENTIALS_JSON
 ```
 
 登録後、端末に残ったダウンロードファイルは削除する。
@@ -94,7 +94,7 @@ op://Trade AI/production/GOOGLE_APPLICATION_CREDENTIALS_JSON
 
 ```bash
 mkdir -p /dev/shm/roboinvest
-op read "op://Trade AI/production/GOOGLE_APPLICATION_CREDENTIALS_JSON" > /dev/shm/roboinvest/gcp-pubsub-sa.json
+op read "op://roboinvest/production/GOOGLE_APPLICATION_CREDENTIALS_JSON" > /dev/shm/roboinvest/gcp-pubsub-sa.json
 chmod 600 /dev/shm/roboinvest/gcp-pubsub-sa.json
 ```
 
@@ -132,16 +132,16 @@ placeholder は host 固有値に置き換える。
 必ず確認する値:
 
 ```bash
-PUBSUB_PROJECT_ID=op://Trade AI/production/PUBSUB_PROJECT_ID
+PUBSUB_PROJECT_ID=op://roboinvest/production/PUBSUB_PROJECT_ID
 GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/gcp-pubsub-sa.json
-SUPABASE_URL=op://Trade AI/production/SUPABASE_URL
-SUPABASE_SECRET_KEY=op://Trade AI/production/SUPABASE_SECRET_KEY
-JQUANTS_API_KEY=op://Trade AI/jquants/JQUANTS_API_KEY
+SUPABASE_URL=op://roboinvest/production/SUPABASE_URL
+SUPABASE_SECRET_KEY=op://roboinvest/production/SUPABASE_SECRET_KEY
+JQUANTS_API_KEY=op://roboinvest/jquants/JQUANTS_API_KEY
 JQUANTS_API_VERSION=v2
 # Optional only when running legacy v1 flow:
-# JQUANTS_REFRESH_TOKEN=op://Trade AI/jquants/JQUANTS_REFRESH_TOKEN
-KABU_API_PASSWORD=op://Trade AI/kabu/KABU_API_PASSWORD
-KABU_ORDER_PASSWORD=op://Trade AI/kabu/KABU_ORDER_PASSWORD
+# JQUANTS_REFRESH_TOKEN=op://roboinvest/jquants/JQUANTS_REFRESH_TOKEN
+KABU_API_PASSWORD=op://roboinvest/kabu/KABU_API_PASSWORD
+KABU_ORDER_PASSWORD=op://roboinvest/kabu/KABU_ORDER_PASSWORD
 TRADE_MODE=paper
 OMS_LIVE_DRY_RUN=true
 ```
@@ -206,7 +206,7 @@ token が terminal / log / screen recording に出た疑いがある場合は、
 ### 8.1 Create New Token
 
 1Password 管理画面で ADR-0001 用 service account を開く。
-新しい token を作成し、必要な vault access が `Trade AI` に限定されていることを確認する。
+新しい token を作成し、必要な vault access が `roboinvest` に限定されていることを確認する。
 
 権限は読み取りだけから始める。
 本 runbook の用途では `op run --env-file infra/env.production -- ...` と `op read` が使えればよい。

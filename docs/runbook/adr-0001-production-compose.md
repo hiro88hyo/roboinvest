@@ -41,7 +41,7 @@ OMS_LIVE_ALLOWED_SYMBOLS=7203
 
 ```bash
 mkdir -p /dev/shm/roboinvest
-op read "op://Trade AI/production/GOOGLE_APPLICATION_CREDENTIALS_JSON" > /dev/shm/roboinvest/gcp-pubsub-sa.json
+op read "op://roboinvest/production/GOOGLE_APPLICATION_CREDENTIALS_JSON" > /dev/shm/roboinvest/gcp-pubsub-sa.json
 chmod 600 /dev/shm/roboinvest/gcp-pubsub-sa.json
 ```
 

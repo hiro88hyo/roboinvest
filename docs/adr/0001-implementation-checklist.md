@@ -80,8 +80,8 @@ ADR-0001「本番デプロイアーキテクチャ」を実装に落とすため
 
 ## 4. J-Quants Paid Cutover
 
-- [x] 1Password `Trade AI/jquants` item に `JQUANTS_API_KEY` field を追加する（2026-05-19）
-- [x] `op read "op://Trade AI/jquants/JQUANTS_API_KEY"` が読めることを確認する（2026-05-19: `op run --env-file infra/env.production -- docker compose ... config` で解決確認）
+- [x] 1Password `roboinvest/jquants` item に `JQUANTS_API_KEY` field を追加する（2026-05-19）
+- [x] `op read "op://roboinvest/jquants/JQUANTS_API_KEY"` が読めることを確認する（2026-05-19: `op run --env-file infra/env.production -- docker compose ... config` で解決確認）
 - [x] `JQUANTS_API_VERSION=v2` 前提では `JQUANTS_REFRESH_TOKEN` を必須にしない運用であることを確認する（2026-05-19: code/docs/env を v2 API key 前提に整理）
 - [x] `infra/env.production` の `JQUANTS_API_KEY` / `JQUANTS_PLAN` / `JQUANTS_API_VERSION=v2` が paid plan 前提になっていることを確認する（2026-05-19）
 - [x] `op run --env-file infra/env.production -- docker compose -f infra/docker-compose.prod.yml --profile batch config` が通る（2026-05-19）

@@ -23,9 +23,9 @@ Dashboard / Vercel では次の env 名に対応させる。
 
 | Vercel env | 1Password source |
 | --- | --- |
-| `NEXT_PUBLIC_SUPABASE_URL` | `op://Trade AI/production/SUPABASE_URL` |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | `op://Trade AI/production/SUPABASE_ANON_KEY` |
-| `SUPABASE_SECRET_KEY` | `op://Trade AI/production/SUPABASE_SECRET_KEY` |
+| `NEXT_PUBLIC_SUPABASE_URL` | `op://roboinvest/production/SUPABASE_URL` |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | `op://roboinvest/production/SUPABASE_ANON_KEY` |
+| `SUPABASE_SECRET_KEY` | `op://roboinvest/production/SUPABASE_SECRET_KEY` |
 
 ## 2. Apply Schema
 

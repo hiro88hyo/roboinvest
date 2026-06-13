@@ -13,7 +13,7 @@ ADR-0001 の paper production trial に進む前に固定する前提。
 | Pub/Sub service account | `trade-ai-pubsub-runtime` | LAN host の production services が publish / pull / ack に使う。 |
 | Supabase project | `trade-ai-prod` | リージョンは ADR の候補どおり Singapore または Seoul。 |
 | Vercel project | `trade-ai-dashboard` | `dashboard/` を root directory にする。 |
-| 1Password vault | `Trade AI` | `op://Trade AI/...` 参照の vault 名。 |
+| 1Password vault | `roboinvest` | `op://roboinvest/...` 参照の vault 名。 |
 
 ## 2. 1Password Items And Fields
 

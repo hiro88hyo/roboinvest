@@ -85,7 +85,7 @@ runtime service account は `--apply` 用ではなく、production services の 
 登録先:
 
 ```text
-op://Trade AI/production/GOOGLE_APPLICATION_CREDENTIALS_JSON
+op://roboinvest/production/GOOGLE_APPLICATION_CREDENTIALS_JSON
 ```
 
 登録後、ダウンロードした JSON ファイルは端末から削除する。
@@ -97,7 +97,7 @@ production compose を起動する LAN host では、1Password から key JSON �
 
 ```bash
 mkdir -p /dev/shm/roboinvest
-op read "op://Trade AI/production/GOOGLE_APPLICATION_CREDENTIALS_JSON" > /dev/shm/roboinvest/gcp-pubsub-sa.json
+op read "op://roboinvest/production/GOOGLE_APPLICATION_CREDENTIALS_JSON" > /dev/shm/roboinvest/gcp-pubsub-sa.json
 chmod 600 /dev/shm/roboinvest/gcp-pubsub-sa.json
 ```
 
