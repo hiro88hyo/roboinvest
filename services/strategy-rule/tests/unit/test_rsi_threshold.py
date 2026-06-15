@@ -45,6 +45,62 @@ def test_buy_volume_ratio_filter_blocks_low_volume(
     assert signal is None
 
 
+def test_buy_price_vwap_filter_blocks_below_vwap(
+    features_factory: Callable[..., ProcessedFeatures],
+) -> None:
+    strategy = RsiThresholdStrategy(
+        buy_threshold=Decimal("30"),
+        require_price_above_vwap=True,
+    )
+    signal = strategy.evaluate(
+        features_factory(rsi=Decimal("20"), price=Decimal("990"), vwap=Decimal("1000")),
+        {},
+    )
+    assert signal is None
+
+
+def test_buy_sma_uptrend_filter_blocks_downtrend(
+    features_factory: Callable[..., ProcessedFeatures],
+) -> None:
+    strategy = RsiThresholdStrategy(
+        buy_threshold=Decimal("30"),
+        require_sma_uptrend=True,
+    )
+    signal = strategy.evaluate(
+        features_factory(
+            rsi=Decimal("20"),
+            sma_short=Decimal("990"),
+            sma_long=Decimal("1000"),
+        ),
+        {},
+    )
+    assert signal is None
+
+
+def test_buy_trend_filters_allow_rebound_above_vwap_in_uptrend(
+    features_factory: Callable[..., ProcessedFeatures],
+) -> None:
+    strategy = RsiThresholdStrategy(
+        buy_threshold=Decimal("30"),
+        require_price_above_vwap=True,
+        require_sma_uptrend=True,
+    )
+    signal = strategy.evaluate(
+        features_factory(
+            rsi=Decimal("20"),
+            price=Decimal("1005"),
+            vwap=Decimal("1000"),
+            sma_short=Decimal("1002"),
+            sma_long=Decimal("1000"),
+        ),
+        {},
+    )
+    assert signal is not None
+    assert signal.action is Action.BUY
+    assert "price>=vwap" in signal.reasoning
+    assert "sma_short>=sma_long" in signal.reasoning
+
+
 def test_buy_volume_ratio_filter_does_not_block_sell(
     features_factory: Callable[..., ProcessedFeatures],
 ) -> None:

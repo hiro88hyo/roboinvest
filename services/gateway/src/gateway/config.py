@@ -57,6 +57,12 @@ class GatewaySettings(BaseSettings):
     soft_loss_throttle_log_only_enabled: bool = True
     soft_loss_throttle_guard_enabled: bool = False
     soft_loss_limit_jpy: Decimal = Decimal("20000")
+    liquidity_sizing_enabled: bool = True
+    liquidity_thin_daily_volume: int = 50000
+    liquidity_thin_daily_turnover_jpy: Decimal = Decimal("50000000")
+    liquidity_thin_max_qty_per_order: int = 100
+    liquidity_missing_daily_max_qty_per_order: int = 100
+    liquidity_max_daily_volume_participation_pct: Decimal = Decimal("0.01")
     live_day_new_buy_start_time: str = "09:15"
     live_day_new_buy_cutoff_time: str = "14:30"
     day_closeout_time: str = "14:50"

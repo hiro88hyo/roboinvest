@@ -26,11 +26,13 @@ class ExitOrderMonitor:
     """Position exit monitor for stop/target/trailing conditions.
 
     It emits at most one pending exit per symbol/trade_type/reason while the
-    condition remains true. The pending key is cleared when the condition is no
+    condition remains true. Stop-loss exits are retried on a short interval
+    because an emergency market order may be published while OMS is temporarily
+    unable to fill it. The pending key is cleared when the condition is no
     longer true or when the position disappears from subsequent snapshots.
     """
 
-    _pending: set[tuple[str, TradeType, str]] = field(default_factory=set)
+    _pending: dict[tuple[str, TradeType, str], datetime] = field(default_factory=dict)
     _trailing_peaks: dict[tuple[str, TradeType], Decimal] = field(default_factory=dict)
 
     def collect_triggers(
@@ -39,6 +41,7 @@ class ExitOrderMonitor:
         tick: TickData,
         positions: list[PositionSnapshot],
         max_hold_minutes: int | None = None,
+        stop_loss_retry_seconds: float | None = 30.0,
     ) -> list[ExitTrigger]:
         active_keys: set[tuple[str, TradeType]] = set()
         triggers: list[ExitTrigger] = []
@@ -62,9 +65,14 @@ class ExitOrderMonitor:
 
             reason, threshold = condition
             pending_key = (pos.symbol, pos.trade_type, reason)
-            if pending_key in self._pending:
+            if pending_key in self._pending and not self._should_retry(
+                pending_key,
+                reason=reason,
+                now=tick.timestamp,
+                retry_seconds=stop_loss_retry_seconds,
+            ):
                 continue
-            self._pending.add(pending_key)
+            self._pending[pending_key] = tick.timestamp
             triggers.append(
                 ExitTrigger(
                     symbol=pos.symbol,
@@ -93,13 +101,30 @@ class ExitOrderMonitor:
         self._trailing_peaks[key] = max(previous, price)
 
     def _clear_pending_for_position(self, key: tuple[str, TradeType]) -> None:
-        self._pending = {pending for pending in self._pending if pending[:2] != key}
+        self._pending = {pending: at for pending, at in self._pending.items() if pending[:2] != key}
 
     def _clear_gone_positions(self, active_keys: set[tuple[str, TradeType]]) -> None:
-        self._pending = {pending for pending in self._pending if pending[:2] in active_keys}
+        self._pending = {
+            pending: at for pending, at in self._pending.items() if pending[:2] in active_keys
+        }
         self._trailing_peaks = {
             key: peak for key, peak in self._trailing_peaks.items() if key in active_keys
         }
+
+    def _should_retry(
+        self,
+        pending_key: tuple[str, TradeType, str],
+        *,
+        reason: str,
+        now: datetime,
+        retry_seconds: float | None,
+    ) -> bool:
+        if reason != "stop_loss" or retry_seconds is None or retry_seconds <= 0:
+            return False
+        published_at = self._pending.get(pending_key)
+        if published_at is None:
+            return True
+        return (now - published_at).total_seconds() >= retry_seconds
 
 
 def build_exit_order(trigger: ExitTrigger, *, created_at: datetime | None = None) -> OrderRequest:

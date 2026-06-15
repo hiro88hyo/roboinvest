@@ -1,5 +1,99 @@
 # June 2026 Operations Log
 
+## 2026-06-15 paper session risk-sizing notes
+
+Production paper trading was used instead of live trading. The session surfaced a
+gap between "live-equivalent control logic" and paper execution behavior, plus a
+liquidity/position-sizing issue in thin names.
+
+Operational observations:
+
+- `live` stayed flat: 0 trades and 0 open positions during the checks.
+- `paper` initially traded before the intended `09:15 JST` day-session new-BUY
+  start. Gateway was updated/restarted during the session so the day-session guard,
+  stale-signal guard, pending-order cooldown, rebudgeting, and max-quantity cap now
+  apply to paper more like live.
+- 4346 (`NEXYZ.Group`, TSE Standard) was the main adverse example:
+  - BUY 600 @ 830 at `09:01:21 JST`.
+  - BUY 600 @ 830 at `09:01:22 JST`.
+  - Feature Engine saw `current_price=810` around `09:01:27 JST`, already below the
+    default 2% stop reference near `813.4`.
+  - The position was not closed until SELL 1200 @ 803 at `09:29:43 JST`.
+  - Realized loss: `-32,400円`.
+- 4346 looked like a thin/liquidity-sensitive trade rather than a smooth large-cap
+  move. Historical `daily_ohlcv` rows show low-volume days in the thousands to
+  low tens of thousands of shares, while the paper position reached 1200 shares.
+- The high-return side of this behavior also appeared: 6962 produced `+30,000円`,
+  so low-liquidity/high-volatility names are not simply bad, but they need a
+  separate risk lane.
+
+Improvement candidates:
+
+1. **Risk-tiered sizing**
+   - Split symbols into at least normal / caution / thin / speculative tiers.
+   - Apply a Gateway quantity multiplier or hard cap per tier.
+   - Candidate defaults:
+     - normal: `1.0`
+     - caution: `0.5`
+     - thin: `0.25`
+     - speculative: fixed 100 shares or paper-only
+   - 4346 would have been closer to 100-300 shares, not 1200 shares.
+
+2. **Liquidity-aware entry gate**
+   - Add a guard using recent daily volume, turnover, spread, and/or order-book depth.
+   - Reject or shrink orders when expected order size is too large versus liquidity.
+   - Do not treat a `volume_surge` score as sufficient; a surge from a small base can
+     still be a thin and jumpy instrument.
+
+3. **Opening volatility gate**
+   - Keep the `09:15 JST` new-BUY start for day trades.
+   - Consider an additional post-open filter: reject or shrink symbols with sharp
+     first-minutes price displacement, wide spread, or unstable book depth.
+
+4. **Stop-loss immediacy**
+   - Price-based stop should be treated as a hard risk control, not as just another
+     strategy signal.
+   - 4346 crossed the default stop reference almost immediately, but the actual exit
+     lagged materially. Investigate Feature Engine exit-order publication and OMS
+     Paper handling around early stop-loss triggers.
+   - Ensure paper/live behavior is equivalent before any live size increase.
+
+5. **Small-profit accumulation bias**
+   - Shift the system away from "one large winner pays for many small losses" and
+     toward smaller entries, faster loss containment, and repeatable small wins.
+   - Optimize loss containment before optimizing per-trade profit.
+   - Track whether large single-name losses dominate daily PnL; if so, cap loss by
+     tier before changing strategy thresholds.
+
+6. **Postmortem data quality**
+   - Preserve enough tick/order-book data to reconstruct liquidity and slippage for
+     thin-name incidents.
+   - Current local warm data did not contain the 2026-06-15 4346 tick partition, so
+     the liquidity conclusion is evidence-based but not fully reconstructable from
+     archived local tick/book files.
+
+Implemented immediately after the close:
+
+- Feature Engine stop-loss exits now retry while the condition remains true. Default
+  `STOP_LOSS_EXIT_RETRY_SECONDS=30` means a stop-loss SELL can be republished every
+  30 seconds until the position disappears or price recovers above the stop.
+- Gateway now applies daily-liquidity sizing to paper and live BUY orders when
+  `daily_ohlcv` is available. Defaults:
+  - `LIQUIDITY_MAX_DAILY_VOLUME_PARTICIPATION_PCT=0.01`
+  - `LIQUIDITY_THIN_DAILY_VOLUME=50000`
+  - `LIQUIDITY_THIN_DAILY_TURNOVER_JPY=50000000`
+  - `LIQUIDITY_THIN_MAX_QTY_PER_ORDER=100`
+- Unit coverage added for 4346-like thin liquidity: a paper BUY that would size to
+  1200 shares is capped to 100 shares.
+- Gateway now also caps BUY orders to 100 shares when latest `daily_ohlcv` liquidity
+  data is missing. This prevents symbols with incomplete daily data from bypassing
+  liquidity sizing entirely.
+- Strategy Rule RSI BUY entries can now require rebound confirmation:
+  `RSI_BUY_REQUIRE_PRICE_ABOVE_VWAP=true` and
+  `RSI_BUY_REQUIRE_SMA_UPTREND=true` by default. This keeps RSI oversold from
+  buying falling names unless price is back above VWAP and short SMA is at least
+  long SMA.
+
 ## 2026-06-13 Fable5 feedback status and remaining TODO
 
 Reviewed `docs/handoff/2026-06-fable5-feedback.md` and
@@ -320,6 +414,35 @@ Future consideration:
   - keep price-based stop-loss above time-based rules,
   - keep `14:50` day closeout as the final invariant.
 - Keep swing positions excluded from `MAX_HOLD_MINUTES`.
+
+## 2026-06-15 paper backtest / replay follow-up
+
+Existing paper archive replay can reproduce OMS Paper execution from archived Gateway
+orders and order books, but it cannot counterfactually test new Strategy/Gateway decision
+filters because `ProcessedFeatures` were not archived.
+
+Action taken:
+
+- Added Feature Engine archiving for each published `ProcessedFeatures` row under
+  `data/features/symbol=<S>/date=<YYYY-MM-DD>/features_<first>_<last>.jsonl`.
+- Updated `scripts/export-paper-archives.sh` to copy `feature-engine:/data/features`
+  when available.
+- Added `scripts/collect-feature-archive.py` to collect feature partitions into one
+  timestamp-sorted JSONL file.
+- Added `scripts/run-rule-only-decision-replay.sh` to replay archived features through
+  `strategy-rule backtest` and `aggregator backtest` in RULE-only mode.
+
+Operational note:
+
+- 2026-06-15 data before this change does not include archived `ProcessedFeatures`, so the
+  new RSI/VWAP/SMA entry filters cannot be fully counterfactually tested on that session.
+- From the next paper session, run:
+  `bash scripts/export-paper-archives.sh --date YYYY-MM-DD --output-dir out/paper-archive-YYYY-MM-DD`
+  followed by
+  `bash scripts/run-rule-only-decision-replay.sh --date YYYY-MM-DD --features-dir out/paper-archive-YYYY-MM-DD/features`.
+- This validates Strategy Rule and Aggregator decision output. A full PnL counterfactual
+  still needs Gateway + OMS Paper replay driven by `UnifiedTradeSignal` and historical
+  order books/liquidity.
 
 ## 2026-06-02 pre-open check note
 

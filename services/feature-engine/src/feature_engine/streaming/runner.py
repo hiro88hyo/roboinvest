@@ -18,6 +18,7 @@ from feature_engine.clients.pubsub import PubSubPublisher, PubSubSubscriber, Pul
 from feature_engine.clients.supabase import PositionSnapshot, SupabaseReader, SupabaseWriter
 from feature_engine.config import FeatureEngineSettings
 from feature_engine.storage.book import BookWarmWriter
+from feature_engine.storage.features import FeatureArchiveWriter
 from feature_engine.storage.warm import WarmWriter
 from feature_engine.streaming.exit_orders import (
     ExitOrderMonitor,
@@ -75,6 +76,7 @@ class StreamRunner:
     settings: FeatureEngineSettings
     warm_writer: WarmWriter | None = None
     book_writer: BookWarmWriter | None = None
+    feature_writer: FeatureArchiveWriter | None = None
     exit_monitor: ExitOrderMonitor = field(default_factory=ExitOrderMonitor)
     idle_backoff_seconds: float = 1.0
     sleep: Sleep = field(default=asyncio.sleep)
@@ -194,6 +196,15 @@ class StreamRunner:
                 )
 
         features = self.feature_state.record_tick(tick)
+        if self.feature_writer is not None:
+            try:
+                self.feature_writer.record_features(features)
+            except Exception:
+                logger.exception(
+                    "feature archive persist failed: symbol=%s timestamp=%s",
+                    tick.symbol,
+                    tick.timestamp,
+                )
         await self.publisher.publish(
             self.settings.pubsub_topic_features,
             data=features.model_dump_json().encode("utf-8"),
@@ -211,6 +222,7 @@ class StreamRunner:
             tick=tick,
             positions=positions,
             max_hold_minutes=self.settings.max_hold_minutes,
+            stop_loss_retry_seconds=self.settings.stop_loss_exit_retry_seconds,
         )
         for trigger in triggers:
             order = build_exit_order(trigger, created_at=self.wall_clock())

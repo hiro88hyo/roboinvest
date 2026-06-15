@@ -372,6 +372,42 @@ async def test_read_latest_daily_close_raises_on_invalid_value() -> None:
             await client.read_latest_daily_close(symbol="7203")
 
 
+async def test_read_latest_daily_liquidity_returns_snapshot() -> None:
+    captured: list[httpx.Request] = []
+
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json=[{"close": "803", "volume": 12600, "turnover": "10117800"}])
+
+    async with _build_client(_handler) as client:
+        snapshot = await client.read_latest_daily_liquidity(symbol="4346")
+
+    assert snapshot is not None
+    assert snapshot.close == Decimal("803")
+    assert snapshot.volume == 12600
+    assert snapshot.turnover == Decimal("10117800")
+    assert captured[0].url.path == "/rest/v1/daily_ohlcv"
+    assert captured[0].url.params.get("select") == "close,volume,turnover"
+    assert captured[0].url.params.get("symbol") == "eq.4346"
+
+
+async def test_read_latest_daily_liquidity_returns_none_when_empty() -> None:
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[])
+
+    async with _build_client(_handler) as client:
+        assert await client.read_latest_daily_liquidity(symbol="4346") is None
+
+
+async def test_read_latest_daily_liquidity_raises_on_invalid_row() -> None:
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[{"close": "803", "volume": "bad", "turnover": "1"}])
+
+    async with _build_client(_handler) as client:
+        with pytest.raises(SupabaseError, match="invalid daily_ohlcv liquidity row"):
+            await client.read_latest_daily_liquidity(symbol="4346")
+
+
 async def test_read_live_capital_in_use_sums_current_and_entry_prices() -> None:
     async def _handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(

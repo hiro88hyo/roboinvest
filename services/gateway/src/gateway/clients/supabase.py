@@ -86,6 +86,13 @@ class RiskReservationDecision:
     monthly_loss_limit: Decimal
 
 
+@dataclass(frozen=True, slots=True)
+class DailyLiquiditySnapshot:
+    close: Decimal
+    volume: int
+    turnover: Decimal
+
+
 @dataclass(slots=True)
 class SupabaseClient:
     """Read + narrow-write Supabase client used by the gateway streaming loop."""
@@ -405,14 +412,55 @@ class SupabaseClient:
         wait=wait_exponential(multiplier=1, min=1, max=10),
         retry=retry_if_exception_type((httpx.HTTPError, SupabaseError)),
     )
-    async def read_live_capital_in_use(self) -> Decimal:
-        """Return summed live position value using current_price, falling back to entry_price."""
+    async def read_latest_daily_liquidity(
+        self, *, symbol: str
+    ) -> DailyLiquiditySnapshot | None:
+        """Return the latest daily close/volume/turnover for liquidity sizing."""
+        assert self._client is not None
+        resp = await self._client.get(
+            "/rest/v1/daily_ohlcv",
+            params={
+                "select": "close,volume,turnover",
+                "symbol": f"eq.{symbol}",
+                "order": "date.desc",
+                "limit": "1",
+            },
+        )
+        if resp.status_code >= 500:
+            raise SupabaseError(
+                f"transient error: table=daily_ohlcv status={resp.status_code} "
+                f"body={resp.text[:200]}"
+            )
+        if resp.status_code >= 300:
+            raise SupabaseError(
+                f"read failed: table=daily_ohlcv status={resp.status_code} body={resp.text[:200]}"
+            )
+        rows = resp.json()
+        if not isinstance(rows, list) or not rows:
+            return None
+        row = rows[0]
+        try:
+            close = Decimal(str(row["close"]))
+            volume = int(row["volume"])
+            turnover = Decimal(str(row["turnover"]))
+        except (KeyError, TypeError, ValueError, InvalidOperation) as exc:
+            raise SupabaseError(f"invalid daily_ohlcv liquidity row: {row}") from exc
+        return DailyLiquiditySnapshot(close=close, volume=volume, turnover=turnover)
+
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((httpx.HTTPError, SupabaseError)),
+    )
+    async def read_capital_in_use(self, *, trade_mode: TradeMode) -> Decimal:
+        """Return summed position value using current_price, falling back to entry_price."""
         assert self._client is not None
         resp = await self._client.get(
             "/rest/v1/positions",
             params={
                 "select": "quantity,current_price,entry_price",
-                "trade_type": "eq.live",
+                "trade_type": f"eq.{trade_mode.value}",
             },
         )
         if resp.status_code >= 500:
@@ -449,6 +497,10 @@ class SupabaseClient:
                 continue
             total += price * quantity
         return total
+
+    async def read_live_capital_in_use(self) -> Decimal:
+        """Return summed live position value using current_price, falling back to entry_price."""
+        return await self.read_capital_in_use(trade_mode=TradeMode.LIVE)
 
     @retry(
         reraise=True,

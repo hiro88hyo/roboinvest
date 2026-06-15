@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from feature_engine.clients.supabase import PositionSnapshot
@@ -129,9 +129,45 @@ def test_collect_triggers_deduplicates_while_condition_remains_true() -> None:
     monitor = ExitOrderMonitor()
     pos = _position(stop_loss_price=Decimal("980"))
     assert len(monitor.collect_triggers(tick=_tick(price=Decimal("970")), positions=[pos])) == 1
-    assert monitor.collect_triggers(tick=_tick(price=Decimal("960")), positions=[pos]) == []
+    assert monitor.collect_triggers(
+        tick=_tick(price=Decimal("960")),
+        positions=[pos],
+        stop_loss_retry_seconds=None,
+    ) == []
     assert monitor.collect_triggers(tick=_tick(price=Decimal("990")), positions=[pos]) == []
     assert len(monitor.collect_triggers(tick=_tick(price=Decimal("970")), positions=[pos])) == 1
+
+
+def test_collect_triggers_retries_stop_loss_after_interval() -> None:
+    monitor = ExitOrderMonitor()
+    pos = _position(stop_loss_price=Decimal("980"))
+    first_tick = _tick(price=Decimal("970"))
+    assert len(monitor.collect_triggers(tick=first_tick, positions=[pos])) == 1
+    assert (
+        monitor.collect_triggers(
+            tick=TickData(
+                symbol="7203",
+                timestamp=first_tick.timestamp + timedelta(seconds=29),
+                price=Decimal("960"),
+                volume=100,
+            ),
+            positions=[pos],
+            stop_loss_retry_seconds=30,
+        )
+        == []
+    )
+    retried = monitor.collect_triggers(
+        tick=TickData(
+            symbol="7203",
+            timestamp=first_tick.timestamp + timedelta(seconds=30),
+            price=Decimal("955"),
+            volume=100,
+        ),
+        positions=[pos],
+        stop_loss_retry_seconds=30,
+    )
+    assert len(retried) == 1
+    assert retried[0].reason == "stop_loss"
 
 
 def test_build_exit_order_and_topic_for_live() -> None:

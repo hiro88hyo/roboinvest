@@ -53,7 +53,7 @@ from trade_contracts.signal import UnifiedTradeSignal
 from .. import lot_calculator
 from ..clients.kabu import KabuWalletClient
 from ..clients.pubsub import PubSubPublisher, PubSubSubscriber, PulledMessage
-from ..clients.supabase import MarketRegimeState, SupabaseClient
+from ..clients.supabase import DailyLiquiditySnapshot, MarketRegimeState, SupabaseClient
 from ..config import GatewaySettings, RiskConfig
 from ..order_archive import OrderArchiveWriter
 from ..order_builder import build as build_order
@@ -99,7 +99,7 @@ class StreamRunner:
     _publish_summary_trade_modes: Counter[str] = field(default_factory=Counter, init=False)
     _publish_summary_sides: Counter[str] = field(default_factory=Counter, init=False)
     _publish_summary_topics: Counter[str] = field(default_factory=Counter, init=False)
-    _pending_live_order_deadlines: dict[tuple[str, str], float] = field(
+    _pending_live_order_deadlines: dict[tuple[str, str, str], float] = field(
         default_factory=dict, init=False
     )
     _cached_live_capital: Decimal | None = field(default=None, init=False)
@@ -173,7 +173,7 @@ class StreamRunner:
                 kill_switch_fired=kill_switch_decision.disabled,
             )
 
-        if self._is_stale_live_signal(signal=signal, trade_mode=trade_mode, now=now):
+        if self._is_stale_signal(signal=signal, now=now):
             self._log_reject(signal, "stale_signal", trade_mode)
             return _Decision(approved=False, kill_switch_fired=False)
 
@@ -274,7 +274,7 @@ class StreamRunner:
             self._log_reject(signal, "no_quantity", trade_mode)
             return _Decision(approved=False, kill_switch_fired=False)
 
-        quantity = await self._rebudget_live_buy_quantity(
+        quantity = await self._rebudget_buy_quantity(
             signal=signal,
             trade_mode=trade_mode,
             entry_price=entry_price,
@@ -284,13 +284,22 @@ class StreamRunner:
             self._log_reject(signal, "insufficient_live_budget", trade_mode)
             return _Decision(approved=False, kill_switch_fired=False)
 
-        quantity = self._cap_live_buy_quantity(
+        quantity = self._cap_buy_quantity(
             signal=signal,
             trade_mode=trade_mode,
             quantity=quantity,
         )
         if quantity is None:
             self._log_reject(signal, "live_qty_cap_below_min_lot", trade_mode)
+            return _Decision(approved=False, kill_switch_fired=False)
+
+        quantity = await self._cap_buy_quantity_by_liquidity(
+            signal=signal,
+            trade_mode=trade_mode,
+            quantity=quantity,
+        )
+        if quantity is None:
+            self._log_reject(signal, "liquidity_qty_cap_below_min_lot", trade_mode)
             return _Decision(approved=False, kill_switch_fired=False)
 
         order = build_order(
@@ -386,8 +395,10 @@ class StreamRunner:
             return None
         return risk_per_share * Decimal(order.quantity)
 
-    def _pending_live_order_key(self, signal: UnifiedTradeSignal) -> tuple[str, str]:
-        return (signal.symbol, signal.action.value)
+    def _pending_live_order_key(
+        self, *, signal: UnifiedTradeSignal, trade_mode: TradeMode
+    ) -> tuple[str, str, str]:
+        return (trade_mode.value, signal.symbol, signal.action.value)
 
     def _prune_pending_live_orders(self, *, now: float) -> None:
         expired = [
@@ -397,25 +408,26 @@ class StreamRunner:
             self._pending_live_order_deadlines.pop(key, None)
 
     def _has_pending_live_order(self, *, signal: UnifiedTradeSignal, trade_mode: TradeMode) -> bool:
-        if trade_mode is not TradeMode.LIVE:
-            return False
         now = self.monotonic()
         self._prune_pending_live_orders(now=now)
-        return self._pending_live_order_key(signal) in self._pending_live_order_deadlines
+        return (
+            self._pending_live_order_key(signal=signal, trade_mode=trade_mode)
+            in self._pending_live_order_deadlines
+        )
 
     def _mark_pending_live_order(
         self, *, signal: UnifiedTradeSignal, trade_mode: TradeMode
     ) -> None:
-        if trade_mode is not TradeMode.LIVE:
-            return
         cooldown = self.settings.live_symbol_order_cooldown_seconds
         if cooldown <= 0:
             return
         now = self.monotonic()
         self._prune_pending_live_orders(now=now)
-        self._pending_live_order_deadlines[self._pending_live_order_key(signal)] = now + cooldown
+        self._pending_live_order_deadlines[
+            self._pending_live_order_key(signal=signal, trade_mode=trade_mode)
+        ] = now + cooldown
 
-    async def _rebudget_live_buy_quantity(
+    async def _rebudget_buy_quantity(
         self,
         *,
         signal: UnifiedTradeSignal,
@@ -423,20 +435,25 @@ class StreamRunner:
         entry_price: Decimal | None,
         quantity: int,
     ) -> int | None:
-        if trade_mode is not TradeMode.LIVE or signal.action is not Action.BUY:
+        if signal.action is not Action.BUY:
             return quantity
         if entry_price is None:
             return quantity
 
-        live_capital = await self._resolve_live_capital()
-        live_exposure = await self.supabase.read_live_capital_in_use()
-        remaining_capital = live_capital - live_exposure
+        capital = (
+            await self._resolve_live_capital()
+            if trade_mode is TradeMode.LIVE
+            else self.risk_config.capital
+        )
+        exposure = await self.supabase.read_capital_in_use(trade_mode=trade_mode)
+        remaining_capital = capital - exposure
         if remaining_capital <= 0:
             logger.warning(
-                "live buy budget exhausted: symbol=%s exposure=%s capital=%s",
+                "buy budget exhausted: symbol=%s trade_mode=%s exposure=%s capital=%s",
                 signal.symbol,
-                live_exposure,
-                live_capital,
+                trade_mode.value,
+                exposure,
+                capital,
             )
             return None
 
@@ -449,22 +466,24 @@ class StreamRunner:
         rebudgeted = check.adjusted_quantity if check.passed else None
         if rebudgeted is None or rebudgeted <= 0:
             logger.info(
-                "live buy rejected by remaining budget: "
-                "symbol=%s exposure=%s remaining_capital=%s reason=%s",
+                "buy rejected by remaining budget: "
+                "symbol=%s trade_mode=%s exposure=%s remaining_capital=%s reason=%s",
                 signal.symbol,
-                live_exposure,
+                trade_mode.value,
+                exposure,
                 remaining_capital,
                 check.reason,
             )
             return None
         if rebudgeted < quantity:
             logger.info(
-                "live buy quantity reduced by exposure budget: "
-                "symbol=%s qty=%d rebudgeted=%d exposure=%s remaining_capital=%s",
+                "buy quantity reduced by exposure budget: "
+                "symbol=%s trade_mode=%s qty=%d rebudgeted=%d exposure=%s remaining_capital=%s",
                 signal.symbol,
+                trade_mode.value,
                 quantity,
                 rebudgeted,
-                live_exposure,
+                exposure,
                 remaining_capital,
             )
         return rebudgeted
@@ -494,15 +513,14 @@ class StreamRunner:
     def _signal_age_seconds(self, *, signal: UnifiedTradeSignal, now: datetime) -> float:
         return max(0.0, (now - signal.created_at).total_seconds())
 
-    def _is_stale_live_signal(
+    def _is_stale_signal(
         self,
         *,
         signal: UnifiedTradeSignal,
-        trade_mode: TradeMode,
         now: datetime,
     ) -> bool:
         max_age = self.settings.live_signal_max_age_seconds
-        if trade_mode is not TradeMode.LIVE or max_age is None:
+        if max_age is None:
             return False
         return self._signal_age_seconds(signal=signal, now=now) > max_age
 
@@ -512,8 +530,6 @@ class StreamRunner:
         holding_type: TradingStyle,
         trade_mode: TradeMode,
     ) -> bool:
-        if trade_mode is not TradeMode.LIVE:
-            return False
         if holding_type is not TradingStyle.DAY:
             return False
         now = self.wall_clock().astimezone(ZoneInfo(self.settings.day_closeout_timezone))
@@ -528,8 +544,6 @@ class StreamRunner:
         trade_mode: TradeMode,
         now: datetime,
     ) -> bool:
-        if trade_mode is not TradeMode.LIVE:
-            return False
         if signal.holding_type is not TradingStyle.DAY or signal.action is not Action.BUY:
             return False
         local_now = now.astimezone(ZoneInfo(self.settings.day_closeout_timezone))
@@ -544,8 +558,6 @@ class StreamRunner:
         trade_mode: TradeMode,
         now: datetime,
     ) -> bool:
-        if trade_mode is not TradeMode.LIVE:
-            return False
         if signal.holding_type is not TradingStyle.DAY or signal.action is not Action.BUY:
             return False
         local_now = now.astimezone(ZoneInfo(self.settings.day_closeout_timezone))
@@ -608,14 +620,14 @@ class StreamRunner:
             return False
         return regime.regime in {"RISK_OFF", "CRASH"} or not regime.buy_enabled
 
-    def _cap_live_buy_quantity(
+    def _cap_buy_quantity(
         self,
         *,
         signal: UnifiedTradeSignal,
         trade_mode: TradeMode,
         quantity: int,
     ) -> int | None:
-        if trade_mode is not TradeMode.LIVE or signal.action is not Action.BUY:
+        if signal.action is not Action.BUY:
             return quantity
 
         cap = self.settings.oms_live_max_qty_per_order
@@ -625,8 +637,9 @@ class StreamRunner:
         capped = (cap // self.risk_config.min_lot_size) * self.risk_config.min_lot_size
         if capped < self.risk_config.min_lot_size:
             logger.warning(
-                "live buy quantity cap below min lot: symbol=%s qty=%d cap=%d min_lot=%d",
+                "buy quantity cap below min lot: symbol=%s trade_mode=%s qty=%d cap=%d min_lot=%d",
                 signal.symbol,
+                trade_mode.value,
                 quantity,
                 cap,
                 self.risk_config.min_lot_size,
@@ -634,13 +647,106 @@ class StreamRunner:
             return None
 
         logger.info(
-            "live buy quantity capped: symbol=%s qty=%d capped=%d cap=%d",
+            "buy quantity capped: symbol=%s trade_mode=%s qty=%d capped=%d cap=%d",
             signal.symbol,
+            trade_mode.value,
             quantity,
             capped,
             cap,
         )
         return capped
+
+    async def _cap_buy_quantity_by_liquidity(
+        self,
+        *,
+        signal: UnifiedTradeSignal,
+        trade_mode: TradeMode,
+        quantity: int,
+    ) -> int | None:
+        if signal.action is not Action.BUY or not self.settings.liquidity_sizing_enabled:
+            return quantity
+
+        snapshot = await self.supabase.read_latest_daily_liquidity(symbol=signal.symbol)
+        if snapshot is None:
+            cap = (
+                self.settings.liquidity_missing_daily_max_qty_per_order
+                // self.risk_config.min_lot_size
+            ) * self.risk_config.min_lot_size
+            if cap < self.risk_config.min_lot_size:
+                logger.warning(
+                    "missing daily liquidity cap below min lot: "
+                    "symbol=%s trade_mode=%s qty=%d cap=%d min_lot=%d",
+                    signal.symbol,
+                    trade_mode.value,
+                    quantity,
+                    cap,
+                    self.risk_config.min_lot_size,
+                )
+                return None
+            if quantity > cap:
+                logger.info(
+                    "buy quantity capped without daily liquidity: "
+                    "symbol=%s trade_mode=%s qty=%d capped=%d",
+                    signal.symbol,
+                    trade_mode.value,
+                    quantity,
+                    cap,
+                )
+                return cap
+            logger.info(
+                "liquidity sizing kept min-size order without daily row: "
+                "symbol=%s trade_mode=%s qty=%d",
+                signal.symbol,
+                trade_mode.value,
+                quantity,
+            )
+            return quantity
+
+        cap = self._liquidity_quantity_cap(snapshot)
+        if cap is None or quantity <= cap:
+            return quantity
+        if cap < self.risk_config.min_lot_size:
+            logger.warning(
+                "liquidity quantity cap below min lot: symbol=%s trade_mode=%s "
+                "qty=%d cap=%d min_lot=%d daily_volume=%d daily_turnover=%s",
+                signal.symbol,
+                trade_mode.value,
+                quantity,
+                cap,
+                self.risk_config.min_lot_size,
+                snapshot.volume,
+                snapshot.turnover,
+            )
+            return None
+        logger.info(
+            "buy quantity capped by liquidity: symbol=%s trade_mode=%s qty=%d capped=%d "
+            "daily_volume=%d daily_turnover=%s",
+            signal.symbol,
+            trade_mode.value,
+            quantity,
+            cap,
+            snapshot.volume,
+            snapshot.turnover,
+        )
+        return cap
+
+    def _liquidity_quantity_cap(self, snapshot: DailyLiquiditySnapshot) -> int | None:
+        caps: list[int] = []
+        lot = self.risk_config.min_lot_size
+        participation = self.settings.liquidity_max_daily_volume_participation_pct
+        if snapshot.volume > 0 and participation > 0:
+            raw_cap = int(Decimal(snapshot.volume) * participation)
+            cap = (raw_cap // lot) * lot
+            caps.append(max(cap, lot))
+        if (
+            snapshot.volume < self.settings.liquidity_thin_daily_volume
+            or snapshot.turnover < self.settings.liquidity_thin_daily_turnover_jpy
+        ):
+            thin_cap = (self.settings.liquidity_thin_max_qty_per_order // lot) * lot
+            caps.append(thin_cap)
+        if not caps:
+            return None
+        return min(caps)
 
     def _log_reject(self, signal: UnifiedTradeSignal, reason: str, trade_mode: TradeMode) -> None:
         self._record_reject_summary(reason=reason)

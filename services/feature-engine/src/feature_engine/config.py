@@ -39,10 +39,12 @@ class FeatureEngineSettings(BaseSettings):
     pubsub_ack_deadline_seconds: int = 30
     market_data_stale_warn_seconds: float | None = 180.0
     max_hold_minutes: int | None = None
+    stop_loss_exit_retry_seconds: float | None = 30.0
 
     storage_tick_resolution: TickResolution = "1s"
     storage_warm_dir: Path = Path("./data/warm")
     storage_cold_dir: Path = Path("./data/cold")
     storage_book_dir: Path = Path("./data/books")
+    storage_feature_dir: Path = Path("./data/features")
 
     log_level: str = "INFO"

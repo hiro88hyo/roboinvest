@@ -41,6 +41,8 @@ class StrategyRuleSettings(BaseSettings):
     rsi_sell_threshold: Decimal = Decimal("75")
     bollinger_breakout_tolerance: Decimal = Decimal("0.15")
     entry_volume_ratio_min: Decimal | None = None
+    rsi_buy_require_price_above_vwap: bool = True
+    rsi_buy_require_sma_uptrend: bool = True
 
     backtest_output_dir: Path = Path("./out/strategy-rule")
 

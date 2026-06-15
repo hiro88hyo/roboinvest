@@ -19,6 +19,7 @@ from .clients.supabase import SupabaseReader, SupabaseWriter
 from .config import FeatureEngineSettings
 from .scheduler import run_pnl_reset_scheduler
 from .storage.book import BookWarmWriter
+from .storage.features import FeatureArchiveWriter
 from .storage.warm import WarmWriter
 from .streaming.feature_state import StreamingFeatureState
 from .streaming.runner import StreamRunner
@@ -208,6 +209,7 @@ async def _run_stream_cmd(
             resolution=settings.storage_tick_resolution,
         )
         book_writer = BookWarmWriter(base_dir=settings.storage_book_dir)
+        feature_writer = FeatureArchiveWriter(base_dir=settings.storage_feature_dir)
         runner = StreamRunner(
             subscriber=subscriber,
             publisher=publisher,
@@ -218,6 +220,7 @@ async def _run_stream_cmd(
             settings=settings,
             warm_writer=warm_writer,
             book_writer=book_writer,
+            feature_writer=feature_writer,
         )
 
         scheduler_task = asyncio.create_task(
@@ -232,16 +235,21 @@ async def _run_stream_cmd(
             _periodic_warm_flush(book_writer, interval=warm_flush_interval),
             name="book-warm-flush",
         )
+        feature_flush_task = asyncio.create_task(
+            _periodic_warm_flush(feature_writer, interval=warm_flush_interval),
+            name="feature-archive-flush",
+        )
 
         try:
             await runner.run(iterations=iterations)
         finally:
-            for task in (scheduler_task, flush_task, book_flush_task):
+            for task in (scheduler_task, flush_task, book_flush_task, feature_flush_task):
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
             warm_writer.flush()
             book_writer.flush()
+            feature_writer.flush()
 
     logger.info("stream done: iterations=%s", iterations)
     return 0

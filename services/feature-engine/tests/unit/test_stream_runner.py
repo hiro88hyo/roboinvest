@@ -13,6 +13,7 @@ from feature_engine.clients.pubsub import PubSubPublisher, PubSubSubscriber
 from feature_engine.clients.supabase import SupabaseReader, SupabaseWriter
 from feature_engine.config import FeatureEngineSettings
 from feature_engine.storage.book import BookWarmWriter
+from feature_engine.storage.features import FeatureArchiveWriter
 from feature_engine.storage.warm import WarmWriter
 from feature_engine.streaming.feature_state import StreamingFeatureState
 from feature_engine.streaming.runner import StreamRunner
@@ -163,6 +164,7 @@ async def _with_runner(
     sleep: Callable[[float], Awaitable[None]] | None = None,
     warm_writer: WarmWriter | None = None,
     book_writer: BookWarmWriter | None = None,
+    feature_writer: FeatureArchiveWriter | None = None,
     run_body: Callable[[StreamRunner], Coroutine[None, None, Any]],
 ) -> Any:
     settings = settings or _settings()
@@ -204,6 +206,7 @@ async def _with_runner(
             settings=settings,
             warm_writer=warm_writer,
             book_writer=book_writer,
+            feature_writer=feature_writer,
             sleep=sleep or _noop_sleep,
         )
         return await run_body(runner)
@@ -490,6 +493,42 @@ async def test_accepted_tick_is_persisted_to_warm(tmp_path: Any) -> None:
     df = pl.read_parquet(files[0])
     assert df.height == 1
     assert df.get_column("price").to_list() == [2500.0]
+
+
+async def test_accepted_tick_features_are_archived(tmp_path: Any) -> None:
+    pubsub = _PubSubRouter(pull_batches=[_make_pull_response([("a1", _tick_payload())])])
+    supabase = _SupabaseRouter(positions=[])
+    archive = FeatureArchiveWriter(base_dir=tmp_path, flush_threshold=1)
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(
+        pubsub_router=pubsub,
+        supabase_router=supabase,
+        feature_writer=archive,
+        run_body=_body,
+    )
+    assert stats.ticks_processed == 1
+    files = list(tmp_path.rglob("*.jsonl"))
+    assert len(files) == 1
+    rows = [json.loads(line) for line in files[0].read_text(encoding="utf-8").splitlines()]
+    assert rows == [
+        {
+            "symbol": "7203",
+            "timestamp": "2026-04-20T09:00:00Z",
+            "price": "2500",
+            "sma_short": None,
+            "sma_long": None,
+            "rsi": None,
+            "vwap": None,
+            "volume_ratio": None,
+            "bollinger_upper": None,
+            "bollinger_middle": None,
+            "bollinger_lower": None,
+            "order_book": None,
+        }
+    ]
 
 
 async def test_order_book_is_persisted_to_book_warm(tmp_path: Any) -> None:

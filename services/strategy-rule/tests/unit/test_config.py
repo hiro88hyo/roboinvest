@@ -14,6 +14,8 @@ def test_defaults() -> None:
     assert s.sma_full_confidence_gap_ratio == Decimal("0.02")
     assert s.bollinger_breakout_tolerance == Decimal("0.15")
     assert s.entry_volume_ratio_min is None
+    assert s.rsi_buy_require_price_above_vwap is True
+    assert s.rsi_buy_require_sma_uptrend is True
 
 
 def test_strategies_enabled_accepts_csv_string() -> None:

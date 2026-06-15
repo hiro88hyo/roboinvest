@@ -353,7 +353,12 @@ async def test_buy_with_no_existing_position_publishes_to_live_orders() -> None:
     async def _body(runner: StreamRunner) -> Any:
         return await runner.run_once()
 
-    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        settings=_settings(liquidity_sizing_enabled=False),
+        run_body=_body,
+    )
 
     assert stats.pulled == 1
     assert stats.approved == 1
@@ -430,7 +435,11 @@ async def test_live_buy_rejected_when_risk_reservation_fails(caplog: Any) -> Non
 
     caplog.set_level(logging.INFO, logger="gateway.streaming.runner")
 
-    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        run_body=_body,
+    )
 
     assert stats.approved == 0
     assert stats.rejected == 1
@@ -497,7 +506,11 @@ async def test_order_publish_summary_logs_counts(caplog: Any) -> None:
 
     caplog.set_level(logging.INFO, logger="gateway.streaming.runner")
 
-    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        run_body=_body,
+    )
 
     assert stats.approved == 1
     summaries = [
@@ -550,6 +563,91 @@ async def test_live_buy_quantity_is_capped_by_oms_limit() -> None:
     assert order["quantity"] == 100
 
 
+async def test_buy_quantity_is_capped_by_thin_daily_liquidity() -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response(
+                [
+                    (
+                        "a1",
+                        _unified_payload(
+                            symbol="4346",
+                            action=Action.BUY,
+                            price="830",
+                            stop_loss_price="813.4",
+                        ),
+                    )
+                ]
+            )
+        ]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trade_mode="paper")],
+        positions_quantity_rows=[[]],
+        daily_ohlcv_rows=[[{"close": "803", "volume": 12600, "turnover": "10117800"}]],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        run_body=_body,
+    )
+
+    assert stats.approved == 1
+    body = json.loads(pubsub.published[0].content.decode())
+    order = json.loads(base64.b64decode(body["messages"][0]["data"]).decode())
+    assert order["symbol"] == "4346"
+    assert order["quantity"] == 100
+    daily_calls = [
+        r for r in supabase.requests if r.method == "GET" and r.url.path == "/rest/v1/daily_ohlcv"
+    ]
+    assert len(daily_calls) == 1
+    assert daily_calls[0].url.params.get("select") == "close,volume,turnover"
+
+
+async def test_buy_quantity_is_capped_when_daily_liquidity_is_missing() -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response(
+                [
+                    (
+                        "a1",
+                        _unified_payload(
+                            symbol="4346",
+                            action=Action.BUY,
+                            price="830",
+                            stop_loss_price="813.4",
+                        ),
+                    )
+                ]
+            )
+        ]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trade_mode="paper")],
+        positions_quantity_rows=[[]],
+        daily_ohlcv_rows=[[]],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        run_body=_body,
+    )
+
+    assert stats.approved == 1
+    body = json.loads(pubsub.published[0].content.decode())
+    order = json.loads(base64.b64decode(body["messages"][0]["data"]).decode())
+    assert order["symbol"] == "4346"
+    assert order["quantity"] == 100
+
+
 async def test_live_buy_is_rejected_when_existing_live_exposure_exhausts_budget() -> None:
     pubsub = _PubSubRouter(
         pull_batches=[
@@ -578,7 +676,12 @@ async def test_live_buy_is_rejected_when_existing_live_exposure_exhausts_budget(
     async def _body(runner: StreamRunner) -> Any:
         return await runner.run_once()
 
-    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        settings=_settings(liquidity_sizing_enabled=False),
+        run_body=_body,
+    )
 
     assert stats.approved == 0
     assert stats.rejected == 1
@@ -703,7 +806,12 @@ async def test_market_regime_risk_off_logs_would_reject_without_blocking(caplog:
 
     caplog.set_level(logging.INFO, logger="gateway.streaming.runner")
 
-    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        settings=_settings(liquidity_sizing_enabled=False),
+        run_body=_body,
+    )
 
     assert stats.approved == 1
     assert stats.rejected == 0
@@ -826,7 +934,12 @@ async def test_soft_loss_throttle_logs_rule_buy_would_reject_without_blocking(
 
     caplog.set_level(logging.INFO, logger="gateway.streaming.runner")
 
-    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        settings=_settings(liquidity_sizing_enabled=False),
+        run_body=_body,
+    )
 
     assert stats.approved == 1
     assert stats.rejected == 0
@@ -1129,7 +1242,12 @@ async def test_live_buy_uses_signal_price_without_position_price_lookup() -> Non
     async def _body(runner: StreamRunner) -> Any:
         return await runner.run_once()
 
-    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        settings=_settings(liquidity_sizing_enabled=False),
+        run_body=_body,
+    )
 
     assert stats.approved == 1
     assert stats.rejected == 0
@@ -1249,7 +1367,12 @@ async def test_paper_buy_falls_back_to_daily_ohlcv_when_no_position() -> None:
     async def _body(runner: StreamRunner) -> Any:
         return await runner.run_once()
 
-    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        settings=_settings(liquidity_sizing_enabled=False),
+        run_body=_body,
+    )
 
     assert stats.approved == 1
     assert stats.rejected == 0
@@ -1332,7 +1455,12 @@ async def test_paper_buy_prefers_position_price_over_daily_ohlcv() -> None:
     async def _body(runner: StreamRunner) -> Any:
         return await runner.run_once()
 
-    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        settings=_settings(liquidity_sizing_enabled=False),
+        run_body=_body,
+    )
 
     assert stats.approved == 1
     body = json.loads(pubsub.published[0].content.decode())
@@ -1403,7 +1531,7 @@ async def test_live_day_buy_is_rejected_after_new_buy_cutoff() -> None:
     assert [r for r in supabase.requests if r.url.path == "/rest/v1/positions"] == []
 
 
-async def test_paper_day_buy_is_not_rejected_after_live_new_buy_cutoff() -> None:
+async def test_paper_day_buy_is_rejected_after_new_buy_cutoff() -> None:
     pubsub = _PubSubRouter(
         pull_batches=[
             _pull_response(
@@ -1438,10 +1566,9 @@ async def test_paper_day_buy_is_not_rejected_after_live_new_buy_cutoff() -> None
         run_body=_body,
     )
 
-    assert stats.approved == 1
-    assert stats.rejected == 0
-    assert len(pubsub.published) == 1
-    assert pubsub.published[0].url.path.endswith(f"/topics/{PAPER_TOPIC}:publish")
+    assert stats.rejected == 1
+    assert pubsub.published == []
+    assert [r for r in supabase.requests if r.url.path == "/rest/v1/positions"] == []
 
 
 async def test_live_day_buy_is_rejected_before_new_buy_start() -> None:
@@ -1483,7 +1610,7 @@ async def test_live_day_buy_is_rejected_before_new_buy_start() -> None:
     assert [r for r in supabase.requests if r.url.path == "/rest/v1/positions"] == []
 
 
-async def test_paper_day_buy_is_not_rejected_before_live_new_buy_start() -> None:
+async def test_paper_day_buy_is_rejected_before_new_buy_start() -> None:
     pubsub = _PubSubRouter(
         pull_batches=[
             _pull_response(
@@ -1517,10 +1644,9 @@ async def test_paper_day_buy_is_not_rejected_before_live_new_buy_start() -> None
         run_body=_body,
     )
 
-    assert stats.approved == 1
-    assert stats.rejected == 0
-    assert len(pubsub.published) == 1
-    assert pubsub.published[0].url.path.endswith(f"/topics/{PAPER_TOPIC}:publish")
+    assert stats.rejected == 1
+    assert pubsub.published == []
+    assert [r for r in supabase.requests if r.url.path == "/rest/v1/positions"] == []
 
 
 async def test_live_day_buy_is_allowed_at_new_buy_start() -> None:
@@ -1746,7 +1872,7 @@ async def test_live_stale_signal_is_rejected_before_position_reads() -> None:
     assert position_calls == []
 
 
-async def test_paper_stale_signal_is_not_rejected() -> None:
+async def test_paper_stale_signal_is_rejected_before_position_reads() -> None:
     pubsub = _PubSubRouter(
         pull_batches=[
             _pull_response(
@@ -1784,10 +1910,12 @@ async def test_paper_stale_signal_is_not_rejected() -> None:
         wall_clock=_wall_clock,
     )
 
-    assert stats.approved == 1
-    assert stats.rejected == 0
-    assert len(pubsub.published) == 1
-    assert pubsub.published[0].url.path.endswith(f"/topics/{PAPER_TOPIC}:publish")
+    assert stats.rejected == 1
+    assert pubsub.published == []
+    position_calls = [
+        r for r in supabase.requests if r.method == "GET" and r.url.path == "/rest/v1/positions"
+    ]
+    assert position_calls == []
 
 
 async def test_live_day_buy_after_close_is_rejected_before_position_reads() -> None:
@@ -1831,7 +1959,7 @@ async def test_live_day_buy_after_close_is_rejected_before_position_reads() -> N
     assert position_calls == []
 
 
-async def test_paper_day_buy_after_close_is_not_rejected_by_live_session_guard() -> None:
+async def test_paper_day_buy_after_close_is_rejected_by_session_guard() -> None:
     pubsub = _PubSubRouter(
         pull_batches=[
             _pull_response(
@@ -1866,10 +1994,13 @@ async def test_paper_day_buy_after_close_is_not_rejected_by_live_session_guard()
         run_body=_body,
     )
 
-    assert stats.approved == 1
-    assert stats.rejected == 0
-    assert len(pubsub.published) == 1
-    assert pubsub.published[0].url.path.endswith(f"/topics/{PAPER_TOPIC}:publish")
+    assert stats.rejected == 1
+    assert stats.approved == 0
+    assert pubsub.published == []
+    position_calls = [
+        r for r in supabase.requests if r.method == "GET" and r.url.path == "/rest/v1/positions"
+    ]
+    assert position_calls == []
 
 
 async def test_kill_switch_off_rejects_without_update() -> None:

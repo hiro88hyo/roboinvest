@@ -28,6 +28,8 @@ def _make_rsi(settings: StrategyRuleSettings) -> RsiThresholdStrategy:
         buy_threshold=settings.rsi_buy_threshold,
         sell_threshold=settings.rsi_sell_threshold,
         volume_ratio_min=settings.entry_volume_ratio_min,
+        require_price_above_vwap=settings.rsi_buy_require_price_above_vwap,
+        require_sma_uptrend=settings.rsi_buy_require_sma_uptrend,
     )
 
 

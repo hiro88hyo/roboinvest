@@ -30,10 +30,14 @@ class RsiThresholdStrategy:
         buy_threshold: Decimal = Decimal("30"),
         sell_threshold: Decimal = Decimal("70"),
         volume_ratio_min: Decimal | None = None,
+        require_price_above_vwap: bool = False,
+        require_sma_uptrend: bool = False,
     ) -> None:
         self._buy = buy_threshold
         self._sell = sell_threshold
         self._volume_ratio_min = volume_ratio_min
+        self._require_price_above_vwap = require_price_above_vwap
+        self._require_sma_uptrend = require_sma_uptrend
 
     def evaluate(
         self,
@@ -49,11 +53,21 @@ class RsiThresholdStrategy:
             if not passes_buy_entry_filters(
                 features,
                 volume_ratio_min=self._volume_ratio_min,
+                require_price_above_vwap=self._require_price_above_vwap,
+                require_sma_uptrend=self._require_sma_uptrend,
             ):
                 return None
             action = Action.BUY
             confidence = 0.5 + 0.5 * float((self._buy - rsi) / self._buy) if self._buy > 0 else 1.0
-            reasoning = f"rsi={rsi} <= buy_threshold={self._buy}"
+            filters = []
+            if self._volume_ratio_min is not None:
+                filters.append(f"volume_ratio_min={self._volume_ratio_min}")
+            if self._require_price_above_vwap:
+                filters.append("price>=vwap")
+            if self._require_sma_uptrend:
+                filters.append("sma_short>=sma_long")
+            filter_suffix = "" if not filters else f" filters=({','.join(filters)})"
+            reasoning = f"rsi={rsi} <= buy_threshold={self._buy}{filter_suffix}"
         elif rsi >= self._sell:
             action = Action.SELL
             denom = Decimal("100") - self._sell

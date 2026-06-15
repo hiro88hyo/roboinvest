@@ -12,8 +12,8 @@ usage() {
   cat <<'USAGE'
 Usage: bash scripts/export-paper-archives.sh --date YYYY-MM-DD [options]
 
-Copy archived Gateway orders and feature-engine order books from production
-Docker volumes to a host directory for OMS Paper archive backtesting.
+Copy archived Gateway orders, feature-engine order books, and processed features
+from production Docker volumes to a host directory for archive backtesting.
 
 Options:
   --date YYYY-MM-DD        Trading date used for default output path.
@@ -84,23 +84,31 @@ if [ -z "$OUT_DIR" ]; then
   OUT_DIR="out/paper-archive-$DATE"
 fi
 
-if [ -e "$OUT_DIR/orders" ] || [ -e "$OUT_DIR/books" ]; then
+if [ -e "$OUT_DIR/orders" ] || [ -e "$OUT_DIR/books" ] || [ -e "$OUT_DIR/features" ]; then
   echo "refusing to overwrite existing archive export: $OUT_DIR" >&2
   exit 2
 fi
 
 mkdir -p "$OUT_DIR"
 
-echo "[1/2] copy gateway orders archive -> $OUT_DIR/orders"
+echo "[1/3] copy gateway orders archive -> $OUT_DIR/orders"
 docker compose -f "$COMPOSE_FILE" cp gateway:/data/orders "$OUT_DIR/orders"
 
-echo "[2/2] copy feature-engine books archive -> $OUT_DIR/books"
+echo "[2/3] copy feature-engine books archive -> $OUT_DIR/books"
 docker compose -f "$COMPOSE_FILE" cp feature-engine:/data/books "$OUT_DIR/books"
+
+echo "[3/3] copy feature-engine feature archive -> $OUT_DIR/features"
+if docker compose -f "$COMPOSE_FILE" exec -T feature-engine test -d /data/features; then
+  docker compose -f "$COMPOSE_FILE" cp feature-engine:/data/features "$OUT_DIR/features"
+else
+  echo "warning: /data/features is not present in feature-engine container; skipping" >&2
+fi
 
 cat <<EOF
 exported paper archives:
   orders: $OUT_DIR/orders
   books : $OUT_DIR/books
+  features: $OUT_DIR/features
 
 next:
   uv run python scripts/run-paper-archive-backtest.py \\
@@ -109,4 +117,9 @@ next:
     --book-dir $OUT_DIR/books \\
     --output-dir $OUT_DIR/backtest \\
     --run-gate
+
+  uv run python scripts/collect-feature-archive.py \\
+    --date $DATE \\
+    --features-dir $OUT_DIR/features \\
+    --output $OUT_DIR/features.jsonl
 EOF
