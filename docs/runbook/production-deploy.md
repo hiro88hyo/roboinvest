@@ -20,19 +20,11 @@ bash scripts/deploy-production.sh --apply --kabu-offline
 - production services を `docker compose up -d --build` で再起動する。
 - post-deploy に `docker compose ps` と `gateway` / `oms-live` の tail log を確認する。
 - `scripts/production-preopen-check.py --timeout 30 --kabu-offline` を実行する。
+  host 側の `/dev/shm/roboinvest/gcp-pubsub-sa.json` が読めない場合は、
+  1Password から一時 credential を作って Pub/Sub check を継続する。
 
-host 側で `/dev/shm/roboinvest/gcp-pubsub-sa.json` が読めない場合は、1Password から
-一時ファイルへ materialize し、post-check に明示パスを渡す。
-
-```bash
-set -a && . infra/.op.service-account.env && set +a
-umask 077
-op read "op://roboinvest/production/GOOGLE_APPLICATION_CREDENTIALS_JSON" > /tmp/roboinvest-gcp-pubsub-sa.json
-bash scripts/deploy-production.sh --apply --kabu-offline \
-  --gcp-credentials /tmp/roboinvest-gcp-pubsub-sa.json \
-  --no-pubsub-smoke
-rm -f /tmp/roboinvest-gcp-pubsub-sa.json
-```
+別の credential を使う特殊ケースだけ `--gcp-credentials <readable-host-path>` を渡す。
+Pub/Sub smoke publish/pull/ack を避ける検証では `--no-pubsub-smoke` を追加する。
 
 paper mode の反映・再起動で post-check も paper を期待する場合は
 `--expected-trade-mode paper` を追加する。

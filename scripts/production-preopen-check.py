@@ -26,6 +26,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -45,6 +46,7 @@ ENV_FILE = REPO_ROOT / "infra" / "env.production"
 TOPICS_JSON = REPO_ROOT / "infra" / "pubsub" / "topics.json"
 SUBSCRIPTIONS_JSON = REPO_ROOT / "infra" / "pubsub" / "subscriptions.json"
 DEFAULT_HOST_GCP_CREDENTIALS = Path("/dev/shm/roboinvest/gcp-pubsub-sa.json")
+GCP_CREDENTIALS_OP_REF = "op://roboinvest/production/GOOGLE_APPLICATION_CREDENTIALS_JSON"
 SMOKE_TOPIC = "adr-0001-smoke-test"
 SMOKE_SUBSCRIPTION = "adr-0001-smoke-test-sub"
 
@@ -175,6 +177,90 @@ def _compose_cmd(args: argparse.Namespace, *extra: str) -> list[str]:
 
 def _truncate_output(proc: subprocess.CompletedProcess[str]) -> str:
     return (proc.stderr or proc.stdout).strip()[:240]
+
+
+def _materialize_gcp_credentials_from_1password(
+    reporter: Reporter,
+    args: argparse.Namespace,
+    reason: str,
+) -> Path | None:
+    tmp = tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        prefix="roboinvest-gcp-pubsub-sa-",
+        suffix=".json",
+        dir="/tmp",
+        delete=False,
+    )
+    tmp_path = Path(tmp.name)
+    tmp.close()
+    try:
+        os.chmod(tmp_path, 0o600)
+        try:
+            proc = _run(["op", "read", GCP_CREDENTIALS_OP_REF], timeout=args.timeout)
+        except subprocess.TimeoutExpired:
+            tmp_path.unlink(missing_ok=True)
+            reporter.emit(
+                "NG",
+                "GOOGLE_APPLICATION_CREDENTIALS",
+                f"{reason}; 1Password fallback timed out",
+            )
+            return None
+        if proc.returncode != 0:
+            tmp_path.unlink(missing_ok=True)
+            reporter.emit(
+                "NG",
+                "GOOGLE_APPLICATION_CREDENTIALS",
+                f"{reason}; 1Password fallback failed: {_truncate_output(proc)}",
+            )
+            return None
+        try:
+            json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            tmp_path.unlink(missing_ok=True)
+            reporter.emit(
+                "NG",
+                "GOOGLE_APPLICATION_CREDENTIALS",
+                f"{reason}; 1Password fallback returned invalid JSON",
+            )
+            return None
+        tmp_path.write_text(proc.stdout, encoding="utf-8")
+        reporter.emit(
+            "OK",
+            "GOOGLE_APPLICATION_CREDENTIALS",
+            f"{reason}; using temporary 1Password credential",
+        )
+        return tmp_path
+    except OSError as exc:
+        tmp_path.unlink(missing_ok=True)
+        reporter.emit(
+            "NG",
+            "GOOGLE_APPLICATION_CREDENTIALS",
+            f"{reason}; temporary credential failed: {exc}",
+        )
+        return None
+
+
+def _resolve_gcp_credentials(
+    reporter: Reporter,
+    args: argparse.Namespace,
+) -> tuple[Path | None, Path | None]:
+    credentials = args.gcp_credentials
+    is_default = credentials == DEFAULT_HOST_GCP_CREDENTIALS
+    if credentials.exists() and os.access(credentials, os.R_OK):
+        return credentials, None
+
+    if credentials.exists():
+        reason = f"not readable: {credentials}"
+    else:
+        reason = f"missing host file: {credentials}"
+
+    if is_default:
+        temp_credentials = _materialize_gcp_credentials_from_1password(reporter, args, reason)
+        return temp_credentials, temp_credentials
+
+    reporter.emit("NG", "GOOGLE_APPLICATION_CREDENTIALS", reason)
+    return None, None
 
 
 def _load_json(path: Path) -> Any:
@@ -432,12 +518,8 @@ def check_pubsub(reporter: Reporter, args: argparse.Namespace) -> None:
     if not project_id:
         reporter.emit("NG", "PUBSUB_PROJECT_ID", "missing")
         return
-    credentials = args.gcp_credentials
-    if not credentials.exists():
-        reporter.emit("NG", "GOOGLE_APPLICATION_CREDENTIALS", f"missing host file: {credentials}")
-        return
-    if not os.access(credentials, os.R_OK):
-        reporter.emit("NG", "GOOGLE_APPLICATION_CREDENTIALS", f"not readable: {credentials}")
+    credentials, cleanup_credentials = _resolve_gcp_credentials(reporter, args)
+    if credentials is None:
         return
     old_credentials = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str(credentials)
@@ -483,6 +565,8 @@ def check_pubsub(reporter: Reporter, args: argparse.Namespace) -> None:
             os.environ.pop("GOOGLE_APPLICATION_CREDENTIALS", None)
         else:
             os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = old_credentials
+        if cleanup_credentials is not None:
+            cleanup_credentials.unlink(missing_ok=True)
 
 
 def _pubsub_smoke(

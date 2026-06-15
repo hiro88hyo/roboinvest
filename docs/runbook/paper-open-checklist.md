@@ -12,9 +12,9 @@ production compose / Cloud Supabase / managed Pub/Sub を前提に、寄り付�
 - `main` が最新であること
 - 1Password service account token が `infra/.op.service-account.env` で読めること
 - `infra/env.production` が J-Quants API v2 / Supabase / kabu / GCP secrets を参照していること
-- GCP Pub/Sub service account JSON が tmpfs の
-  `/dev/shm/roboinvest/gcp-pubsub-sa.json`、または `--gcp-credentials` で渡す
-  readable host path に materialize されていること
+- GCP Pub/Sub service account JSON は通常 tmpfs の
+  `/dev/shm/roboinvest/gcp-pubsub-sa.json` を使う。host 側から読めない場合、
+  `production-preopen-check.py` は 1Password から一時 credential を作って自己修復する
 
 確認:
 
@@ -77,9 +77,11 @@ op run --env-file infra/env.production -- \
     --expected-trade-mode paper
 ```
 
-host 側の `/dev/shm/roboinvest/gcp-pubsub-sa.json` が読めない場合は、
-`--gcp-credentials <readable-host-path>` を追加する。Pub/Sub smoke publish/pull/ack を
-避ける予行では `--no-pubsub-smoke` を追加する。
+host 側の `/dev/shm/roboinvest/gcp-pubsub-sa.json` が root-owned などで読めない場合は、
+スクリプトが 1Password の `production/GOOGLE_APPLICATION_CREDENTIALS_JSON` から
+一時 credential を作って Pub/Sub check を継続し、終了時に削除する。
+別の credential を使う特殊ケースだけ `--gcp-credentials <readable-host-path>` を追加する。
+Pub/Sub smoke publish/pull/ack を避ける予行では `--no-pubsub-smoke` を追加する。
 
 ## 4. Start Production Compose
 

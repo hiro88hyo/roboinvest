@@ -128,8 +128,10 @@ op run --env-file infra/env.production -- \
   uv run python scripts/production-preopen-check.py --kabu-offline
 ```
 
-host 側の `/dev/shm/roboinvest/gcp-pubsub-sa.json` が読めない場合は、
-`--gcp-credentials <readable-host-path>` で一時 credential を明示する。
+host 側の `/dev/shm/roboinvest/gcp-pubsub-sa.json` が root-owned などで読めない場合は、
+スクリプトが 1Password の `production/GOOGLE_APPLICATION_CREDENTIALS_JSON` から
+一時 credential を作って Pub/Sub check を継続し、終了時に削除する。
+別の credential を使う特殊ケースだけ `--gcp-credentials <readable-host-path>` を明示する。
 Pub/Sub の smoke publish/pull/ack を避ける検証では `--no-pubsub-smoke` を使う。
 
 期待値:
