@@ -129,11 +129,14 @@ def test_collect_triggers_deduplicates_while_condition_remains_true() -> None:
     monitor = ExitOrderMonitor()
     pos = _position(stop_loss_price=Decimal("980"))
     assert len(monitor.collect_triggers(tick=_tick(price=Decimal("970")), positions=[pos])) == 1
-    assert monitor.collect_triggers(
-        tick=_tick(price=Decimal("960")),
-        positions=[pos],
-        stop_loss_retry_seconds=None,
-    ) == []
+    assert (
+        monitor.collect_triggers(
+            tick=_tick(price=Decimal("960")),
+            positions=[pos],
+            stop_loss_retry_seconds=None,
+        )
+        == []
+    )
     assert monitor.collect_triggers(tick=_tick(price=Decimal("990")), positions=[pos]) == []
     assert len(monitor.collect_triggers(tick=_tick(price=Decimal("970")), positions=[pos])) == 1
 

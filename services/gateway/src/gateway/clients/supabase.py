@@ -412,9 +412,7 @@ class SupabaseClient:
         wait=wait_exponential(multiplier=1, min=1, max=10),
         retry=retry_if_exception_type((httpx.HTTPError, SupabaseError)),
     )
-    async def read_latest_daily_liquidity(
-        self, *, symbol: str
-    ) -> DailyLiquiditySnapshot | None:
+    async def read_latest_daily_liquidity(self, *, symbol: str) -> DailyLiquiditySnapshot | None:
         """Return the latest daily close/volume/turnover for liquidity sizing."""
         assert self._client is not None
         resp = await self._client.get(

@@ -13,9 +13,8 @@ def passes_buy_entry_filters(
     require_sma_uptrend: bool = False,
 ) -> bool:
     """Return whether a BUY entry can pass optional risk filters."""
-    if (
-        volume_ratio_min is not None
-        and (features.volume_ratio is None or features.volume_ratio < volume_ratio_min)
+    if volume_ratio_min is not None and (
+        features.volume_ratio is None or features.volume_ratio < volume_ratio_min
     ):
         return False
     if require_price_above_vwap and (features.vwap is None or features.price < features.vwap):

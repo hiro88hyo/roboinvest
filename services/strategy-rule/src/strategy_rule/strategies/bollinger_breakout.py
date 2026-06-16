@@ -67,11 +67,7 @@ class BollingerBreakoutStrategy:
                 return None
             action = Action.BUY
             reasoning = f"price={price} below lower band={lower} (band_width={band_width})"
-        elif (
-            self._require_buy_lower_reclaim
-            and state.get(_BUY_ARMED_KEY)
-            and price >= lower
-        ):
+        elif self._require_buy_lower_reclaim and state.get(_BUY_ARMED_KEY) and price >= lower:
             if not passes_buy_entry_filters(
                 features,
                 volume_ratio_min=self._volume_ratio_min,

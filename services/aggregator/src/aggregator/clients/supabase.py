@@ -118,8 +118,7 @@ class SupabaseWriter:
             )
         if resp.status_code >= 300:
             raise SupabaseError(
-                f"read failed: table=system_status status={resp.status_code} "
-                f"body={resp.text[:200]}"
+                f"read failed: table=system_status status={resp.status_code} body={resp.text[:200]}"
             )
         rows = resp.json()
         if not rows:
@@ -146,13 +145,11 @@ class SupabaseWriter:
         )
         if resp.status_code >= 500:
             raise SupabaseError(
-                f"transient error: table=positions status={resp.status_code} "
-                f"body={resp.text[:200]}"
+                f"transient error: table=positions status={resp.status_code} body={resp.text[:200]}"
             )
         if resp.status_code >= 300:
             raise SupabaseError(
-                f"read failed: table=positions status={resp.status_code} "
-                f"body={resp.text[:200]}"
+                f"read failed: table=positions status={resp.status_code} body={resp.text[:200]}"
             )
         rows = resp.json()
         total = 0
