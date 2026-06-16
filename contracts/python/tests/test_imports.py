@@ -23,6 +23,7 @@ from trade_contracts import (
     TradeType,
     TradingStyle,
     UnifiedTradeSignal,
+    tse_tick_size,
 )
 
 
@@ -62,6 +63,12 @@ def test_models_have_expected_attributes() -> None:
     # スモーク: クラスが import できているだけでなく、Pydantic モデルとして正しく機能する
     assert PriceLevel(price=Decimal("100"), quantity=500).quantity == 500
     assert ProcessedFeatures.model_fields["order_book"].annotation is not None
+    assert ProcessedFeatures.model_fields["spread_bps"].annotation == Decimal | None
+    assert ProcessedFeatures.model_fields["tick_size"].annotation == Decimal | None
+    assert ProcessedFeatures.model_fields["session_phase"].annotation == str | None
+    assert StrategySignal.model_fields["spread_bps"].annotation == Decimal | None
+    assert UnifiedTradeSignal.model_fields["tick_size"].annotation == Decimal | None
+    assert UnifiedTradeSignal.model_fields["ask_depth_5"].annotation == int | None
     assert OrderRequest.model_fields["trade_mode"].annotation is TradeMode
     assert OrderRequest.model_fields["stop_loss_price"].annotation == Decimal | None
     assert OrderResult.model_fields["status"].annotation is OrderStatus
@@ -69,3 +76,9 @@ def test_models_have_expected_attributes() -> None:
     assert StrategySignal.model_fields["source"].annotation is SignalSource
     assert RiskCheck(passed=True).passed is True
     assert KillSwitchState.model_fields["daily_pnl"].annotation is Decimal
+
+
+def test_tse_tick_size_tables() -> None:
+    assert tse_tick_size(Decimal("2500")) == Decimal("1")
+    assert tse_tick_size(Decimal("4000")) == Decimal("5")
+    assert tse_tick_size(Decimal("2500"), is_topix500=True) == Decimal("0.5")

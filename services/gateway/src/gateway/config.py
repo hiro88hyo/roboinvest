@@ -54,9 +54,15 @@ class GatewaySettings(BaseSettings):
     day_same_symbol_reentry_block_enabled: bool = True
     market_regime_gateway_log_only_enabled: bool = True
     market_regime_gateway_guard_enabled: bool = False
+    market_regime_paper_guard_enabled: bool = False
     soft_loss_throttle_log_only_enabled: bool = True
     soft_loss_throttle_guard_enabled: bool = False
     soft_loss_limit_jpy: Decimal = Decimal("20000")
+    execution_gate_log_only_enabled: bool = True
+    execution_gate_guard_enabled: bool = False
+    execution_gate_max_spread_bps: Decimal = Decimal("30")
+    execution_gate_max_spread_ticks: Decimal = Decimal("2")
+    execution_gate_min_ask_depth_multiplier: Decimal = Decimal("3")
     liquidity_sizing_enabled: bool = True
     liquidity_thin_daily_volume: int = 50000
     liquidity_thin_daily_turnover_jpy: Decimal = Decimal("50000000")

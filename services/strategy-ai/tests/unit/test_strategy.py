@@ -36,6 +36,40 @@ async def test_strategy_returns_signal_on_buy() -> None:
 
 
 @pytest.mark.asyncio
+async def test_strategy_signal_carries_execution_context() -> None:
+    llm = FakeLLMClient(['{"action": "BUY", "confidence": 0.8, "reasoning": "ok"}'])
+    strategy = AiStrategy(llm=llm, min_interval_seconds=60)
+    features = make_features(
+        best_bid=Decimal("999"),
+        best_ask=Decimal("1001"),
+        spread_bps=Decimal("20"),
+        tick_size=Decimal("1"),
+        spread_ticks=Decimal("2"),
+        bid_depth_5=1200,
+        ask_depth_5=900,
+        book_imbalance_5=Decimal("0.142857"),
+        minutes_from_open=20,
+        minutes_to_close=370,
+        session_phase="morning",
+    )
+
+    signal = await strategy.evaluate(features, {})
+
+    assert signal is not None
+    assert signal.best_bid == Decimal("999")
+    assert signal.best_ask == Decimal("1001")
+    assert signal.spread_bps == Decimal("20")
+    assert signal.tick_size == Decimal("1")
+    assert signal.spread_ticks == Decimal("2")
+    assert signal.bid_depth_5 == 1200
+    assert signal.ask_depth_5 == 900
+    assert signal.book_imbalance_5 == Decimal("0.142857")
+    assert signal.minutes_from_open == 20
+    assert signal.minutes_to_close == 370
+    assert signal.session_phase == "morning"
+
+
+@pytest.mark.asyncio
 async def test_strategy_skips_hold(caplog: pytest.LogCaptureFixture) -> None:
     llm = FakeLLMClient(['{"action": "HOLD", "confidence": 0.5, "reasoning": "flat"}'])
     strategy = AiStrategy(llm=llm, min_interval_seconds=60)

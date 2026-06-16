@@ -21,6 +21,7 @@ from pydantic import BaseModel
 from trade_contracts.enums import Side, TradingStyle
 from trade_contracts.market import OrderBookSnapshot
 from trade_contracts.order import OrderRequest
+from trade_contracts.tick_size import tse_tick_size
 
 from ..fill_simulator import simulate_fill
 from ..models import PaperFillRecord, PaperPosition
@@ -238,6 +239,8 @@ def _execution_quality_for_order(
         best_bid=best_bid,
         best_ask=best_ask,
         spread_bps=_spread_bps(best_bid=best_bid, best_ask=best_ask),
+        tick_size=_tick_size(best_bid=best_bid, best_ask=best_ask),
+        spread_ticks=_spread_ticks(best_bid=best_bid, best_ask=best_ask),
         opposite_depth_quantity=ask_qty if order.side is Side.BUY else bid_qty,
         same_side_depth_quantity=bid_qty if order.side is Side.BUY else ask_qty,
         order_book_imbalance=_book_imbalance(bid_qty=bid_qty, ask_qty=ask_qty),
@@ -251,6 +254,25 @@ def _spread_bps(*, best_bid: Decimal | None, best_ask: Decimal | None) -> Decima
     if mid <= 0:
         return None
     return ((best_ask - best_bid) / mid) * Decimal("10000")
+
+
+def _tick_size(*, best_bid: Decimal | None, best_ask: Decimal | None) -> Decimal | None:
+    if best_bid is None or best_ask is None:
+        return None
+    mid = (best_bid + best_ask) / Decimal("2")
+    if mid <= 0:
+        return None
+    return tse_tick_size(mid)
+
+
+def _spread_ticks(*, best_bid: Decimal | None, best_ask: Decimal | None) -> Decimal | None:
+    tick_size = _tick_size(best_bid=best_bid, best_ask=best_ask)
+    if best_bid is None or best_ask is None or tick_size is None:
+        return None
+    spread = best_ask - best_bid
+    if spread < 0:
+        return None
+    return spread / tick_size
 
 
 def _book_imbalance(*, bid_qty: int, ask_qty: int) -> Decimal | None:

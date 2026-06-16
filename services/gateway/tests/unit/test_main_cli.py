@@ -170,7 +170,8 @@ def test_backtest_happy_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     assert len(approved) == 1
     assert approved[0].symbol == "7203"
     assert approved[0].quantity == 400
-    assert approved[0].order_type is OrderType.MARKET
+    assert approved[0].order_type is OrderType.LIMIT
+    assert approved[0].limit_price == Decimal("1000")
     assert approved[0].trade_mode is TradeMode.LIVE
 
     rejected_lines = [line for line in rejected_path.read_text().splitlines() if line]

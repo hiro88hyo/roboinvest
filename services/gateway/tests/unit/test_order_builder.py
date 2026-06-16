@@ -22,13 +22,15 @@ def test_build_buy_order(unified_signal_factory) -> None:  # type: ignore[no-unt
         signal=signal,
         quantity=400,
         trade_mode=TradeMode.LIVE,
+        entry_price=Decimal("2500"),
         created_at=stamp,
     )
     assert order.unified_signal_id == signal.signal_id
     assert order.symbol == signal.symbol
     assert order.side is Side.BUY
     assert order.quantity == 400
-    assert order.order_type is OrderType.MARKET
+    assert order.order_type is OrderType.LIMIT
+    assert order.limit_price == Decimal("2500")
     assert order.trade_mode is TradeMode.LIVE
     assert order.signal_source is SignalSource.CONSENSUS
     assert order.stop_loss_price == Decimal("2450")
@@ -72,6 +74,8 @@ def test_build_sell_order(unified_signal_factory) -> None:  # type: ignore[no-un
         default_stop_loss_spread_pct=Decimal("0.02"),
     )
     assert order.side is Side.SELL
+    assert order.order_type is OrderType.MARKET
+    assert order.limit_price is None
     assert order.trade_mode is TradeMode.PAPER
     assert order.signal_source is SignalSource.RULE
     assert order.stop_loss_price is None
@@ -80,6 +84,16 @@ def test_build_sell_order(unified_signal_factory) -> None:  # type: ignore[no-un
 def test_build_hold_raises(unified_signal_factory) -> None:  # type: ignore[no-untyped-def]
     signal = unified_signal_factory(action=Action.HOLD)
     with pytest.raises(ValueError):
+        order_builder.build(
+            signal=signal,
+            quantity=100,
+            trade_mode=TradeMode.LIVE,
+        )
+
+
+def test_build_buy_without_entry_price_raises(unified_signal_factory) -> None:  # type: ignore[no-untyped-def]
+    signal = unified_signal_factory(action=Action.BUY)
+    with pytest.raises(ValueError, match="entry_price"):
         order_builder.build(
             signal=signal,
             quantity=100,
@@ -104,6 +118,7 @@ def test_build_defaults_created_at_to_now(unified_signal_factory) -> None:  # ty
         signal=signal,
         quantity=100,
         trade_mode=TradeMode.LIVE,
+        entry_price=Decimal("1000"),
     )
     after = datetime.now(UTC)
     assert before <= order.created_at <= after
@@ -111,6 +126,16 @@ def test_build_defaults_created_at_to_now(unified_signal_factory) -> None:  # ty
 
 def test_fresh_order_id(unified_signal_factory) -> None:  # type: ignore[no-untyped-def]
     signal = unified_signal_factory(action=Action.BUY)
-    a = order_builder.build(signal=signal, quantity=100, trade_mode=TradeMode.LIVE)
-    b = order_builder.build(signal=signal, quantity=100, trade_mode=TradeMode.LIVE)
+    a = order_builder.build(
+        signal=signal,
+        quantity=100,
+        trade_mode=TradeMode.LIVE,
+        entry_price=Decimal("1000"),
+    )
+    b = order_builder.build(
+        signal=signal,
+        quantity=100,
+        trade_mode=TradeMode.LIVE,
+        entry_price=Decimal("1000"),
+    )
     assert a.order_id != b.order_id

@@ -13,8 +13,13 @@ def _report(**overrides: object) -> dict[str, object]:
         "execution_quality_count": 10,
         "average_fill_ratio": "0.99",
         "partial_fill_count": 0,
+        "no_fill_count": 0,
+        "no_fill_rate": "0",
+        "limit_no_fill_count": 0,
         "average_spread_bps": "12",
         "max_spread_bps": "40",
+        "average_spread_ticks": "1",
+        "max_spread_ticks": "2",
     }
     payload.update(overrides)
     return payload
@@ -37,13 +42,19 @@ def test_backtest_gate_fails_execution_quality_metrics() -> None:
         _report(
             average_fill_ratio="0.8",
             partial_fill_count=2,
+            no_fill_rate="0.2",
             average_spread_bps="50",
             max_spread_bps="120",
+            average_spread_ticks="3",
+            max_spread_ticks="8",
         )
     )
     assert failures == [
         "average_fill_ratio 0.8 < 0.95",
         "partial_fill_rate 0.2 > 0.05",
+        "no_fill_rate 0.2 > 0.05",
         "average_spread_bps 50 > 30",
         "max_spread_bps 120 > 100",
+        "average_spread_ticks 3 > 2",
+        "max_spread_ticks 8 > 5",
     ]

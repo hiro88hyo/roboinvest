@@ -6,7 +6,7 @@ from typing import Any
 
 from trade_contracts.enums import Action, SignalSource
 from trade_contracts.features import ProcessedFeatures
-from trade_contracts.signal import StrategySignal
+from trade_contracts.signal import StrategySignal, execution_fields_from
 
 from .entry_filters import passes_buy_entry_filters
 
@@ -84,5 +84,6 @@ class RsiThresholdStrategy:
             action=action,
             confidence=confidence,
             reasoning=reasoning,
+            **execution_fields_from(features),
             created_at=features.timestamp,
         )

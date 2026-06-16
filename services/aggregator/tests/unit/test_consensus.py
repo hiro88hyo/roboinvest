@@ -45,6 +45,63 @@ def test_rule_only_passthrough(signal_factory) -> None:  # type: ignore[no-untyp
     assert unified.target_price is None
 
 
+def test_rule_only_carries_execution_context(signal_factory) -> None:  # type: ignore[no-untyped-def]
+    rule = signal_factory(
+        source=SignalSource.RULE,
+        action=Action.BUY,
+        confidence=0.8,
+        price=Decimal("1000"),
+        best_bid=Decimal("999"),
+        best_ask=Decimal("1001"),
+        spread_bps=Decimal("20"),
+        tick_size=Decimal("1"),
+        spread_ticks=Decimal("2"),
+        bid_depth_5=1200,
+        ask_depth_5=900,
+        book_imbalance_5=Decimal("0.142857"),
+        minutes_from_open=20,
+        minutes_to_close=370,
+        session_phase="morning",
+    )
+    unified = aggregate([rule], config=_cfg())
+    assert unified is not None
+    assert unified.price == Decimal("1000")
+    assert unified.best_bid == Decimal("999")
+    assert unified.best_ask == Decimal("1001")
+    assert unified.spread_bps == Decimal("20")
+    assert unified.tick_size == Decimal("1")
+    assert unified.spread_ticks == Decimal("2")
+    assert unified.bid_depth_5 == 1200
+    assert unified.ask_depth_5 == 900
+    assert unified.book_imbalance_5 == Decimal("0.142857")
+    assert unified.minutes_from_open == 20
+    assert unified.minutes_to_close == 370
+    assert unified.session_phase == "morning"
+
+
+def test_consensus_uses_latest_signal_execution_context(signal_factory) -> None:  # type: ignore[no-untyped-def]
+    older = datetime(2026, 4, 20, 9, 0, tzinfo=UTC)
+    newer = datetime(2026, 4, 20, 9, 1, tzinfo=UTC)
+    rule = signal_factory(
+        source=SignalSource.RULE,
+        action=Action.BUY,
+        confidence=0.8,
+        created_at=older,
+        spread_bps=Decimal("10"),
+    )
+    ai = signal_factory(
+        source=SignalSource.AI,
+        action=Action.BUY,
+        confidence=0.8,
+        created_at=newer,
+        spread_bps=Decimal("25"),
+    )
+    unified = aggregate([rule, ai], config=_cfg())
+    assert unified is not None
+    assert unified.signal_source is SignalSource.CONSENSUS
+    assert unified.spread_bps == Decimal("25")
+
+
 def test_ai_only_passthrough(signal_factory) -> None:  # type: ignore[no-untyped-def]
     ai = signal_factory(source=SignalSource.AI, action=Action.SELL, confidence=0.55)
     unified = aggregate([ai], config=_cfg())

@@ -141,6 +141,18 @@ services/gateway/
 - `SWING_RISK_SCALE`: スイング時の追加スケール、デフォルト `0.5`
 - `DEFAULT_STOP_LOSS_SPREAD_PCT`: `stop_loss_price` 未設定時の代替、デフォルト `0.02`
 - `MIN_LOT_SIZE`: 単元株、デフォルト `100`
+- `MARKET_REGIME_GATEWAY_LOG_ONLY_ENABLED` / `MARKET_REGIME_GATEWAY_GUARD_ENABLED`:
+  地合い guard の観測 / reject 切り替え
+- `MARKET_REGIME_PAPER_GUARD_ENABLED`: paper mode 限定で地合い guard を reject
+  有効化する。live mode は `MARKET_REGIME_GATEWAY_GUARD_ENABLED` のみで制御。
+- `SOFT_LOSS_THROTTLE_LOG_ONLY_ENABLED` / `SOFT_LOSS_THROTTLE_GUARD_ENABLED` /
+  `SOFT_LOSS_LIMIT_JPY`: 日中 soft loss 到達後の RULE-only BUY 抑制
+- `EXECUTION_GATE_LOG_ONLY_ENABLED` / `EXECUTION_GATE_GUARD_ENABLED`:
+  spread / depth execution gate の観測 / reject 切り替え
+- `EXECUTION_GATE_MAX_SPREAD_BPS`: BUY 許容 spread 上限、デフォルト `30`
+- `EXECUTION_GATE_MAX_SPREAD_TICKS`: BUY 許容 spread ticks 上限、デフォルト `2`
+- `EXECUTION_GATE_MIN_ASK_DEPTH_MULTIPLIER`: BUY 数量に対する 5 本 ask depth の
+  最低倍率、デフォルト `3`
 - `ENTRY_PRICE_SOURCE`: Phase 1/2 はシグナル外部から与える想定。Phase 3 は Feature Engine の最新価格（`positions.current_price` または Supabase の別テーブル）を使用する設計を Phase 3 着手時に決定
 
 秘密情報は `.env.example` にダミー値で列挙、`.env` はコミットしない。

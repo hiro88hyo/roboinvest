@@ -6,7 +6,7 @@ from typing import Any
 
 from trade_contracts.enums import Action, SignalSource
 from trade_contracts.features import ProcessedFeatures
-from trade_contracts.signal import StrategySignal
+from trade_contracts.signal import StrategySignal, execution_fields_from
 
 _PREV_DIFF_KEY = "prev_diff"
 
@@ -76,5 +76,6 @@ class SmaCrossoverStrategy:
             reasoning=(
                 f"sma_crossover: short-long diff {prev_diff} -> {diff} (gap_ratio={gap_ratio:.5f})"
             ),
+            **execution_fields_from(features),
             created_at=features.timestamp,
         )

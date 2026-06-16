@@ -9,6 +9,7 @@ from oms_paper.backtest.report import (
     ExecutionQualityRecord,
     build_backtest_report,
 )
+from oms_paper.backtest.runner import NoFillRecord
 from trade_contracts.enums import Side
 
 
@@ -82,6 +83,8 @@ def test_build_backtest_report_includes_execution_quality_metrics() -> None:
                 best_bid=Decimal("999"),
                 best_ask=Decimal("1000"),
                 spread_bps=Decimal("10.0"),
+                tick_size=Decimal("1"),
+                spread_ticks=Decimal("1"),
                 opposite_depth_quantity=200,
                 same_side_depth_quantity=300,
                 order_book_imbalance=Decimal("0.2"),
@@ -98,6 +101,8 @@ def test_build_backtest_report_includes_execution_quality_metrics() -> None:
                 best_bid=Decimal("998"),
                 best_ask=Decimal("1000"),
                 spread_bps=Decimal("20.0"),
+                tick_size=Decimal("1"),
+                spread_ticks=Decimal("2"),
                 opposite_depth_quantity=100,
                 same_side_depth_quantity=400,
                 order_book_imbalance=Decimal("-0.6"),
@@ -110,7 +115,39 @@ def test_build_backtest_report_includes_execution_quality_metrics() -> None:
     assert report.max_spread_bps == Decimal("20.0")
     assert report.average_fill_ratio == Decimal("0.75")
     assert report.partial_fill_count == 1
+    assert report.no_fill_count == 0
+    assert report.no_fill_rate == Decimal("0")
     assert report.buy_order_count == 1
     assert report.sell_order_count == 1
     assert report.average_opposite_depth_quantity == Decimal("150")
     assert report.average_order_book_imbalance == Decimal("-0.2")
+    assert report.average_spread_ticks == Decimal("1.5")
+    assert report.max_spread_ticks == Decimal("2")
+
+
+def test_build_backtest_report_includes_no_fill_metrics() -> None:
+    report = build_backtest_report(
+        [],
+        [],
+        no_fills=[
+            NoFillRecord(
+                symbol="7203",
+                side=Side.BUY,
+                quantity=100,
+                reason="limit_not_crossed",
+                created_at=DEFAULT_TS,
+            ),
+            NoFillRecord(
+                symbol="9984",
+                side=Side.BUY,
+                quantity=100,
+                reason="no_book",
+                created_at=DEFAULT_TS,
+            ),
+        ],
+        order_count=10,
+    )
+
+    assert report.no_fill_count == 2
+    assert report.no_fill_rate == Decimal("0.2")
+    assert report.limit_no_fill_count == 1

@@ -1,10 +1,32 @@
 from datetime import datetime
 from decimal import Decimal
+from typing import Any
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
 
 from .enums import Action, SignalSource, TradingStyle
+
+EXECUTION_FIELD_NAMES = (
+    "best_bid",
+    "best_ask",
+    "spread_bps",
+    "tick_size",
+    "spread_ticks",
+    "bid_depth_1",
+    "ask_depth_1",
+    "bid_depth_5",
+    "ask_depth_5",
+    "book_imbalance_5",
+    "minutes_from_open",
+    "minutes_to_close",
+    "session_phase",
+)
+
+
+def execution_fields_from(payload: Any) -> dict[str, Any]:
+    """Copy optional execution context fields between feature/signal models."""
+    return {name: getattr(payload, name, None) for name in EXECUTION_FIELD_NAMES}
 
 
 class StrategySignal(BaseModel):
@@ -17,6 +39,19 @@ class StrategySignal(BaseModel):
     action: Action
     confidence: float = Field(ge=0.0, le=1.0)
     reasoning: str | None = None
+    best_bid: Decimal | None = None
+    best_ask: Decimal | None = None
+    spread_bps: Decimal | None = None
+    tick_size: Decimal | None = None
+    spread_ticks: Decimal | None = None
+    bid_depth_1: int | None = None
+    ask_depth_1: int | None = None
+    bid_depth_5: int | None = None
+    ask_depth_5: int | None = None
+    book_imbalance_5: Decimal | None = None
+    minutes_from_open: int | None = None
+    minutes_to_close: int | None = None
+    session_phase: str | None = None
     created_at: datetime
 
 
@@ -38,5 +73,18 @@ class UnifiedTradeSignal(BaseModel):
     target_price: Decimal | None = None
     trailing_stop_pct: Decimal | None = None
     max_hold_days: int | None = Field(default=None, ge=1)
+    best_bid: Decimal | None = None
+    best_ask: Decimal | None = None
+    spread_bps: Decimal | None = None
+    tick_size: Decimal | None = None
+    spread_ticks: Decimal | None = None
+    bid_depth_1: int | None = None
+    ask_depth_1: int | None = None
+    bid_depth_5: int | None = None
+    ask_depth_5: int | None = None
+    book_imbalance_5: Decimal | None = None
+    minutes_from_open: int | None = None
+    minutes_to_close: int | None = None
+    session_phase: str | None = None
 
     created_at: datetime

@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 from trade_contracts.enums import Action, SignalSource, TradingStyle
-from trade_contracts.signal import StrategySignal, UnifiedTradeSignal
+from trade_contracts.signal import StrategySignal, UnifiedTradeSignal, execution_fields_from
 
 from .config import ConflictPolicy
 
@@ -78,6 +78,7 @@ def _build_unified(
     signal_source: SignalSource,
     rule: StrategySignal | None,
     ai: StrategySignal | None,
+    execution_source: StrategySignal | None,
     holding_type: TradingStyle,
     now: datetime,
 ) -> UnifiedTradeSignal:
@@ -90,6 +91,7 @@ def _build_unified(
         strategy_signal_id_a=rule.signal_id if rule is not None else None,
         strategy_signal_id_b=ai.signal_id if ai is not None else None,
         holding_type=holding_type,
+        **execution_fields_from(execution_source),
         created_at=now,
     )
 
@@ -140,6 +142,7 @@ def aggregate(
             signal_source=only.source,
             rule=rule,
             ai=ai,
+            execution_source=only,
             holding_type=cfg.default_holding_type,
             now=stamp,
         )
@@ -163,6 +166,7 @@ def aggregate(
             signal_source=SignalSource.CONSENSUS,
             rule=rule,
             ai=ai,
+            execution_source=latest,
             holding_type=cfg.default_holding_type,
             now=stamp,
         )
@@ -183,6 +187,7 @@ def aggregate(
         signal_source=winner.source,
         rule=rule,
         ai=ai,
+        execution_source=winner,
         holding_type=cfg.default_holding_type,
         now=_newer(rule, ai).created_at if now is None else stamp,
     )

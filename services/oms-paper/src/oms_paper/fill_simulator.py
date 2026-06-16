@@ -1,4 +1,4 @@
-"""Phase 1 擬似約定 (純関数)。
+"""擬似約定 (純関数)。
 
 ``OrderRequest`` と ``OrderBookSnapshot`` から ``FillResult`` を返す。
 価格計算は ``Decimal``、最終 VWAP は ``ROUND_HALF_UP`` で 1 円単位 (市場慣習) に揃える。
@@ -36,6 +36,20 @@ def _consume_levels(
     return filled, consumed
 
 
+def _limit_crossing_levels(
+    *,
+    order: OrderRequest,
+    levels: Sequence[PriceLevel],
+) -> list[PriceLevel]:
+    if order.order_type is OrderType.MARKET:
+        return list(levels)
+    if order.limit_price is None:
+        return []
+    if order.side is Side.BUY:
+        return [level for level in levels if level.price <= order.limit_price]
+    return [level for level in levels if level.price >= order.limit_price]
+
+
 def _vwap(consumed: Sequence[tuple[Decimal, int]]) -> Decimal:
     total_qty = sum(qty for _, qty in consumed)
     total_value = sum((price * qty for price, qty in consumed), Decimal("0"))
@@ -48,22 +62,28 @@ def simulate_fill(
     order: OrderRequest,
     book: OrderBookSnapshot,
 ) -> FillResult:
-    """成行注文を板情報で擬似約定する。
+    """注文を板情報で擬似約定する。
 
     BUY は asks (安値から) を、SELL は bids (高値から) を上から消費する。
+    LIMIT は約定可能な価格帯の板だけを消費し、届かなければ no-fill にする。
     部分約定時も VWAP を返し、``reason`` で全約定 / 部分約定を区別する。
     """
 
     if order.symbol != book.symbol:
         return FillResult(filled_quantity=0, fill_price=None, reason="symbol_mismatch")
-    if order.order_type is not OrderType.MARKET:
-        return FillResult(filled_quantity=0, fill_price=None, reason="limit_not_supported")
+    if order.order_type is OrderType.LIMIT and order.limit_price is None:
+        return FillResult(filled_quantity=0, fill_price=None, reason="missing_limit_price")
 
     levels: Sequence[PriceLevel] = book.asks if order.side is Side.BUY else book.bids
     if not levels:
         return FillResult(filled_quantity=0, fill_price=None, reason="empty_book")
 
-    filled_qty, consumed = _consume_levels(levels, order.quantity)
+    crossing_levels = _limit_crossing_levels(order=order, levels=levels)
+    if not crossing_levels:
+        reason = "limit_not_crossed" if order.order_type is OrderType.LIMIT else "no_liquidity"
+        return FillResult(filled_quantity=0, fill_price=None, reason=reason)
+
+    filled_qty, consumed = _consume_levels(crossing_levels, order.quantity)
     if filled_qty == 0 or not consumed:
         return FillResult(filled_quantity=0, fill_price=None, reason="no_liquidity")
 

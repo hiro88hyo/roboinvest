@@ -22,6 +22,41 @@ def test_oversold_emits_buy(features_factory: Callable[..., ProcessedFeatures]) 
     assert abs(signal.confidence - (0.5 + 0.5 * (10 / 30))) < 1e-9
 
 
+def test_signal_carries_execution_context(
+    features_factory: Callable[..., ProcessedFeatures],
+) -> None:
+    strategy = RsiThresholdStrategy(buy_threshold=Decimal("30"))
+    signal = strategy.evaluate(
+        features_factory(
+            rsi=Decimal("20"),
+            best_bid=Decimal("999"),
+            best_ask=Decimal("1001"),
+            spread_bps=Decimal("20"),
+            tick_size=Decimal("1"),
+            spread_ticks=Decimal("2"),
+            bid_depth_5=1200,
+            ask_depth_5=900,
+            book_imbalance_5=Decimal("0.142857"),
+            minutes_from_open=20,
+            minutes_to_close=370,
+            session_phase="morning",
+        ),
+        {},
+    )
+    assert signal is not None
+    assert signal.best_bid == Decimal("999")
+    assert signal.best_ask == Decimal("1001")
+    assert signal.spread_bps == Decimal("20")
+    assert signal.tick_size == Decimal("1")
+    assert signal.spread_ticks == Decimal("2")
+    assert signal.bid_depth_5 == 1200
+    assert signal.ask_depth_5 == 900
+    assert signal.book_imbalance_5 == Decimal("0.142857")
+    assert signal.minutes_from_open == 20
+    assert signal.minutes_to_close == 370
+    assert signal.session_phase == "morning"
+
+
 def test_overbought_emits_sell(features_factory: Callable[..., ProcessedFeatures]) -> None:
     strategy = RsiThresholdStrategy(sell_threshold=Decimal("70"))
     signal = strategy.evaluate(features_factory(rsi=Decimal("80")), {})

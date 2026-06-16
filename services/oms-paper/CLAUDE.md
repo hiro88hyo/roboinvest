@@ -32,7 +32,9 @@ aggregator / strategy-rule / gateway と同じ 3 フェーズパターン。段�
   - 必要数量を満たせない場合は部分約定（`filled_quantity < quantity`）
   - 板が空 / 該当方向の価格レベルが無い場合は不約定（`filled_quantity=0`）
   - 約定価格は数量加重平均価格（VWAP）。`Decimal` で計算し、最終丸めは `ROUND_HALF_UP` で 1 円単位（市場慣習）に揃える
-  - `OrderType.LIMIT` は Phase 1 のスコープ外（来た場合は不約定 + 理由 `limit_not_supported`）
+  - `OrderType.LIMIT` の `BUY` は `ask.price <= limit_price` の板のみを食い、
+    `SELL` は `bid.price >= limit_price` の板のみを食う。条件に合う板がなければ
+    不約定 + 理由 `limit_not_crossed`
 - **position_updater** `position_updater.py`: 入力 `FillResult` + 既存 `PaperPosition | None` → `PositionUpdate`
   - `BUY` で既存ポジションなし → 新規ポジション（`entry_price = fill_price`）
   - `BUY` で既存 LONG あり → 数量加算 + 平均取得単価更新

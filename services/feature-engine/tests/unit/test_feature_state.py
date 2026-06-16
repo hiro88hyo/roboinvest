@@ -106,18 +106,37 @@ def test_per_symbol_state_is_isolated() -> None:
 
 def test_order_book_snapshot_is_attached_to_subsequent_tick() -> None:
     state = StreamingFeatureState.from_settings(_settings())
-    ts = datetime(2026, 4, 20, 9, 0, tzinfo=UTC)
+    ts = datetime(2026, 4, 20, 0, 15, tzinfo=UTC)
     book = OrderBookSnapshot(
         symbol="7203",
         timestamp=ts,
-        bids=[PriceLevel(price=Decimal("2499"), quantity=100)],
-        asks=[PriceLevel(price=Decimal("2501"), quantity=200)],
+        bids=[
+            PriceLevel(price=Decimal("2499"), quantity=100),
+            PriceLevel(price=Decimal("2498"), quantity=300),
+        ],
+        asks=[
+            PriceLevel(price=Decimal("2501"), quantity=200),
+            PriceLevel(price=Decimal("2502"), quantity=400),
+        ],
     )
     state.record_order_book(book)
     features = state.record_tick(_tick("7203", ts, "2500"))
     assert features.order_book is not None
     assert features.order_book.symbol == "7203"
     assert features.order_book.bids[0].price == Decimal("2499")
+    assert features.best_bid == Decimal("2499")
+    assert features.best_ask == Decimal("2501")
+    assert features.bid_depth_1 == 100
+    assert features.ask_depth_1 == 200
+    assert features.bid_depth_5 == 400
+    assert features.ask_depth_5 == 600
+    assert features.book_imbalance_5 == Decimal("-0.2")
+    assert features.spread_bps == Decimal("8.00")
+    assert features.tick_size == Decimal("1")
+    assert features.spread_ticks == Decimal("2")
+    assert features.minutes_from_open == 15
+    assert features.minutes_to_close == 375
+    assert features.session_phase == "morning"
 
 
 def test_order_book_is_not_shared_across_symbols() -> None:
@@ -132,6 +151,8 @@ def test_order_book_is_not_shared_across_symbols() -> None:
     state.record_order_book(book)
     features = state.record_tick(_tick("9984", ts, "8000"))
     assert features.order_book is None
+    assert features.best_bid is None
+    assert features.spread_bps is None
 
 
 def test_reset_all_clears_ticks_and_books() -> None:
