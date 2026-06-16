@@ -83,12 +83,14 @@ services:
       STORAGE_WARM_DIR: /data/warm
       STORAGE_COLD_DIR: /data/cold
       STORAGE_BOOK_DIR: /data/books
+      STORAGE_FEATURE_DIR: /data/features
       MAX_HOLD_MINUTES: ${MAX_HOLD_MINUTES:-45}
     volumes:
       - trade-ai-logs:/app/logs
       - feature-warm-data:/data/warm
       - feature-cold-data:/data/cold
       - feature-book-data:/data/books
+      - feature-data:/data/features
       - ${GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH:-/dev/shm/roboinvest/gcp-pubsub-sa.json}:/run/secrets/gcp-pubsub-sa.json:ro
 
   strategy-rule:
@@ -260,6 +262,7 @@ services:
 volumes:
   kabu-token-cache:
   feature-book-data:
+  feature-data:
   feature-warm-data:
   feature-cold-data:
   gateway-order-data:

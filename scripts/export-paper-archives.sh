@@ -100,8 +100,11 @@ docker compose -f "$COMPOSE_FILE" cp feature-engine:/data/books "$OUT_DIR/books"
 echo "[3/3] copy feature-engine feature archive -> $OUT_DIR/features"
 if docker compose -f "$COMPOSE_FILE" exec -T feature-engine test -d /data/features; then
   docker compose -f "$COMPOSE_FILE" cp feature-engine:/data/features "$OUT_DIR/features"
+elif docker compose -f "$COMPOSE_FILE" exec -T feature-engine test -d /app/data/features; then
+  echo "warning: /data/features is not present; copying legacy /app/data/features" >&2
+  docker compose -f "$COMPOSE_FILE" cp feature-engine:/app/data/features "$OUT_DIR/features"
 else
-  echo "warning: /data/features is not present in feature-engine container; skipping" >&2
+  echo "warning: feature archive is not present in feature-engine container; skipping" >&2
 fi
 
 cat <<EOF
