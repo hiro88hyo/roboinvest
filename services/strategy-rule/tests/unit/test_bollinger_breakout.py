@@ -39,6 +39,45 @@ def test_below_lower_emits_buy(features_factory: Callable[..., ProcessedFeatures
     assert abs(signal.confidence - (5 / 15)) < 1e-9
 
 
+def test_buy_reclaim_confirmation_arms_then_buys_on_lower_band_reclaim(
+    features_factory: Callable[..., ProcessedFeatures],
+) -> None:
+    strategy = BollingerBreakoutStrategy(require_buy_lower_reclaim=True)
+    state: dict[str, object] = {}
+    below = features_factory(
+        price=Decimal("90"),
+        bollinger_upper=Decimal("110"),
+        bollinger_middle=Decimal("100"),
+        bollinger_lower=Decimal("95"),
+    )
+    assert strategy.evaluate(below, state) is None
+
+    reclaim = features_factory(
+        price=Decimal("96"),
+        bollinger_upper=Decimal("110"),
+        bollinger_middle=Decimal("100"),
+        bollinger_lower=Decimal("95"),
+    )
+    signal = strategy.evaluate(reclaim, state)
+    assert signal is not None
+    assert signal.action is Action.BUY
+    assert "reclaimed lower band" in signal.reasoning
+    assert abs(signal.confidence - (5 / 15)) < 1e-9
+
+
+def test_buy_reclaim_confirmation_does_not_buy_without_prior_break(
+    features_factory: Callable[..., ProcessedFeatures],
+) -> None:
+    strategy = BollingerBreakoutStrategy(require_buy_lower_reclaim=True)
+    reclaim = features_factory(
+        price=Decimal("96"),
+        bollinger_upper=Decimal("110"),
+        bollinger_middle=Decimal("100"),
+        bollinger_lower=Decimal("95"),
+    )
+    assert strategy.evaluate(reclaim, {}) is None
+
+
 def test_above_upper_emits_sell(features_factory: Callable[..., ProcessedFeatures]) -> None:
     strategy = BollingerBreakoutStrategy()
     f = features_factory(

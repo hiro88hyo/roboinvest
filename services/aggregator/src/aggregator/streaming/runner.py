@@ -24,6 +24,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import ValidationError
+from trade_contracts.enums import Action
 from trade_contracts.signal import StrategySignal, UnifiedTradeSignal
 
 from ..clients.pubsub import PubSubPublisher, PubSubSubscriber, PulledMessage
@@ -178,6 +179,8 @@ class StreamRunner:
             ack_ids_a.extend(bucket.ack_ids_a)
             ack_ids_b.extend(bucket.ack_ids_b)
 
+        unified_batch = await self._filter_sell_without_position(unified_batch)
+
         for unified in unified_batch:
             await self.publisher.publish(
                 self.settings.pubsub_topic_trade_signals,
@@ -200,6 +203,39 @@ class StreamRunner:
             )
 
         return len(ready), len(unified_batch), len(ack_ids_a), len(ack_ids_b)
+
+    async def _filter_sell_without_position(
+        self, signals: list[UnifiedTradeSignal]
+    ) -> list[UnifiedTradeSignal]:
+        if not self.settings.sell_requires_position or not any(
+            signal.action is Action.SELL for signal in signals
+        ):
+            return signals
+
+        trade_mode = await self.writer.read_trade_mode()
+        qty_cache: dict[str, int] = {}
+        out: list[UnifiedTradeSignal] = []
+        for signal in signals:
+            if signal.action is not Action.SELL:
+                out.append(signal)
+                continue
+            qty = qty_cache.get(signal.symbol)
+            if qty is None:
+                qty = await self.writer.read_long_quantity(
+                    symbol=signal.symbol,
+                    trade_mode=trade_mode,
+                )
+                qty_cache[signal.symbol] = qty
+            if qty > 0:
+                out.append(signal)
+            else:
+                logger.info(
+                    "sell signal dropped without position: symbol=%s trade_mode=%s signal_id=%s",
+                    signal.symbol,
+                    trade_mode.value,
+                    signal.signal_id,
+                )
+        return out
 
 
 def _parse_signal(msg: PulledMessage) -> StrategySignal | None:

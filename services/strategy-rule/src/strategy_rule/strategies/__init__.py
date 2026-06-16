@@ -37,6 +37,7 @@ def _make_bollinger(settings: StrategyRuleSettings) -> BollingerBreakoutStrategy
     return BollingerBreakoutStrategy(
         tolerance=settings.bollinger_breakout_tolerance,
         volume_ratio_min=settings.entry_volume_ratio_min,
+        require_buy_lower_reclaim=settings.bollinger_buy_require_lower_reclaim,
     )
 
 

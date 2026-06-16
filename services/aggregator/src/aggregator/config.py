@@ -37,6 +37,7 @@ class AggregatorSettings(BaseSettings):
     min_confidence_ai_only: Decimal = Decimal("0.5")
     min_confidence_consensus: Decimal = Decimal("0.3")
     conflict_policy: ConflictPolicy = "skip"
+    sell_requires_position: bool = True
 
     pairing_bucket_ms: int = 1000
     pairing_window_ms: int = 1000

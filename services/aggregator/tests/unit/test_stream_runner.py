@@ -117,14 +117,27 @@ class _PubSubRouter:
 
 
 class _SupabaseRouter:
-    def __init__(self, *, upsert_status: int = 201) -> None:
+    def __init__(
+        self,
+        *,
+        upsert_status: int = 201,
+        trade_mode: str = "paper",
+        position_rows: list[list[dict[str, Any]]] | None = None,
+    ) -> None:
         self.upsert_status = upsert_status
+        self.trade_mode = trade_mode
+        self.position_rows = list(position_rows or [])
         self.requests: list[httpx.Request] = []
 
     async def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
         if request.method == "POST" and request.url.path == "/rest/v1/aggregator_logs":
             return httpx.Response(self.upsert_status)
+        if request.method == "GET" and request.url.path == "/rest/v1/system_status":
+            return httpx.Response(200, json=[{"trade_mode": self.trade_mode}])
+        if request.method == "GET" and request.url.path == "/rest/v1/positions":
+            rows = self.position_rows.pop(0) if self.position_rows else []
+            return httpx.Response(200, json=rows)
         return httpx.Response(404)
 
 
@@ -323,6 +336,64 @@ async def test_conflict_skip_drops_signal_but_still_acks() -> None:
     assert pubsub.published == []
     assert stats.acked_a == 1
     assert stats.acked_b == 1
+
+
+async def test_sell_without_position_is_dropped_before_publish() -> None:
+    pubsub = _PubSubRouter(
+        pull_batches_a=[
+            _pull_response(
+                [("a1", _strategy_signal_payload(source=SignalSource.RULE, action=Action.SELL))]
+            )
+        ],
+        pull_batches_b=[{}],
+    )
+    supabase = _SupabaseRouter(position_rows=[[]])
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run(iterations=2)
+
+    results = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        monotonic_values=[0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+        run_body=_body,
+    )
+
+    assert results[1].buckets_emitted == 1
+    assert results[1].unified_emitted == 0
+    assert pubsub.published == []
+    assert len(pubsub.acked_a) == 1
+    assert any(req.url.path == "/rest/v1/system_status" for req in supabase.requests)
+    assert any(req.url.path == "/rest/v1/positions" for req in supabase.requests)
+    assert not any(req.url.path == "/rest/v1/aggregator_logs" for req in supabase.requests)
+
+
+async def test_sell_with_position_is_published() -> None:
+    pubsub = _PubSubRouter(
+        pull_batches_a=[
+            _pull_response(
+                [("a1", _strategy_signal_payload(source=SignalSource.RULE, action=Action.SELL))]
+            )
+        ],
+        pull_batches_b=[{}],
+    )
+    supabase = _SupabaseRouter(position_rows=[[{"quantity": 100}]])
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run(iterations=2)
+
+    results = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        monotonic_values=[0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+        run_body=_body,
+    )
+
+    assert results[1].unified_emitted == 1
+    assert len(pubsub.published) == 1
+    pub_body = json.loads(pubsub.published[0].content.decode())
+    decoded = json.loads(base64.b64decode(pub_body["messages"][0]["data"]).decode("utf-8"))
+    assert decoded["action"] == "SELL"
 
 
 async def test_malformed_json_is_acked_immediately() -> None:

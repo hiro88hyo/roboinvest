@@ -8,7 +8,7 @@ from uuid import UUID
 import httpx
 import pytest
 from aggregator.clients.supabase import SupabaseError, SupabaseWriter
-from trade_contracts.enums import Action, SignalSource, TradingStyle
+from trade_contracts.enums import Action, SignalSource, TradeMode, TradingStyle
 from trade_contracts.signal import UnifiedTradeSignal
 
 Handler = Callable[[httpx.Request], Coroutine[None, None, httpx.Response]]
@@ -110,3 +110,44 @@ async def test_insert_aggregator_logs_raises_on_4xx() -> None:
     ) as writer:
         with pytest.raises(SupabaseError):
             await writer.insert_aggregator_logs([_unified()])
+
+
+async def test_read_trade_mode_reads_system_status() -> None:
+    captured: list[httpx.Request] = []
+
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json=[{"trade_mode": "paper"}])
+
+    async with SupabaseWriter(
+        url="https://example.supabase.co",
+        secret_key="k",
+        transport=httpx.MockTransport(_handler),
+    ) as writer:
+        mode = await writer.read_trade_mode()
+
+    assert mode is TradeMode.PAPER
+    assert captured[0].url.path == "/rest/v1/system_status"
+    assert captured[0].url.params.get("id") == "eq.1"
+
+
+async def test_read_long_quantity_sums_position_rows() -> None:
+    captured: list[httpx.Request] = []
+
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json=[{"quantity": 100}, {"quantity": 200}])
+
+    async with SupabaseWriter(
+        url="https://example.supabase.co",
+        secret_key="k",
+        transport=httpx.MockTransport(_handler),
+    ) as writer:
+        qty = await writer.read_long_quantity(symbol="7203", trade_mode=TradeMode.PAPER)
+
+    assert qty == 300
+    req = captured[0]
+    assert req.url.path == "/rest/v1/positions"
+    assert req.url.params.get("symbol") == "eq.7203"
+    assert req.url.params.get("trade_type") == "eq.paper"
+    assert req.url.params.get("side") == "eq.LONG"
