@@ -214,6 +214,9 @@ def _build_settings(
         pubsub_topic_paper_orders=PAPER_ORDERS_TOPIC,
         pubsub_pull_max_messages=10,
         capital=Decimal("1000000"),
+        live_day_new_buy_start_time="00:00",
+        live_day_new_buy_cutoff_time="23:59",
+        day_closeout_time="23:59",
     )
 
 
