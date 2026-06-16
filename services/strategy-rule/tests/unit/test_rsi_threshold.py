@@ -97,6 +97,7 @@ def test_buy_trend_filters_allow_rebound_above_vwap_in_uptrend(
     )
     assert signal is not None
     assert signal.action is Action.BUY
+    assert signal.reasoning is not None
     assert "price>=vwap" in signal.reasoning
     assert "sma_short>=sma_long" in signal.reasoning
 

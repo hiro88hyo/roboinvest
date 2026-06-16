@@ -702,17 +702,17 @@ class StreamRunner:
             )
             return quantity
 
-        cap = self._liquidity_quantity_cap(snapshot)
-        if cap is None or quantity <= cap:
+        liquidity_cap = self._liquidity_quantity_cap(snapshot)
+        if liquidity_cap is None or quantity <= liquidity_cap:
             return quantity
-        if cap < self.risk_config.min_lot_size:
+        if liquidity_cap < self.risk_config.min_lot_size:
             logger.warning(
                 "liquidity quantity cap below min lot: symbol=%s trade_mode=%s "
                 "qty=%d cap=%d min_lot=%d daily_volume=%d daily_turnover=%s",
                 signal.symbol,
                 trade_mode.value,
                 quantity,
-                cap,
+                liquidity_cap,
                 self.risk_config.min_lot_size,
                 snapshot.volume,
                 snapshot.turnover,
@@ -724,11 +724,11 @@ class StreamRunner:
             signal.symbol,
             trade_mode.value,
             quantity,
-            cap,
+            liquidity_cap,
             snapshot.volume,
             snapshot.turnover,
         )
-        return cap
+        return liquidity_cap
 
     def _liquidity_quantity_cap(self, snapshot: DailyLiquiditySnapshot) -> int | None:
         caps: list[int] = []

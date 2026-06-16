@@ -61,6 +61,7 @@ def test_buy_reclaim_confirmation_arms_then_buys_on_lower_band_reclaim(
     signal = strategy.evaluate(reclaim, state)
     assert signal is not None
     assert signal.action is Action.BUY
+    assert signal.reasoning is not None
     assert "reclaimed lower band" in signal.reasoning
     assert abs(signal.confidence - (5 / 15)) < 1e-9
 
