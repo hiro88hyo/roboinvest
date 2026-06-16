@@ -3,6 +3,9 @@
 目的: `codex/execution-safety-gates` の execution safety 変更を production paper で
 1 営業日観測し、live guard 昇格前の判断材料を残す。
 
+当日の記入用チェックリストは
+[`2026-06-17-paper-guard-checklist.md`](2026-06-17-paper-guard-checklist.md) を使う。
+
 ## Runtime Settings
 
 - `TRADE_MODE=paper`
