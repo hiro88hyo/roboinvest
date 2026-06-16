@@ -322,6 +322,15 @@ class StreamRunner:
             acks.append(msg.ack_id)  # parse error / TickData も ack
             if book is None:
                 continue
+            existing = self.book_cache.get(book.symbol)
+            if existing is not None and book.timestamp < existing.timestamp:
+                logger.info(
+                    "book skipped: stale update symbol=%s incoming=%s cached=%s",
+                    book.symbol,
+                    book.timestamp.isoformat(),
+                    existing.timestamp.isoformat(),
+                )
+                continue
             self.book_cache[book.symbol] = book
             self._latest_book_timestamp = book.timestamp
             updated.add(book.symbol)
@@ -615,6 +624,15 @@ class StreamRunner:
                 order.unified_signal_id,
             )
             return "no_fill"
+        if self._is_book_too_old_for_order(book=book, order=order):
+            logger.warning(
+                "order no_fill: stale book symbol=%s book_ts=%s order_ts=%s signal_id=%s",
+                order.symbol,
+                book.timestamp.isoformat(),
+                order.created_at.isoformat(),
+                order.unified_signal_id,
+            )
+            return "no_fill"
 
         fill = simulate_fill(order=order, book=book)
         if fill.filled_quantity == 0 or fill.fill_price is None:
@@ -671,6 +689,13 @@ class StreamRunner:
             order.unified_signal_id,
         )
         return "filled"
+
+    def _is_book_too_old_for_order(self, *, book: OrderBookSnapshot, order: OrderRequest) -> bool:
+        max_age = self.settings.order_book_max_age_seconds
+        if max_age is None or max_age <= 0:
+            return False
+        age = (order.created_at - book.timestamp).total_seconds()
+        return age > max_age
 
     async def _write_position_change(
         self,

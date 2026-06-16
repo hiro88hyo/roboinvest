@@ -283,6 +283,71 @@ async def test_order_with_no_book_in_cache_is_no_fill_and_acked() -> None:
     assert any(PAPER_ORDERS_SUB in p for p in ack_paths)
 
 
+async def test_order_with_stale_book_is_no_fill_and_acked() -> None:
+    old_book = make_order_book(
+        symbol="7203",
+        asks=(("1000", 200),),
+        timestamp=DEFAULT_TS - timedelta(seconds=11),
+    )
+    order = make_order_request(symbol="7203", side=Side.BUY, quantity=100, created_at=DEFAULT_TS)
+    pubsub = _PubSubRouter(
+        order_batches=[_pull_response([("ord-1", order.model_dump_json().encode("utf-8"))])],
+        book_batches=[_pull_response([("bk-1", old_book.model_dump_json().encode("utf-8"))])],
+    )
+    supabase = _SupabaseRouter()
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+
+    assert stats.books_applied == 1
+    assert stats.no_fills == 1
+    assert stats.filled == 0
+    writes = [r for r in supabase.requests if r.method in {"POST", "PATCH", "DELETE"}]
+    assert writes == []
+    assert any(PAPER_ORDERS_SUB in r.url.path for r in pubsub.acked)
+
+
+async def test_older_book_does_not_overwrite_newer_cache() -> None:
+    newer = make_order_book(
+        symbol="7203",
+        asks=(("1000", 200),),
+        timestamp=DEFAULT_TS,
+    )
+    older = make_order_book(
+        symbol="7203",
+        asks=(("900", 200),),
+        timestamp=DEFAULT_TS - timedelta(seconds=60),
+    )
+    order = make_order_request(symbol="7203", side=Side.BUY, quantity=100, created_at=DEFAULT_TS)
+    pubsub = _PubSubRouter(
+        order_batches=[_pull_response([("ord-1", order.model_dump_json().encode("utf-8"))])],
+        book_batches=[
+            _pull_response(
+                [
+                    ("bk-new", newer.model_dump_json().encode("utf-8")),
+                    ("bk-old", older.model_dump_json().encode("utf-8")),
+                ]
+            )
+        ],
+    )
+    supabase = _SupabaseRouter(paper_position_rows=[[]])
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+
+    assert stats.books_applied == 1
+    assert stats.filled == 1
+    insert_trade = next(
+        r for r in supabase.requests if r.method == "POST" and r.url.path == "/rest/v1/trades_paper"
+    )
+    body = json.loads(insert_trade.content.decode())
+    assert body[0]["price"] == "1000"
+
+
 async def test_buy_into_existing_position_patches_quantity_and_entry() -> None:
     book = make_order_book(symbol="7203", asks=(("1100", 200),))
     order = make_order_request(symbol="7203", side=Side.BUY, quantity=100)
