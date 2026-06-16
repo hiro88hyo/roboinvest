@@ -184,16 +184,15 @@ def _materialize_gcp_credentials_from_1password(
     args: argparse.Namespace,
     reason: str,
 ) -> Path | None:
-    tmp = tempfile.NamedTemporaryFile(
+    with tempfile.NamedTemporaryFile(
         mode="w",
         encoding="utf-8",
         prefix="roboinvest-gcp-pubsub-sa-",
         suffix=".json",
         dir="/tmp",
         delete=False,
-    )
-    tmp_path = Path(tmp.name)
-    tmp.close()
+    ) as tmp:
+        tmp_path = Path(tmp.name)
     try:
         os.chmod(tmp_path, 0o600)
         try:
