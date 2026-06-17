@@ -37,6 +37,7 @@ class StrategyRuleSettings(BaseSettings):
 
     sma_min_gap_ratio: Decimal = Decimal("0.005")
     sma_full_confidence_gap_ratio: Decimal = Decimal("0.02")
+    sma_buy_require_price_above_vwap: bool = False
     rsi_buy_threshold: Decimal = Decimal("25")
     rsi_sell_threshold: Decimal = Decimal("75")
     bollinger_breakout_tolerance: Decimal = Decimal("0.15")
@@ -44,6 +45,14 @@ class StrategyRuleSettings(BaseSettings):
     entry_volume_ratio_min: Decimal | None = None
     rsi_buy_require_price_above_vwap: bool = True
     rsi_buy_require_sma_uptrend: bool = True
+    bollinger_buy_require_price_above_vwap: bool = True
+    bollinger_buy_require_sma_uptrend: bool = True
+    entry_max_spread_bps: Decimal | None = None
+    entry_max_spread_ticks: Decimal | None = None
+    entry_min_ask_depth_5: int | None = None
+    entry_min_book_imbalance_5: Decimal | None = None
+    entry_min_minutes_from_open: int | None = None
+    entry_min_minutes_to_close: int | None = None
 
     backtest_output_dir: Path = Path("./out/strategy-rule")
 
@@ -54,9 +63,18 @@ class StrategyRuleSettings(BaseSettings):
             return [s.strip() for s in v.split(",") if s.strip()]
         return v
 
-    @field_validator("entry_volume_ratio_min", mode="before")
+    @field_validator(
+        "entry_volume_ratio_min",
+        "entry_max_spread_bps",
+        "entry_max_spread_ticks",
+        "entry_min_book_imbalance_5",
+        "entry_min_minutes_from_open",
+        "entry_min_minutes_to_close",
+        "entry_min_ask_depth_5",
+        mode="before",
+    )
     @classmethod
-    def _empty_entry_volume_ratio_min_to_none(cls, v: Any) -> Any:
+    def _empty_entry_filter_to_none(cls, v: Any) -> Any:
         if v == "":
             return None
         return v

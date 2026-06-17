@@ -1,7 +1,7 @@
-"""Phase 1 OrderRequest 組み立て(純関数)。
+"""OrderRequest 組み立て(純関数)。
 
 バリデーション済みの ``UnifiedTradeSignal`` と ``adjusted_quantity`` を結合し、
-``OrderRequest`` を生成する。Phase 1 では ``order_type=MARKET`` 固定。
+``OrderRequest`` を生成する。
 """
 
 from __future__ import annotations
@@ -33,6 +33,10 @@ def build(
 ) -> OrderRequest:
     if quantity <= 0:
         raise ValueError(f"quantity must be positive, got: {quantity}")
+    order_type, limit_price = _order_type_and_limit_price(
+        signal=signal,
+        entry_price=entry_price,
+    )
     stop_loss_price = _stop_loss_price(
         signal=signal,
         entry_price=entry_price,
@@ -43,7 +47,8 @@ def build(
         symbol=signal.symbol,
         side=_side_for(signal.action),
         quantity=quantity,
-        order_type=OrderType.MARKET,
+        order_type=order_type,
+        limit_price=limit_price,
         trade_mode=trade_mode,
         signal_source=signal.signal_source,
         stop_loss_price=stop_loss_price,
@@ -52,6 +57,18 @@ def build(
         max_hold_days=signal.max_hold_days,
         created_at=created_at or datetime.now(UTC),
     )
+
+
+def _order_type_and_limit_price(
+    *,
+    signal: UnifiedTradeSignal,
+    entry_price: Decimal | None,
+) -> tuple[OrderType, Decimal | None]:
+    if signal.action is not Action.BUY:
+        return OrderType.MARKET, None
+    if entry_price is None or entry_price <= 0:
+        raise ValueError("entry_price is required for BUY LIMIT order")
+    return OrderType.LIMIT, entry_price
 
 
 def _stop_loss_price(

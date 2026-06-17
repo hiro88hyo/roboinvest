@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -28,6 +29,7 @@ from pathlib import Path
 
 from google.api_core.exceptions import AlreadyExists, GoogleAPICallError, NotFound
 from google.cloud import pubsub_v1
+from google.oauth2 import service_account
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TOPICS_JSON = REPO_ROOT / "infra" / "pubsub" / "topics.json"
@@ -40,6 +42,7 @@ SMOKE_SUBSCRIPTION = "adr-0001-smoke-test-sub"
 class SubscriptionSpec:
     name: str
     topic: str
+    filter: str | None = None
 
 
 def parse_args() -> argparse.Namespace:
@@ -87,7 +90,12 @@ def load_subscriptions() -> list[SubscriptionSpec]:
     if not isinstance(subscriptions, list):
         raise RuntimeError(f"unexpected subscriptions.json shape: {type(subscriptions).__name__}")
     return [
-        SubscriptionSpec(name=str(sub["name"]), topic=str(sub["topic"])) for sub in subscriptions
+        SubscriptionSpec(
+            name=str(sub["name"]),
+            topic=str(sub["topic"]),
+            filter=str(sub["filter"]) if "filter" in sub else None,
+        )
+        for sub in subscriptions
     ]
 
 
@@ -97,6 +105,14 @@ def topic_path(project_id: str, topic: str) -> str:
 
 def subscription_path(project_id: str, subscription: str) -> str:
     return pubsub_v1.SubscriberClient.subscription_path(project_id, subscription)
+
+
+def client_credentials() -> service_account.Credentials | None:
+    raw = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON", "").strip()
+    if not raw:
+        return None
+    info = json.loads(raw)
+    return service_account.Credentials.from_service_account_info(info)
 
 
 def ensure_smoke_topic(
@@ -139,7 +155,7 @@ def ensure_smoke_subscription(
 
 
 def ensure_topics(project_id: str, topics: Iterable[str], *, apply: bool) -> bool:
-    publisher = pubsub_v1.PublisherClient()
+    publisher = pubsub_v1.PublisherClient(credentials=client_credentials())
     ok = True
     try:
         for topic in topics:
@@ -175,7 +191,7 @@ def ensure_subscriptions(
     *,
     apply: bool,
 ) -> bool:
-    subscriber = pubsub_v1.SubscriberClient()
+    subscriber = pubsub_v1.SubscriberClient(credentials=client_credentials())
     ok = True
     try:
         for spec in subscriptions:
@@ -184,25 +200,34 @@ def ensure_subscriptions(
             try:
                 subscription = subscriber.get_subscription(request={"subscription": path})
                 actual_topic = subscription.topic.rsplit("/", 1)[-1]
-                if actual_topic == spec.topic:
-                    print(f"OK   sub:{spec.name} -> {spec.topic}")
-                else:
+                actual_filter = subscription.filter or None
+                if actual_topic != spec.topic:
                     print(f"NG   sub:{spec.name} topic={actual_topic}, expected={spec.topic}")
                     ok = False
+                elif actual_filter != spec.filter:
+                    print(
+                        f"NG   sub:{spec.name} filter={actual_filter!r}, expected={spec.filter!r}"
+                    )
+                    ok = False
+                else:
+                    suffix = f" filter={spec.filter!r}" if spec.filter else ""
+                    print(f"OK   sub:{spec.name} -> {spec.topic}{suffix}")
             except NotFound:
                 ok = False
                 if not apply:
                     print(f"MISS sub:{spec.name} -> {spec.topic}")
                     continue
                 try:
-                    subscriber.create_subscription(
-                        request={
-                            "name": path,
-                            "topic": topic,
-                            "ack_deadline_seconds": 30,
-                        }
-                    )
-                    print(f"ADD  sub:{spec.name} -> {spec.topic}")
+                    request = {
+                        "name": path,
+                        "topic": topic,
+                        "ack_deadline_seconds": 30,
+                    }
+                    if spec.filter:
+                        request["filter"] = spec.filter
+                    subscriber.create_subscription(request=request)
+                    suffix = f" filter={spec.filter!r}" if spec.filter else ""
+                    print(f"ADD  sub:{spec.name} -> {spec.topic}{suffix}")
                     ok = True
                 except AlreadyExists:
                     print(f"OK   sub:{spec.name} -> {spec.topic}")
@@ -218,8 +243,9 @@ def ensure_subscriptions(
 
 
 def smoke_test(project_id: str, *, timeout: float, cleanup: bool) -> bool:
-    publisher = pubsub_v1.PublisherClient()
-    subscriber = pubsub_v1.SubscriberClient()
+    credentials = client_credentials()
+    publisher = pubsub_v1.PublisherClient(credentials=credentials)
+    subscriber = pubsub_v1.SubscriberClient(credentials=credentials)
     payload = f"adr-0001-smoke:{int(time.time())}".encode()
     ok = False
     created_topic = False

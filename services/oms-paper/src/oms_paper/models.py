@@ -44,7 +44,8 @@ class FillResult(BaseModel):
     - ``"partial"`` 部分約定 (板の数量不足)
     - ``"empty_book"`` 反対側の板レベルが 0 件
     - ``"no_liquidity"`` 反対側の板はあるが quantity が 0
-    - ``"limit_not_supported"`` Phase 1 では LIMIT を扱わない
+    - ``"limit_not_crossed"`` LIMIT が反対側 best price に届かない
+    - ``"missing_limit_price"`` LIMIT だが limit_price がない
     - ``"symbol_mismatch"`` order.symbol と book.symbol が一致しない
     """
 

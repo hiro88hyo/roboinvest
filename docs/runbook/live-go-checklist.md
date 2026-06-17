@@ -137,10 +137,14 @@ Pub/Sub の smoke publish/pull/ack を避ける検証では `--no-pubsub-smoke` 
 期待値:
 
 - `AI_MAX_OUTPUT_TOKENS=2048`
+- `STRATEGIES_ENABLED=rsi_threshold,bollinger_breakout`
 - `LIVE_DAY_NEW_BUY_START_TIME=09:15`
-- `MIN_CONFIDENCE_RULE_ONLY=0.5`
+- `MIN_CONFIDENCE_RULE_ONLY=0.45`
 - `MIN_CONFIDENCE_AI_ONLY=0.5`
 - `MIN_CONFIDENCE_CONSENSUS=0.3`
+- `MARKET_REGIME_PAPER_GUARD_ENABLED=true`
+- `SOFT_LOSS_THROTTLE_GUARD_ENABLED=true`
+- `EXECUTION_GATE_GUARD_ENABLED=true`
 - Supabase 主要 9 tables が OK
 - managed Pub/Sub topics / subscriptions と smoke publish/pull/ack が OK
 - `positions(live)` が空、または残ポジションの方針が明確

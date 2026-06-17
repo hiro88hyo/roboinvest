@@ -28,8 +28,9 @@ from decimal import Decimal
 from typing import Any, cast
 
 from pydantic import ValidationError
-from trade_contracts.enums import TradingStyle
+from trade_contracts.enums import OrderType, Side, SignalSource, TradeMode, TradingStyle
 from trade_contracts.logging import event_extra
+from trade_contracts.market import OrderBookSnapshot
 from trade_contracts.order import OrderRequest
 
 from ..clients.pubsub import PubSubError, PubSubSubscriber, PulledMessage
@@ -42,6 +43,7 @@ from ..order_builder import build_sendorder_payload
 from ..order_parser import parse_order_state, to_fill_result
 from ..position_updater import apply_fill, build_fill_record
 from ..reconciler import ReconcileActions, compute_position_diff, parse_kabu_positions
+from ..stop_monitor import evaluate_live_stop
 
 logger = logging.getLogger(__name__)
 
@@ -52,14 +54,20 @@ WallClock = Callable[[], datetime]
 
 @dataclass(frozen=True, slots=True)
 class BatchStats:
-    orders_pulled: int
-    parse_errors: int
-    filled: int
-    no_fills: int
-    acked: int
+    books_pulled: int = 0
+    books_applied: int = 0
+    orders_pulled: int = 0
+    parse_errors: int = 0
+    filled: int = 0
+    no_fills: int = 0
+    acked: int = 0
     skipped_duplicate: int = 0
     safety_rejected: int = 0
     dry_run_skipped: int = 0
+    stop_exits: int = 0
+    stop_trails: int = 0
+    stop_no_fills: int = 0
+    stop_write_errors: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +86,9 @@ class StreamRunner:
     supabase: SupabaseClient
     kabu: KabuLiveClient
     settings: OmsLiveSettings
+    book_cache: dict[str, OrderBookSnapshot] = field(default_factory=dict)
+    live_position_cache: dict[str, LivePosition] = field(default_factory=dict)
+    live_cache_loaded_at: float | None = None
     idle_backoff_seconds: float = 0.5
     sleep: Sleep = field(default=asyncio.sleep)
     monotonic: MonotonicClock = field(default=time.monotonic)
@@ -100,6 +111,35 @@ class StreamRunner:
 
     async def run_once(self) -> BatchStats:
         """1 バッチ分の pull + 処理 + ack。``SupabaseError`` は ack flush 後に再 raise。"""
+        books_msgs: list[PulledMessage] = []
+        books_applied = 0
+        book_acks: list[str] = []
+        updated_symbols: set[str] = set()
+        stop_exits = 0
+        stop_trails = 0
+        stop_no_fills = 0
+        stop_write_errors = 0
+
+        if self.settings.pubsub_subscription_raw_market_data:
+            books_msgs = await self.subscriber.pull(
+                self.settings.pubsub_subscription_raw_market_data,
+                max_messages=self.settings.pubsub_pull_max_messages,
+                return_immediately=True,
+            )
+            books_applied, book_acks, updated_symbols = self._consume_books(books_msgs)
+            if book_acks:
+                await self.subscriber.acknowledge(
+                    self.settings.pubsub_subscription_raw_market_data, book_acks
+                )
+
+            if self.settings.oms_live_stop_monitor_enabled:
+                (
+                    stop_exits,
+                    stop_trails,
+                    stop_no_fills,
+                    stop_write_errors,
+                ) = await self._evaluate_stops_for_symbols(updated_symbols)
+
         order_msgs = await self.subscriber.pull(
             self.settings.pubsub_subscription_live_orders,
             max_messages=self.settings.pubsub_pull_max_messages,
@@ -145,14 +185,20 @@ class StreamRunner:
             await self.subscriber.acknowledge(self.settings.pubsub_subscription_live_orders, acks)
 
         return BatchStats(
+            books_pulled=len(books_msgs),
+            books_applied=books_applied,
             orders_pulled=len(order_msgs),
             parse_errors=parse_errors,
             filled=filled,
             no_fills=no_fills,
-            acked=len(acks),
+            acked=len(book_acks) + len(acks),
             skipped_duplicate=skipped_duplicate,
             safety_rejected=safety_rejected,
             dry_run_skipped=dry_run_skipped,
+            stop_exits=stop_exits,
+            stop_trails=stop_trails,
+            stop_no_fills=stop_no_fills,
+            stop_write_errors=stop_write_errors,
         )
 
     async def _flush_acks_on_shutdown(self, acks: list[str]) -> None:
@@ -165,6 +211,179 @@ class StreamRunner:
             logger.exception(
                 "ack flush failed during fail-fast shutdown (acks=%d will redeliver)", len(acks)
             )
+
+    def _consume_books(self, messages: list[PulledMessage]) -> tuple[int, list[str], set[str]]:
+        applied = 0
+        acks: list[str] = []
+        updated: set[str] = set()
+        for msg in messages:
+            book = _parse_book(msg)
+            acks.append(msg.ack_id)
+            if book is None:
+                continue
+            existing = self.book_cache.get(book.symbol)
+            if existing is not None and book.timestamp < existing.timestamp:
+                logger.info(
+                    "book skipped: stale update symbol=%s incoming=%s cached=%s",
+                    book.symbol,
+                    book.timestamp.isoformat(),
+                    existing.timestamp.isoformat(),
+                )
+                continue
+            self.book_cache[book.symbol] = book
+            updated.add(book.symbol)
+            applied += 1
+        return applied, acks, updated
+
+    async def _ensure_live_position_cache_fresh(self) -> None:
+        now = self.monotonic()
+        if (
+            self.live_cache_loaded_at is not None
+            and now - self.live_cache_loaded_at < self.settings.live_stop_cache_ttl_seconds
+        ):
+            return
+        positions = await self.supabase.list_live_positions()
+        self.live_position_cache = {p.symbol: p for p in positions}
+        self.live_cache_loaded_at = now
+
+    async def _evaluate_stops_for_symbols(self, symbols: set[str]) -> tuple[int, int, int, int]:
+        if not symbols:
+            return 0, 0, 0, 0
+        if self.settings.oms_live_dry_run:
+            logger.info(
+                "live stop monitor skipped (DRY_RUN)",
+                extra=event_extra("live_stop_monitor_skipped", reason="dry_run"),
+            )
+            return 0, 0, 0, 0
+        try:
+            await self._ensure_live_position_cache_fresh()
+        except SupabaseError:
+            logger.exception(
+                "live stop monitor cache refresh failed; will retry next cycle",
+                extra=event_extra("live_stop_monitor_failed", phase="cache_refresh"),
+            )
+            return 0, 0, 0, 1
+
+        exits = 0
+        trails = 0
+        no_fills = 0
+        write_errors = 0
+        now = self.wall_clock()
+
+        for symbol in symbols:
+            position = self.live_position_cache.get(symbol)
+            if position is None:
+                continue
+            book = self.book_cache.get(symbol)
+            if book is None or not book.bids:
+                logger.warning(
+                    "live stop monitor no_fill: no bids symbol=%s",
+                    symbol,
+                    extra=event_extra(
+                        "live_stop_monitor_no_fill",
+                        symbol=symbol,
+                        reason="no_bids",
+                    ),
+                )
+                no_fills += 1
+                continue
+            latest_bid = book.bids[0].price
+            decision = evaluate_live_stop(position=position, latest_bid=latest_bid, now=now)
+            if decision.action == "hold":
+                continue
+            try:
+                if decision.action == "exit":
+                    status = await self._run_live_stop_exit(
+                        position=position,
+                        reason=decision.reason or "",
+                        now=now,
+                    )
+                    if status == "filled":
+                        exits += 1
+                        self.live_position_cache.pop(symbol, None)
+                    else:
+                        no_fills += 1
+                else:
+                    assert decision.new_stop_loss_price is not None
+                    await self._run_live_stop_trail(
+                        symbol=symbol,
+                        new_stop_loss_price=decision.new_stop_loss_price,
+                    )
+                    self.live_position_cache[symbol] = position.model_copy(
+                        update={"stop_loss_price": decision.new_stop_loss_price}
+                    )
+                    trails += 1
+            except SupabaseError:
+                logger.exception(
+                    "live stop monitor write failed: symbol=%s action=%s",
+                    symbol,
+                    decision.action,
+                    extra=event_extra(
+                        "live_stop_monitor_failed",
+                        phase="write",
+                        symbol=symbol,
+                        action=decision.action,
+                    ),
+                )
+                write_errors += 1
+        return exits, trails, no_fills, write_errors
+
+    async def _run_live_stop_exit(
+        self,
+        *,
+        position: LivePosition,
+        reason: str,
+        now: datetime,
+    ) -> str:
+        order = OrderRequest(
+            unified_signal_id=None,
+            symbol=position.symbol,
+            side=Side.SELL,
+            quantity=position.quantity,
+            order_type=OrderType.MARKET,
+            trade_mode=TradeMode.LIVE,
+            signal_source=SignalSource.CONSENSUS,
+            created_at=now,
+        )
+        status, realized_pnl = await self._process_closeout_order(
+            order=order,
+            existing=position,
+            timeout_seconds=self.settings.order_fill_timeout_seconds,
+            log_phase="live_stop_monitor",
+        )
+        if status == "filled" and realized_pnl != Decimal("0"):
+            await self.supabase.add_realized_pnl(realized_pnl)
+        logger.warning(
+            "live stop monitor exit: symbol=%s reason=%s status=%s pnl=%s",
+            position.symbol,
+            reason,
+            status,
+            realized_pnl,
+            extra=event_extra(
+                "live_stop_exit",
+                symbol=position.symbol,
+                reason=reason,
+                status=status,
+                realized_pnl=str(realized_pnl),
+            ),
+        )
+        return status
+
+    async def _run_live_stop_trail(self, *, symbol: str, new_stop_loss_price: Decimal) -> None:
+        await self.supabase.update_live_position_stop_loss(
+            symbol=symbol,
+            stop_loss_price=str(new_stop_loss_price),
+        )
+        logger.info(
+            "live stop monitor trail: symbol=%s new_stop=%s",
+            symbol,
+            new_stop_loss_price,
+            extra=event_extra(
+                "live_stop_trail",
+                symbol=symbol,
+                new_stop_loss_price=str(new_stop_loss_price),
+            ),
+        )
 
     async def _process_order(self, order: OrderRequest) -> str:
         """``"filled" | "no_fill" | "skipped_duplicate" | "safety_rejected" | "dry_run_skipped"``。
@@ -937,7 +1156,12 @@ class StreamRunner:
         )
 
     async def _process_closeout_order(
-        self, *, order: OrderRequest, existing: LivePosition | None
+        self,
+        *,
+        order: OrderRequest,
+        existing: LivePosition | None,
+        timeout_seconds: float | None = None,
+        log_phase: str = "closeout",
     ) -> tuple[str, Decimal]:
         """closeout 1 件分。実発注 → 約定確認 → Supabase 書込。
 
@@ -962,7 +1186,7 @@ class StreamRunner:
                 order.symbol,
                 extra=event_extra(
                     "broker_order_failed",
-                    phase="closeout_sendorder",
+                    phase=f"{log_phase}_sendorder",
                     symbol=order.symbol,
                     order_id=str(order.order_id),
                     broker_status_code=exc.status_code,
@@ -978,7 +1202,7 @@ class StreamRunner:
                 send_resp,
                 extra=event_extra(
                     "broker_order_rejected",
-                    phase="closeout",
+                    phase=log_phase,
                     symbol=order.symbol,
                     order_id=str(order.order_id),
                     broker_result=send_resp.get("Result"),
@@ -993,7 +1217,11 @@ class StreamRunner:
 
         fill = await self._poll_until_filled(
             kabu_order_id,
-            timeout_seconds=self.settings.closeout_order_fill_timeout_seconds,
+            timeout_seconds=(
+                self.settings.closeout_order_fill_timeout_seconds
+                if timeout_seconds is None
+                else timeout_seconds
+            ),
         )
         if fill is None:
             await self._best_effort_cancel(kabu_order_id)
@@ -1016,7 +1244,7 @@ class StreamRunner:
                 update.error,
                 extra=event_extra(
                     "order_apply_fill_failed",
-                    phase="closeout",
+                    phase=log_phase,
                     symbol=order.symbol,
                     reason=update.error,
                     order_id=str(order.order_id),
@@ -1032,19 +1260,24 @@ class StreamRunner:
             order=order,
             fill=fill,
             broker_order_id=kabu_order_id,
-            phase="closeout",
+            phase=log_phase,
         )
 
         await self.supabase.insert_trade_live(record)
         await self._write_position_change(existing=existing, update=update, symbol=order.symbol)
+        filled_event = (
+            "closeout_order_filled" if log_phase == "closeout" else f"{log_phase}_order_filled"
+        )
         logger.info(
-            "closeout order filled: symbol=%s qty=%d price=%s pnl=%s",
+            "%s order filled: symbol=%s qty=%d price=%s pnl=%s",
+            log_phase,
             record.symbol,
             record.quantity,
             record.price,
             update.realized_pnl,
             extra=event_extra(
-                "closeout_order_filled",
+                filled_event,
+                phase=log_phase,
                 symbol=record.symbol,
                 side=record.side.value,
                 quantity=record.quantity,
@@ -1153,6 +1386,30 @@ def _parse_order(msg: PulledMessage) -> OrderRequest | None:
         return OrderRequest.model_validate(payload)
     except ValidationError:
         logger.exception("order schema invalid: message_id=%s", msg.message_id)
+        return None
+
+
+def _parse_book(msg: PulledMessage) -> OrderBookSnapshot | None:
+    """raw-market-data message parser for OrderBookSnapshot.
+
+    TickData messages are ignored. The feeder sets Pub/Sub attributes, but the
+    emulator client exposes only payload here, so detection stays payload-based.
+    """
+
+    try:
+        payload: Any = json.loads(msg.data.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        logger.exception("book parse failed: message_id=%s", msg.message_id)
+        return None
+    if not isinstance(payload, dict):
+        logger.warning("book parse skipped (not an object): message_id=%s", msg.message_id)
+        return None
+    if "bids" not in payload or "asks" not in payload:
+        return None
+    try:
+        return OrderBookSnapshot.model_validate(payload)
+    except ValidationError:
+        logger.exception("book schema invalid: message_id=%s", msg.message_id)
         return None
 
 

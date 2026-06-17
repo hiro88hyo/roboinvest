@@ -14,6 +14,13 @@ class DynamicScoringConfig:
     weight_volatility: float = 1.0
     weight_volume_surge: float = 1.0
     weight_momentum: float = 1.0
+    weight_risk_penalty: float = 1.0
+    risk_volatility_z_weight: float = 0.75
+    risk_negative_momentum_z_weight: float = 1.0
+    risk_volume_surge_z_weight: float = 0.5
+    risk_overheat_momentum_z_weight: float = 0.5
+    risk_volume_surge_z: float = 1.5
+    risk_overheat_momentum_z: float = 1.5
     volatility_window: int = 20
     momentum_window: int = 20
     volume_surge_short: int = 5
@@ -50,6 +57,8 @@ def score_candidates(
                 "symbol": pl.Utf8,
                 "symbol_name": pl.Utf8,
                 "score": pl.Float64,
+                "opportunity_score": pl.Float64,
+                "risk_penalty": pl.Float64,
                 "volatility": pl.Float64,
                 "volume_surge": pl.Float64,
                 "momentum": pl.Float64,
@@ -98,18 +107,44 @@ def score_candidates(
         )
     )
 
-    scored = agg.with_columns(
-        [
-            _zscore(pl.col("volatility")).alias("z_vol"),
-            _zscore(pl.col("volume_surge")).alias("z_surge"),
-            _zscore(pl.col("momentum")).alias("z_mom"),
-        ]
-    ).with_columns(
-        (
-            pl.col("z_vol") * config.weight_volatility
-            + pl.col("z_surge") * config.weight_volume_surge
-            + pl.col("z_mom") * config.weight_momentum
-        ).alias("score")
+    scored = (
+        agg.with_columns(
+            [
+                _zscore(pl.col("volatility")).alias("z_vol"),
+                _zscore(pl.col("volume_surge")).alias("z_surge"),
+                _zscore(pl.col("momentum")).alias("z_mom"),
+            ]
+        )
+        .with_columns(
+            [
+                (
+                    pl.col("z_vol") * config.weight_volatility
+                    + pl.col("z_surge") * config.weight_volume_surge
+                    + pl.col("z_mom") * config.weight_momentum
+                ).alias("opportunity_score"),
+                (
+                    pl.max_horizontal(pl.col("z_vol"), pl.lit(0.0))
+                    * config.risk_volatility_z_weight
+                    + pl.max_horizontal(-pl.col("z_mom"), pl.lit(0.0))
+                    * config.risk_negative_momentum_z_weight
+                    + pl.max_horizontal(
+                        pl.col("z_surge") - config.risk_volume_surge_z,
+                        pl.lit(0.0),
+                    )
+                    * config.risk_volume_surge_z_weight
+                    + pl.max_horizontal(
+                        pl.col("z_mom") - config.risk_overheat_momentum_z,
+                        pl.lit(0.0),
+                    )
+                    * config.risk_overheat_momentum_z_weight
+                ).alias("risk_penalty"),
+            ]
+        )
+        .with_columns(
+            (
+                pl.col("opportunity_score") - pl.col("risk_penalty") * config.weight_risk_penalty
+            ).alias("score")
+        )
     )
 
     result = (
@@ -123,6 +158,8 @@ def score_candidates(
             "symbol",
             "symbol_name",
             "score",
+            "opportunity_score",
+            "risk_penalty",
             "volatility",
             "volume_surge",
             "momentum",
@@ -135,6 +172,8 @@ def to_watchlist_rows(scored: pl.DataFrame, *, valid_date_iso: str) -> list[dict
     rows: list[dict[str, object]] = []
     for row in scored.to_dicts():
         reasons = {
+            "opportunity_score": row.get("opportunity_score", row["score"]),
+            "risk_penalty": row.get("risk_penalty", 0.0),
             "volatility": row["volatility"],
             "volume_surge": row["volume_surge"],
             "momentum": row["momentum"],

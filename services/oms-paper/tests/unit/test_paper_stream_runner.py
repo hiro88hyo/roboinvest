@@ -262,6 +262,74 @@ async def test_book_pulled_first_then_order_fills() -> None:
     assert pos_body["max_hold_days"] == 5
 
 
+async def test_day_stop_loss_breach_triggers_exit() -> None:
+    book = make_order_book(symbol="7203", bids=(("950", 500),))
+    pubsub = _PubSubRouter(
+        book_batches=[_pull_response([("bk-1", book.model_dump_json().encode("utf-8"))])],
+    )
+    supabase = _SupabaseRouter(
+        list_position_rows=[
+            [
+                _position_row(
+                    quantity=100,
+                    entry_price="1000",
+                    stop_loss_price="950",
+                    target_price="1100",
+                )
+            ]
+        ],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+
+    assert stats.day_stop_exits == 1
+    assert stats.day_stop_trails == 0
+    assert stats.day_stop_no_fills == 0
+    assert stats.day_stop_write_errors == 0
+    assert stats.swing_exits == 0
+
+    insert_trade = next(
+        r for r in supabase.requests if r.method == "POST" and r.url.path == "/rest/v1/trades_paper"
+    )
+    body = json.loads(insert_trade.content.decode())[0]
+    assert body["symbol"] == "7203"
+    assert body["side"] == "SELL"
+    assert body["quantity"] == 100
+    assert body["price"] == "950"
+    assert body["unified_signal_id"] is None
+
+    deletes = [r for r in supabase.requests if r.method == "DELETE"]
+    assert len(deletes) == 1
+
+
+async def test_day_trailing_stop_patches_stop_loss_only() -> None:
+    book = make_order_book(symbol="7203", bids=(("1100", 500),))
+    pubsub = _PubSubRouter(
+        book_batches=[_pull_response([("bk-1", book.model_dump_json().encode("utf-8"))])],
+    )
+    supabase = _SupabaseRouter(
+        list_position_rows=[
+            [_position_row(quantity=100, stop_loss_price="980", trailing_stop_pct="0.02")]
+        ],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+
+    assert stats.day_stop_trails == 1
+    assert stats.day_stop_exits == 0
+    patches = [r for r in supabase.requests if r.method == "PATCH"]
+    assert len(patches) == 1
+    assert json.loads(patches[0].content.decode()) == {"stop_loss_price": "1078"}
+    writes = [r for r in supabase.requests if r.method in {"POST", "DELETE"}]
+    assert writes == []
+
+
 async def test_order_with_no_book_in_cache_is_no_fill_and_acked() -> None:
     order = make_order_request(symbol="7203", side=Side.BUY, quantity=100)
     pubsub = _PubSubRouter(
@@ -804,7 +872,12 @@ async def test_swing_skips_day_positions_in_cache() -> None:
     async def _body(runner: StreamRunner) -> Any:
         return await runner.run_once()
 
-    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        settings=_settings(paper_day_stop_monitor_enabled=False),
+        run_body=_body,
+    )
     assert stats.swing_exits == 0
     writes = [r for r in supabase.requests if r.method in {"POST", "PATCH", "DELETE"}]
     assert writes == []

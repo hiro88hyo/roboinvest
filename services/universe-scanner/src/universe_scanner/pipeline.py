@@ -59,6 +59,13 @@ async def run_pipeline(
         weight_volatility=settings.scan_weight_volatility,
         weight_volume_surge=settings.scan_weight_volume_surge,
         weight_momentum=settings.scan_weight_momentum,
+        weight_risk_penalty=settings.scan_weight_risk_penalty,
+        risk_volatility_z_weight=settings.scan_risk_volatility_z_weight,
+        risk_negative_momentum_z_weight=settings.scan_risk_negative_momentum_z_weight,
+        risk_volume_surge_z_weight=settings.scan_risk_volume_surge_z_weight,
+        risk_overheat_momentum_z_weight=settings.scan_risk_overheat_momentum_z_weight,
+        risk_volume_surge_z=settings.scan_risk_volume_surge_z,
+        risk_overheat_momentum_z=settings.scan_risk_overheat_momentum_z,
     )
 
     async with (

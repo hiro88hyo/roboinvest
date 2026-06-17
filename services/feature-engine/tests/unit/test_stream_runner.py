@@ -513,22 +513,18 @@ async def test_accepted_tick_features_are_archived(tmp_path: Any) -> None:
     files = list(tmp_path.rglob("*.jsonl"))
     assert len(files) == 1
     rows = [json.loads(line) for line in files[0].read_text(encoding="utf-8").splitlines()]
-    assert rows == [
-        {
-            "symbol": "7203",
-            "timestamp": "2026-04-20T09:00:00Z",
-            "price": "2500",
-            "sma_short": None,
-            "sma_long": None,
-            "rsi": None,
-            "vwap": None,
-            "volume_ratio": None,
-            "bollinger_upper": None,
-            "bollinger_middle": None,
-            "bollinger_lower": None,
-            "order_book": None,
-        }
-    ]
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["symbol"] == "7203"
+    assert row["timestamp"] == "2026-04-20T09:00:00Z"
+    assert row["price"] == "2500"
+    assert row["sma_short"] is None
+    assert row["volume_ratio"] is None
+    assert row["bollinger_lower"] is None
+    assert row["order_book"] is None
+    assert row["best_bid"] is None
+    assert row["spread_bps"] is None
+    assert row["session_phase"] == "after_close"
 
 
 async def test_order_book_is_persisted_to_book_warm(tmp_path: Any) -> None:

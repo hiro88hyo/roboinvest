@@ -33,6 +33,7 @@ class OmsLiveSettings(BaseSettings):
     pubsub_project_id: str = ""
     pubsub_emulator_host: str = ""
     pubsub_subscription_live_orders: str = "oms-live-live-orders"
+    pubsub_subscription_raw_market_data: str = "oms-live-raw-books"
     pubsub_pull_max_messages: int = 100
     pubsub_ack_deadline_seconds: int = 30
 
@@ -67,6 +68,13 @@ class OmsLiveSettings(BaseSettings):
     oms_live_dry_run: bool = False
     """True なら kabu に sendorder せず log だけ出して ack する。Supabase 書込も
     一切行わない。closeout でも同様に no-op になる。Phase 3 検証時のセーフティ。"""
+
+    oms_live_stop_monitor_enabled: bool = False
+    """True なら raw-market-data の板更新を購読し、live positions の stop/target/trailing
+    条件を OMS Live 側で評価する。実発注に直結するため、paper/dry-run 観測後に有効化する。"""
+
+    live_stop_cache_ttl_seconds: float = 30.0
+    """live position の stop monitor 用キャッシュ TTL。"""
 
     # 空文字を指定するとキャッシュ無効 (feeder と oms-live で同じパスを設定する)
     kabu_token_cache_file: str = "/tmp/kabu_token_cache.json"

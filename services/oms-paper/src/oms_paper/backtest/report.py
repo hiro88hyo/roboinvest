@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 from math import sqrt
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -42,10 +43,15 @@ class BacktestReport(BaseModel):
     max_spread_bps: Decimal | None = None
     average_fill_ratio: Decimal = Decimal("0")
     partial_fill_count: int = 0
+    no_fill_count: int = 0
+    no_fill_rate: Decimal = Decimal("0")
+    limit_no_fill_count: int = 0
     buy_order_count: int = 0
     sell_order_count: int = 0
     average_opposite_depth_quantity: Decimal = Decimal("0")
     average_order_book_imbalance: Decimal | None = None
+    average_spread_ticks: Decimal | None = None
+    max_spread_ticks: Decimal | None = None
 
 
 class ExecutionQualityRecord(BaseModel):
@@ -61,6 +67,8 @@ class ExecutionQualityRecord(BaseModel):
     best_bid: Decimal | None = None
     best_ask: Decimal | None = None
     spread_bps: Decimal | None = None
+    tick_size: Decimal | None = None
+    spread_ticks: Decimal | None = None
     opposite_depth_quantity: int
     same_side_depth_quantity: int
     order_book_imbalance: Decimal | None = None
@@ -69,6 +77,8 @@ class ExecutionQualityRecord(BaseModel):
 def build_backtest_report(
     closed_trades: list[ClosedTrade],
     execution_quality: list[ExecutionQualityRecord] | None = None,
+    no_fills: list[Any] | None = None,
+    order_count: int | None = None,
 ) -> BacktestReport:
     """閉じたトレード列から収益指標を作る。
 
@@ -102,7 +112,10 @@ def build_backtest_report(
     gross_loss = abs(sum(losses, Decimal("0")))
 
     quality = execution_quality or []
+    rejected = no_fills or []
+    effective_order_count = order_count if order_count is not None else len(quality)
     spreads = [q.spread_bps for q in quality if q.spread_bps is not None]
+    spread_ticks = [q.spread_ticks for q in quality if q.spread_ticks is not None]
     imbalances = [q.order_book_imbalance for q in quality if q.order_book_imbalance is not None]
 
     return BacktestReport(
@@ -122,6 +135,9 @@ def build_backtest_report(
         max_spread_bps=max(spreads) if spreads else None,
         average_fill_ratio=_average([q.fill_ratio for q in quality]) or Decimal("0"),
         partial_fill_count=sum(1 for q in quality if 0 < q.filled_quantity < q.requested_quantity),
+        no_fill_count=len(rejected),
+        no_fill_rate=_ratio(Decimal(len(rejected)), Decimal(effective_order_count)),
+        limit_no_fill_count=sum(1 for q in rejected if _is_limit_no_fill_reason(q)),
         buy_order_count=sum(1 for q in quality if q.side is Side.BUY),
         sell_order_count=sum(1 for q in quality if q.side is Side.SELL),
         average_opposite_depth_quantity=_average(
@@ -129,6 +145,8 @@ def build_backtest_report(
         )
         or Decimal("0"),
         average_order_book_imbalance=_average(imbalances),
+        average_spread_ticks=_average(spread_ticks),
+        max_spread_ticks=max(spread_ticks) if spread_ticks else None,
     )
 
 
@@ -142,6 +160,11 @@ def _average(values: list[Decimal]) -> Decimal | None:
     if not values:
         return None
     return sum(values, Decimal("0")) / Decimal(len(values))
+
+
+def _is_limit_no_fill_reason(record: Any) -> bool:
+    reason = getattr(record, "reason", None)
+    return reason in {"limit_not_crossed", "missing_limit_price"}
 
 
 def _max_drawdown(pnls: list[Decimal]) -> Decimal:

@@ -13,8 +13,11 @@ class BacktestGateConfig:
     max_drawdown: Decimal | None = None
     min_average_fill_ratio: Decimal = Decimal("0.95")
     max_partial_fill_rate: Decimal = Decimal("0.05")
+    max_no_fill_rate: Decimal = Decimal("0.05")
     max_average_spread_bps: Decimal = Decimal("30")
     max_spread_bps: Decimal = Decimal("100")
+    max_average_spread_ticks: Decimal = Decimal("2")
+    max_spread_ticks: Decimal = Decimal("5")
 
 
 DEFAULT_BACKTEST_GATE_CONFIG = BacktestGateConfig()
@@ -40,8 +43,13 @@ def check_backtest_report(
                 "execution_quality_count",
                 "average_fill_ratio",
                 "partial_fill_count",
+                "no_fill_count",
+                "no_fill_rate",
+                "limit_no_fill_count",
                 "average_spread_bps",
                 "max_spread_bps",
+                "average_spread_ticks",
+                "max_spread_ticks",
                 "average_order_book_imbalance",
             )
         },
@@ -85,6 +93,10 @@ def backtest_gate_failures(
     if partial_rate > config.max_partial_fill_rate:
         failures.append(f"partial_fill_rate {partial_rate} > {config.max_partial_fill_rate}")
 
+    no_fill_rate = _as_decimal(payload, "no_fill_rate") or Decimal("0")
+    if no_fill_rate > config.max_no_fill_rate:
+        failures.append(f"no_fill_rate {no_fill_rate} > {config.max_no_fill_rate}")
+
     avg_spread = _as_decimal(payload, "average_spread_bps")
     if avg_spread is None:
         failures.append("average_spread_bps is null")
@@ -96,6 +108,20 @@ def backtest_gate_failures(
         failures.append("max_spread_bps is null")
     elif max_spread > config.max_spread_bps:
         failures.append(f"max_spread_bps {max_spread} > {config.max_spread_bps}")
+
+    avg_spread_ticks = _as_decimal(payload, "average_spread_ticks")
+    if avg_spread_ticks is None:
+        failures.append("average_spread_ticks is null")
+    elif avg_spread_ticks > config.max_average_spread_ticks:
+        failures.append(
+            f"average_spread_ticks {avg_spread_ticks} > {config.max_average_spread_ticks}"
+        )
+
+    max_spread_ticks = _as_decimal(payload, "max_spread_ticks")
+    if max_spread_ticks is None:
+        failures.append("max_spread_ticks is null")
+    elif max_spread_ticks > config.max_spread_ticks:
+        failures.append(f"max_spread_ticks {max_spread_ticks} > {config.max_spread_ticks}")
 
     return failures
 

@@ -9,7 +9,7 @@ from typing import Any
 from trade_contracts.enums import Action, SignalSource
 from trade_contracts.features import ProcessedFeatures
 from trade_contracts.logging import event_extra
-from trade_contracts.signal import StrategySignal
+from trade_contracts.signal import StrategySignal, execution_fields_from
 
 from .llm.base import LLMClient, LLMError
 from .parser import parse_response
@@ -147,6 +147,7 @@ class AiStrategy:
             action=decision.action,
             confidence=decision.confidence,
             reasoning=decision.reasoning or None,
+            **execution_fields_from(features),
             created_at=features.timestamp,
         )
 

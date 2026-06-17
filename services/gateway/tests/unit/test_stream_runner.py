@@ -59,6 +59,9 @@ def _unified_payload(
     signal_id: UUID | None = None,
     strategy_signal_id_a: UUID | None = None,
     strategy_signal_id_b: UUID | None = None,
+    spread_bps: str | None = None,
+    spread_ticks: str | None = None,
+    ask_depth_5: int | None = None,
     created_at: str = "2026-04-20T09:00:00+00:00",
 ) -> bytes:
     body: dict[str, Any] = {
@@ -75,6 +78,9 @@ def _unified_payload(
         "target_price": None,
         "trailing_stop_pct": None,
         "max_hold_days": None,
+        "spread_bps": spread_bps,
+        "spread_ticks": spread_ticks,
+        "ask_depth_5": ask_depth_5,
         "created_at": created_at,
     }
     return json.dumps(body).encode("utf-8")
@@ -385,7 +391,8 @@ async def test_buy_with_no_existing_position_publishes_to_live_orders() -> None:
     # raw qty = 200 → floor to 200 shares (lot 100)
     assert order["quantity"] == 200
     assert order["trade_mode"] == "live"
-    assert order["order_type"] == "MARKET"
+    assert order["order_type"] == "LIMIT"
+    assert order["limit_price"] == "2500"
     reserve_requests = [
         req
         for req in supabase.requests
@@ -400,6 +407,105 @@ async def test_buy_with_no_existing_position_publishes_to_live_orders() -> None:
     assert reserve_payload["p_notional_amount"] == "500000"
 
     assert json.loads(pubsub.acked[0].content.decode()) == {"ackIds": ["a1"]}
+
+
+async def test_execution_gate_log_only_keeps_publishing_wide_spread(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response(
+                [
+                    (
+                        "a1",
+                        _unified_payload(
+                            action=Action.BUY,
+                            stop_loss_price="2400",
+                            spread_bps="60",
+                            ask_depth_5=1000,
+                        ),
+                    )
+                ]
+            )
+        ]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trade_mode="live")],
+        positions_quantity_rows=[[]],
+        positions_price_rows=[[{"current_price": "2500"}]],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    caplog.set_level(logging.INFO, logger="gateway.streaming.runner")
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        settings=_settings(
+            liquidity_sizing_enabled=False,
+            execution_gate_log_only_enabled=True,
+            execution_gate_guard_enabled=False,
+            execution_gate_max_spread_bps=Decimal("30"),
+        ),
+        run_body=_body,
+    )
+
+    assert stats.approved == 1
+    assert len(pubsub.published) == 1
+    records = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "execution_gate_would_reject"
+    ]
+    assert len(records) == 1
+    record: Any = records[0]
+    assert record.reason == "execution_spread_too_wide"
+    assert record.spread_bps == 60.0
+    assert record.guard_enabled is False
+
+
+async def test_execution_gate_guard_rejects_insufficient_ask_depth() -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response(
+                [
+                    (
+                        "a1",
+                        _unified_payload(
+                            action=Action.BUY,
+                            stop_loss_price="2400",
+                            spread_bps="10",
+                            ask_depth_5=100,
+                        ),
+                    )
+                ]
+            )
+        ]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trade_mode="live")],
+        positions_quantity_rows=[[]],
+        positions_price_rows=[[{"current_price": "2500"}]],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        settings=_settings(
+            liquidity_sizing_enabled=False,
+            execution_gate_guard_enabled=True,
+            execution_gate_min_ask_depth_multiplier=Decimal("3"),
+        ),
+        run_body=_body,
+    )
+
+    assert stats.approved == 0
+    assert stats.rejected == 1
+    assert len(pubsub.published) == 0
 
 
 async def test_live_buy_rejected_when_risk_reservation_fails(caplog: Any) -> None:
@@ -867,6 +973,82 @@ async def test_market_regime_guard_rejects_buy_when_enabled(caplog: Any) -> None
         r for r in supabase.requests if r.method == "GET" and r.url.path == "/rest/v1/positions"
     ]
     assert position_reads == []
+
+
+async def test_market_regime_paper_guard_rejects_paper_buy(caplog: Any) -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response(
+                [("a1", _unified_payload(action=Action.BUY, price="2500", stop_loss_price="2400"))]
+            )
+        ]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trade_mode="paper")],
+        market_regime_rows=[[_market_regime_row(regime="RISK_OFF", buy_enabled=False)]],
+        positions_quantity_rows=[],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    caplog.set_level(logging.INFO, logger="gateway.streaming.runner")
+
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        settings=_settings(market_regime_paper_guard_enabled=True),
+        run_body=_body,
+    )
+
+    assert stats.approved == 0
+    assert stats.rejected == 1
+    assert pubsub.published == []
+    rejected = [
+        record for record in caplog.records if getattr(record, "event", None) == "signal_rejected"
+    ]
+    assert len(rejected) == 1
+    assert rejected[0].trade_mode == "paper"
+    assert rejected[0].reason == "market_regime_risk_off"
+
+
+async def test_market_regime_paper_guard_does_not_reject_live_buy(caplog: Any) -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response(
+                [("a1", _unified_payload(action=Action.BUY, price="2500", stop_loss_price="2400"))]
+            )
+        ]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trade_mode="live")],
+        market_regime_rows=[[_market_regime_row(regime="RISK_OFF", buy_enabled=False)]],
+        positions_quantity_rows=[[]],
+        positions_price_rows=[[{"quantity": 100, "current_price": "2500", "entry_price": "2500"}]],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    caplog.set_level(logging.INFO, logger="gateway.streaming.runner")
+
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        settings=_settings(liquidity_sizing_enabled=False, market_regime_paper_guard_enabled=True),
+        run_body=_body,
+    )
+
+    assert stats.approved == 1
+    assert stats.rejected == 0
+    assert len(pubsub.published) == 1
+    would_reject = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "market_regime_would_reject"
+    ]
+    assert len(would_reject) == 1
+    assert would_reject[0].guard_enabled is False
 
 
 async def test_market_regime_guard_does_not_block_sell() -> None:

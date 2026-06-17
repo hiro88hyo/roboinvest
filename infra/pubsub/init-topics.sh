@@ -50,7 +50,10 @@ ok = True
 for entry in subs:
     name  = entry["name"]
     topic = entry["topic"]
-    body  = json.dumps({"topic": f"projects/{project}/topics/{topic}"}).encode()
+    payload = {"topic": f"projects/{project}/topics/{topic}"}
+    if "filter" in entry:
+        payload["filter"] = entry["filter"]
+    body = json.dumps(payload).encode()
     req   = urllib.request.Request(
         f"{base}/subscriptions/{name}", data=body, method="PUT",
         headers={"Content-Type": "application/json"},

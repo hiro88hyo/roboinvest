@@ -169,7 +169,12 @@ def _run_backtest_cmd(
         write_jsonl(summary.no_fills, output_rejected)
     report_path = output_report or (output_positions.parent / "backtest_report.json")
     write_backtest_report(
-        build_backtest_report(summary.closed_trades, summary.execution_quality),
+        build_backtest_report(
+            summary.closed_trades,
+            summary.execution_quality,
+            no_fills=summary.no_fills,
+            order_count=summary.order_count,
+        ),
         report_path,
     )
 

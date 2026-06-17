@@ -37,6 +37,8 @@ def test_book_received_before_order_enables_fill() -> None:
     assert quality.opposite_depth_quantity == 200
     assert quality.same_side_depth_quantity == 700
     assert quality.spread_bps == Decimal("10.00500250125062531265632816")
+    assert quality.tick_size == Decimal("1")
+    assert quality.spread_ticks == Decimal("1")
 
 
 def test_book_at_same_timestamp_applies_before_order() -> None:

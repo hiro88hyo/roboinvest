@@ -55,6 +55,8 @@ from ..clients.kabu import KabuWalletClient
 from ..clients.pubsub import PubSubPublisher, PubSubSubscriber, PulledMessage
 from ..clients.supabase import DailyLiquiditySnapshot, MarketRegimeState, SupabaseClient
 from ..config import GatewaySettings, RiskConfig
+from ..execution_gate import ExecutionGateConfig
+from ..execution_gate import reject_reason as execution_gate_reject_reason
 from ..order_archive import OrderArchiveWriter
 from ..order_builder import build as build_order
 from ..router import TopicRouting, resolve_topic
@@ -212,7 +214,7 @@ class StreamRunner:
         regime = await self._read_market_regime_for_signal(signal=signal, now=now)
         if regime is not None and self._market_regime_blocks_buy(signal=signal, regime=regime):
             reason = "market_regime_risk_off"
-            if self.settings.market_regime_gateway_guard_enabled:
+            if self._market_regime_guard_enabled(trade_mode=trade_mode):
                 self._log_reject(signal, reason, trade_mode)
                 return _Decision(approved=False, kill_switch_fired=False)
             self._log_market_regime_would_reject(
@@ -301,6 +303,18 @@ class StreamRunner:
         if quantity is None:
             self._log_reject(signal, "liquidity_qty_cap_below_min_lot", trade_mode)
             return _Decision(approved=False, kill_switch_fired=False)
+
+        execution_reason = self._execution_gate_reject_reason(signal=signal, quantity=quantity)
+        if execution_reason is not None:
+            if self.settings.execution_gate_guard_enabled:
+                self._log_reject(signal, execution_reason, trade_mode)
+                return _Decision(approved=False, kill_switch_fired=False)
+            self._log_execution_gate_would_reject(
+                signal=signal,
+                trade_mode=trade_mode,
+                quantity=quantity,
+                reason=execution_reason,
+            )
 
         order = build_order(
             signal=signal,
@@ -620,6 +634,11 @@ class StreamRunner:
             return False
         return regime.regime in {"RISK_OFF", "CRASH"} or not regime.buy_enabled
 
+    def _market_regime_guard_enabled(self, *, trade_mode: TradeMode) -> bool:
+        return self.settings.market_regime_gateway_guard_enabled or (
+            trade_mode is TradeMode.PAPER and self.settings.market_regime_paper_guard_enabled
+        )
+
     def _cap_buy_quantity(
         self,
         *,
@@ -748,6 +767,24 @@ class StreamRunner:
             return None
         return min(caps)
 
+    def _execution_gate_reject_reason(
+        self, *, signal: UnifiedTradeSignal, quantity: int
+    ) -> str | None:
+        if (
+            not self.settings.execution_gate_log_only_enabled
+            and not self.settings.execution_gate_guard_enabled
+        ):
+            return None
+        return execution_gate_reject_reason(
+            signal=signal,
+            quantity=quantity,
+            config=ExecutionGateConfig(
+                max_spread_bps=self.settings.execution_gate_max_spread_bps,
+                max_spread_ticks=self.settings.execution_gate_max_spread_ticks,
+                min_ask_depth_multiplier=self.settings.execution_gate_min_ask_depth_multiplier,
+            ),
+        )
+
     def _log_reject(self, signal: UnifiedTradeSignal, reason: str, trade_mode: TradeMode) -> None:
         self._record_reject_summary(reason=reason)
         logger.info(
@@ -834,7 +871,7 @@ class StreamRunner:
                 market_regime_valid_date=regime.valid_date.isoformat(),
                 market_regime_rationale=regime.rationale,
                 market_regime_metrics=regime.metrics,
-                guard_enabled=self.settings.market_regime_gateway_guard_enabled,
+                guard_enabled=self._market_regime_guard_enabled(trade_mode=trade_mode),
             ),
         )
 
@@ -871,6 +908,54 @@ class StreamRunner:
                 daily_pnl=float(state.daily_pnl),
                 soft_loss_limit_jpy=float(self.settings.soft_loss_limit_jpy),
                 guard_enabled=self.settings.soft_loss_throttle_guard_enabled,
+            ),
+        )
+
+    def _log_execution_gate_would_reject(
+        self,
+        *,
+        signal: UnifiedTradeSignal,
+        trade_mode: TradeMode,
+        quantity: int,
+        reason: str,
+    ) -> None:
+        logger.info(
+            (
+                "execution gate would reject: symbol=%s action=%s reason=%s "
+                "trade_mode=%s signal_id=%s qty=%d spread_bps=%s spread_ticks=%s "
+                "ask_depth_5=%s"
+            ),
+            signal.symbol,
+            signal.action.value,
+            reason,
+            trade_mode.value,
+            signal.signal_id,
+            quantity,
+            signal.spread_bps,
+            signal.spread_ticks,
+            signal.ask_depth_5,
+            extra=event_extra(
+                "execution_gate_would_reject",
+                trade_mode=trade_mode.value,
+                symbol=signal.symbol,
+                signal_id=str(signal.signal_id),
+                reason=reason,
+                source=signal.signal_source.value,
+                holding_type=signal.holding_type.value,
+                action=signal.action.value,
+                confidence=signal.confidence,
+                quantity=quantity,
+                spread_bps=float(signal.spread_bps) if signal.spread_bps is not None else None,
+                max_spread_bps=float(self.settings.execution_gate_max_spread_bps),
+                spread_ticks=(
+                    float(signal.spread_ticks) if signal.spread_ticks is not None else None
+                ),
+                max_spread_ticks=float(self.settings.execution_gate_max_spread_ticks),
+                ask_depth_5=signal.ask_depth_5,
+                min_ask_depth_multiplier=float(
+                    self.settings.execution_gate_min_ask_depth_multiplier
+                ),
+                guard_enabled=self.settings.execution_gate_guard_enabled,
             ),
         )
 

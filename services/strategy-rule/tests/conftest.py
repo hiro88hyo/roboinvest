@@ -28,6 +28,17 @@ def _make_features(
     bollinger_upper: Decimal | None = None,
     bollinger_middle: Decimal | None = None,
     bollinger_lower: Decimal | None = None,
+    best_bid: Decimal | None = None,
+    best_ask: Decimal | None = None,
+    spread_bps: Decimal | None = None,
+    tick_size: Decimal | None = None,
+    spread_ticks: Decimal | None = None,
+    bid_depth_5: int | None = None,
+    ask_depth_5: int | None = None,
+    book_imbalance_5: Decimal | None = None,
+    minutes_from_open: int | None = None,
+    minutes_to_close: int | None = None,
+    session_phase: str | None = None,
 ) -> ProcessedFeatures:
     return ProcessedFeatures(
         symbol=symbol,
@@ -41,6 +52,17 @@ def _make_features(
         bollinger_upper=bollinger_upper,
         bollinger_middle=bollinger_middle,
         bollinger_lower=bollinger_lower,
+        best_bid=best_bid,
+        best_ask=best_ask,
+        spread_bps=spread_bps,
+        tick_size=tick_size,
+        spread_ticks=spread_ticks,
+        bid_depth_5=bid_depth_5,
+        ask_depth_5=ask_depth_5,
+        book_imbalance_5=book_imbalance_5,
+        minutes_from_open=minutes_from_open,
+        minutes_to_close=minutes_to_close,
+        session_phase=session_phase,
     )
 
 

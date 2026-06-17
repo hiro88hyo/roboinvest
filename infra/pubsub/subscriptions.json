@@ -33,8 +33,18 @@
       "topic": "raw-market-data"
     },
     {
+      "name": "oms-paper-raw-books",
+      "topic": "raw-market-data",
+      "filter": "attributes.kind = \"book\""
+    },
+    {
       "name": "oms-live-live-orders",
       "topic": "live-orders"
+    },
+    {
+      "name": "oms-live-raw-books",
+      "topic": "raw-market-data",
+      "filter": "attributes.kind = \"book\""
     },
     {
       "name": "adr-0001-smoke-test-sub",

@@ -92,6 +92,8 @@ def run_backtest(
                     signal=signal,
                     quantity=check.adjusted_quantity,
                     trade_mode=state.trade_mode,
+                    entry_price=entry_price if signal.action is Action.BUY else None,
+                    default_stop_loss_spread_pct=risk_config.default_stop_loss_spread_pct,
                     created_at=stamp,
                 )
             )

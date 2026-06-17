@@ -272,6 +272,28 @@ class SupabaseClient:
         wait=wait_exponential(multiplier=1, min=1, max=10),
         retry=retry_if_exception_type((httpx.HTTPError, SupabaseError)),
     )
+    async def update_live_position_stop_loss(self, *, symbol: str, stop_loss_price: str) -> None:
+        """既存 live position の ``stop_loss_price`` だけを PATCH。"""
+        assert self._client is not None
+        resp = await self._client.patch(
+            "/rest/v1/positions",
+            params={"symbol": f"eq.{symbol}", "trade_type": "eq.live"},
+            headers={"Prefer": "return=minimal"},
+            json={"stop_loss_price": stop_loss_price},
+        )
+        self._raise_for_status(resp, table="positions", op="update")
+        logger.info(
+            "supabase update: positions(live) symbol=%s stop_loss_price=%s",
+            symbol,
+            stop_loss_price,
+        )
+
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((httpx.HTTPError, SupabaseError)),
+    )
     async def update_live_position_reconciled(
         self,
         *,

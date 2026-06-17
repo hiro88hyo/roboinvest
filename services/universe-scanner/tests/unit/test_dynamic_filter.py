@@ -71,6 +71,32 @@ def test_score_top_n_truncates():
     assert result.height == 2
 
 
+def test_risk_penalty_demotes_negative_momentum() -> None:
+    closes_a = [100.0 + i for i in range(25)]
+    closes_b = [150.0 - i for i in range(25)]
+    vols = [1000] * 25
+    ohlcv = pl.DataFrame(_series("A", closes_a, vols) + _series("B", closes_b, vols))
+
+    result = score_candidates(
+        candidates=_candidates(["A", "B"]),
+        ohlcv=ohlcv,
+        config=DynamicScoringConfig(
+            top_n=2,
+            weight_volatility=0.0,
+            weight_volume_surge=0.0,
+            weight_momentum=0.0,
+            weight_risk_penalty=1.0,
+            risk_negative_momentum_z_weight=2.0,
+            risk_volatility_z_weight=0.0,
+        ),
+    )
+
+    symbols = result.get_column("symbol").to_list()
+    penalties = dict(zip(symbols, result.get_column("risk_penalty").to_list(), strict=True))
+    assert symbols[0] == "A"
+    assert penalties["B"] > penalties["A"]
+
+
 def test_score_ignores_as_of_date_to_avoid_lookahead():
     ohlcv = pl.DataFrame(
         [
@@ -122,6 +148,8 @@ def test_to_watchlist_rows_shape():
                 "symbol": "7203",
                 "symbol_name": "Toyota",
                 "score": 1.23,
+                "opportunity_score": 1.5,
+                "risk_penalty": 0.27,
                 "volatility": 0.02,
                 "volume_surge": 1.5,
                 "momentum": 0.1,
@@ -136,4 +164,10 @@ def test_to_watchlist_rows_shape():
     assert math.isclose(cast(float, row["score"]), 1.23)
     reasons = row["selected_reasons"]
     assert isinstance(reasons, dict)
-    assert set(reasons.keys()) == {"volatility", "volume_surge", "momentum"}
+    assert set(reasons.keys()) == {
+        "opportunity_score",
+        "risk_penalty",
+        "volatility",
+        "volume_surge",
+        "momentum",
+    }

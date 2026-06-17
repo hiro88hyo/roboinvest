@@ -29,6 +29,9 @@ def _make_unified_signal(
     target_price: Decimal | None = None,
     trailing_stop_pct: Decimal | None = None,
     max_hold_days: int | None = None,
+    spread_bps: Decimal | None = None,
+    spread_ticks: Decimal | None = None,
+    ask_depth_5: int | None = None,
     created_at: datetime | None = None,
 ) -> UnifiedTradeSignal:
     return UnifiedTradeSignal(
@@ -42,6 +45,9 @@ def _make_unified_signal(
         target_price=target_price,
         trailing_stop_pct=trailing_stop_pct,
         max_hold_days=max_hold_days,
+        spread_bps=spread_bps,
+        spread_ticks=spread_ticks,
+        ask_depth_5=ask_depth_5,
         created_at=created_at or datetime(2026, 4, 23, 9, 0, tzinfo=UTC),
     )
 
