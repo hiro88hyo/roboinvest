@@ -71,6 +71,7 @@ CORE_SERVICES = (
     "feature-engine",
     "strategy-rule",
     "oms-live",
+    "oms-paper",
 )
 
 EXPECTED_ENV = {
@@ -88,6 +89,16 @@ EXPECTED_ENV = {
     "MARKET_REGIME_PAPER_GUARD_ENABLED": "true",
     "SOFT_LOSS_THROTTLE_GUARD_ENABLED": "true",
     "EXECUTION_GATE_GUARD_ENABLED": "true",
+    "OMS_LIVE_STOP_MONITOR_ENABLED": "false",
+    "OMS_LIVE_PUBSUB_SUBSCRIPTION_RAW_MARKET_DATA": "oms-live-raw-books",
+    "PAPER_DAY_STOP_MONITOR_ENABLED": "true",
+}
+
+EXPECTED_CONTAINER_ENV = {
+    ("oms-live", "PUBSUB_SUBSCRIPTION_RAW_MARKET_DATA"): "oms-live-raw-books",
+    ("oms-live", "OMS_LIVE_STOP_MONITOR_ENABLED"): "false",
+    ("oms-paper", "PUBSUB_SUBSCRIPTION_RAW_MARKET_DATA"): "oms-paper-raw-books",
+    ("oms-paper", "PAPER_DAY_STOP_MONITOR_ENABLED"): "true",
 }
 
 
@@ -417,6 +428,15 @@ def check_container_env(reporter: Reporter, args: argparse.Namespace) -> None:
             "MIN_CONFIDENCE_CONSENSUS",
             "CONFLICT_POLICY",
         ),
+        "oms-live": (
+            "PUBSUB_SUBSCRIPTION_RAW_MARKET_DATA",
+            "OMS_LIVE_STOP_MONITOR_ENABLED",
+            "OMS_LIVE_DRY_RUN",
+        ),
+        "oms-paper": (
+            "PUBSUB_SUBSCRIPTION_RAW_MARKET_DATA",
+            "PAPER_DAY_STOP_MONITOR_ENABLED",
+        ),
     }
     for service, keys in probes.items():
         script = " && ".join([f'printf "{key}=%s\\n" "${key}"' for key in keys])
@@ -433,7 +453,7 @@ def check_container_env(reporter: Reporter, args: argparse.Namespace) -> None:
                 key, value = line.split("=", 1)
                 seen[key] = value
         for key in keys:
-            expected = EXPECTED_ENV.get(key)
+            expected = EXPECTED_CONTAINER_ENV.get((service, key), EXPECTED_ENV.get(key))
             if key == "TRADE_MODE":
                 expected = args.expected_trade_mode
             value = seen.get(key, "")
@@ -528,9 +548,16 @@ def _load_topics() -> list[str]:
     return [str(topic) for topic in payload["topics"]]
 
 
-def _load_subscriptions() -> list[tuple[str, str]]:
+def _load_subscriptions() -> list[tuple[str, str, str | None]]:
     payload = _load_json(SUBSCRIPTIONS_JSON)
-    return [(str(item["name"]), str(item["topic"])) for item in payload["subscriptions"]]
+    return [
+        (
+            str(item["name"]),
+            str(item["topic"]),
+            str(item["filter"]) if item.get("filter") is not None else None,
+        )
+        for item in payload["subscriptions"]
+    ]
 
 
 def check_pubsub(reporter: Reporter, args: argparse.Namespace) -> None:
@@ -560,17 +587,28 @@ def check_pubsub(reporter: Reporter, args: argparse.Namespace) -> None:
                 except GoogleAPICallError as exc:
                     reporter.emit("NG", f"topic:{topic}", repr(exc)[:160])
 
-            for name, topic in _load_subscriptions():
+            for name, topic, expected_filter in _load_subscriptions():
                 try:
                     sub = subscriber.get_subscription(
                         request={"subscription": _subscription_path(project_id, name)},
                         timeout=args.timeout,
                     )
                     actual = sub.topic.rsplit("/", 1)[-1]
+                    actual_filter = sub.filter or None
                     if actual == topic:
                         reporter.emit("OK", f"sub:{name}", f"-> {topic}")
                     else:
                         reporter.emit("NG", f"sub:{name}", f"actual={actual} expected={topic}")
+                    if actual_filter == expected_filter:
+                        if expected_filter is not None:
+                            reporter.emit("OK", f"sub-filter:{name}", expected_filter)
+                    else:
+                        reporter.emit(
+                            "NG",
+                            f"sub-filter:{name}",
+                            f"actual={actual_filter or '<none>'} "
+                            f"expected={expected_filter or '<none>'}",
+                        )
                 except NotFound:
                     reporter.emit("NG", f"sub:{name}", "missing")
                 except GoogleAPICallError as exc:
