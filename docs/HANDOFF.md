@@ -164,6 +164,7 @@ bash scripts/deploy-production.sh --apply --kabu-offline
 
 - `git push` 前は必ずトップレベル [CLAUDE.md](../CLAUDE.md) の **Push 前ゲート** を実行する。最低限 `make lint-all` と、変更したサービスの unit test を push 前に通す。
 - formatter 適用や追加コミット後も、push する前に再度 `make lint-all` を通す。CI で初めて `ruff format --check .` の漏れを見つけない。
+- この repo では `git config core.hooksPath .githooks` を設定し、pre-push hook で `make pre-push` を走らせる。hook を無効化・回避した場合は、push 前に手動で `make pre-push` を実行する。
 - Python は `uv` を使う。`pip` / `poetry` 直叩きは避ける。
 - 新サービスで `tests/conftest.py` を作らない。fixture は `src/<service>/_testing.py` に置く。
 - `tests/__init__.py` は作らない。

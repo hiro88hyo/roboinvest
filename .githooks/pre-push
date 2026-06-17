@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+
+echo "pre-push: running make pre-push"
+make pre-push

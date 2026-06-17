@@ -1,4 +1,4 @@
-.PHONY: lint-all test-all dashboard-lint dashboard-test
+.PHONY: lint-all test-all pre-push dashboard-lint dashboard-test
 
 lint-all:
 	uv run ruff format --check .
@@ -9,6 +9,10 @@ lint-all:
 test-all:
 	uv run pytest --cov --cov-report=term-missing
 	$(MAKE) dashboard-test
+
+pre-push:
+	$(MAKE) lint-all
+	$(MAKE) test-all
 
 dashboard-lint:
 	cd dashboard && npm run lint && npm run typecheck

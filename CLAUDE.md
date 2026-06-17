@@ -397,6 +397,7 @@ Dashboard は contracts/typescript をインポート:
 - `contracts/`、共通基盤、複数サービス横断、Dashboard を変更した場合は、対象 test に加えて `make test-all` または該当する Dashboard test を実行する。
 - formatter 適用後にコミットを追加した場合も、push 前にもう一度 `make lint-all` を通す。CI で初めて format/test 漏れを見つけないこと。
 - 時間や外部依存で一部を実行できない場合は、push 前にユーザーへ未実行チェックと理由を明示する。
+- 機械的な忘れ防止として `git config core.hooksPath .githooks` を設定し、`.githooks/pre-push` から `make pre-push` を実行する。`make pre-push` は `make lint-all` と `make test-all` の両方を必ず実行する。
 
 ## 開発コマンド
 
@@ -406,6 +407,9 @@ make lint-all
 
 # 全サービスのテスト
 make test-all
+
+# push 前の全検証
+make pre-push
 
 # 特定サービスのテスト
 cd services/gateway && uv run pytest tests/ -v
