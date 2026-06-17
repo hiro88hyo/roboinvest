@@ -1,6 +1,6 @@
 # Handoff Memo (for coding AIs)
 
-最終更新: 2026-06-17 / branch: `codex/execution-safety-gates`
+最終更新: 2026-06-17 / HEAD: `main` (`1b541a6`)
 
 このファイルは、次の coding AI が最初に読むための短い索引です。日次の長い運用ログはここに積まず、必要な詳細だけリンク先で確認してください。
 
@@ -19,7 +19,7 @@
 
 ## 2. Current State
 
-2026-05-31 時点の要点:
+2026-06-17 時点の要点:
 
 - 全 9 サービス + Dashboard は実装済み。
 - production compose / Cloud Supabase / managed Pub/Sub / Vercel Dashboard は一通り稼働済み。
@@ -30,7 +30,8 @@
 - `scripts/production-preopen-check.py` を追加済み。kabu station 起動後、`--kabu-offline` なしで `OK 60 / WARN 0 / NG 0` を確認済み。
 - 2026-06-17 paper hardening で Gateway paper guards、Strategy Rule entry filter、Universe Scanner risk penalty、OMS Paper raw book subscription を production 反映済み。
 - 2026-06-17 追加実装で OMS Paper day stop monitor を有効化し、OMS Live stop monitor は raw book subscription まで配線したうえで `OMS_LIVE_STOP_MONITOR_ENABLED=false` のまま安全側に保持。
-- 最新 production pre-open check は `--kabu-offline --no-pubsub-smoke --expected-trade-mode paper` で `OK 92 / WARN 0 / NG 0`。
+- PR #93 `[paper observation] Harden execution safety gates` と PR #94 `Add paper observation report script` は main へ merge 済み。
+- 最新 production pre-open check は Pub/Sub smoke あり、`--kabu-offline --expected-trade-mode paper` で `OK 93 / WARN 0 / NG 0`。
 
 長い時系列ログ:
 
@@ -61,8 +62,9 @@
    - OMS Live は `oms-live-raw-books` subscription と raw book cache を追加済み。ただし live 自動 stop SELL は `OMS_LIVE_STOP_MONITOR_ENABLED=false` のまま。
    - Managed Pub/Sub は `oms-paper-raw-books` / `oms-live-raw-books` とも `attributes.kind = "book"` filter を確認済み。
    - production では `oms-live` / `oms-paper` を rebuild/recreate 済み。
-   - latest pre-open check: `OK 92 / WARN 0 / NG 0`。
+   - latest pre-open check: Pub/Sub smoke ありで `OK 93 / WARN 0 / NG 0`。
    - 次は paper 中に `day_stop_exit` / `day_stop_trail`、`trades_paper.unified_signal_id is null` の SELL、Gateway reject reason、live stop event が出ていないことを観測する。
+   - 観測 summary は `scripts/report-paper-observation.py` で取得できる。
    - Live stop monitor を有効化する前に、paper 観測と HITL での dry-run/ログ確認を挟む。
 
 0. **Cloud Logging は main マージ済み / production 段階反映済み**

@@ -49,7 +49,7 @@ oms-paper:
   PAPER_DAY_STOP_MONITOR_ENABLED=true
 ```
 
-Latest pre-open check:
+Earlier pre-open check:
 
 ```text
 production-preopen-check --kabu-offline --no-pubsub-smoke --expected-trade-mode paper
@@ -61,6 +61,13 @@ After OMS Live/Paper stop-monitor wiring and production recreate:
 ```text
 production-preopen-check --kabu-offline --no-pubsub-smoke --expected-trade-mode paper
 OK 92 / WARN 0 / NG 0
+```
+
+Latest pre-open check after PR #93/#94 merged to main:
+
+```text
+production-preopen-check --kabu-offline --expected-trade-mode paper
+OK 93 / WARN 0 / NG 0
 ```
 
 ## Main Changes
@@ -333,6 +340,11 @@ op run --env-file infra/env.production -- \
   uv run python scripts/production-preopen-check.py \
   --timeout 30 --kabu-offline --no-pubsub-smoke --expected-trade-mode paper
 # OK 92 / WARN 0 / NG 0
+
+op run --env-file infra/env.production -- \
+  uv run python scripts/production-preopen-check.py \
+  --timeout 30 --kabu-offline --expected-trade-mode paper
+# OK 93 / WARN 0 / NG 0
 ```
 
 Production recreate/build commands already run:
