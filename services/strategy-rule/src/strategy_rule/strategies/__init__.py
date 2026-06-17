@@ -21,7 +21,7 @@ def _make_sma(settings: StrategyRuleSettings) -> SmaCrossoverStrategy:
         min_gap_ratio=settings.sma_min_gap_ratio,
         full_confidence_gap_ratio=settings.sma_full_confidence_gap_ratio,
         volume_ratio_min=settings.entry_volume_ratio_min,
-        require_price_above_vwap=settings.rsi_buy_require_price_above_vwap,
+        require_price_above_vwap=settings.sma_buy_require_price_above_vwap,
         max_spread_bps=settings.entry_max_spread_bps,
         max_spread_ticks=settings.entry_max_spread_ticks,
         min_ask_depth_5=settings.entry_min_ask_depth_5,

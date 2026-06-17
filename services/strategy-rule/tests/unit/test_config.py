@@ -12,6 +12,7 @@ def test_defaults() -> None:
     assert s.rsi_sell_threshold == Decimal("75")
     assert s.sma_min_gap_ratio == Decimal("0.005")
     assert s.sma_full_confidence_gap_ratio == Decimal("0.02")
+    assert s.sma_buy_require_price_above_vwap is False
     assert s.bollinger_breakout_tolerance == Decimal("0.15")
     assert s.bollinger_buy_require_lower_reclaim is False
     assert s.entry_volume_ratio_min is None

@@ -37,6 +37,7 @@ class StrategyRuleSettings(BaseSettings):
 
     sma_min_gap_ratio: Decimal = Decimal("0.005")
     sma_full_confidence_gap_ratio: Decimal = Decimal("0.02")
+    sma_buy_require_price_above_vwap: bool = False
     rsi_buy_threshold: Decimal = Decimal("25")
     rsi_sell_threshold: Decimal = Decimal("75")
     bollinger_breakout_tolerance: Decimal = Decimal("0.15")
