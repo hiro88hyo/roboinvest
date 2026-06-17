@@ -9,8 +9,8 @@
 
 - JST date:
 - Operator:
-- Branch / commit: `codex/execution-safety-gates` / `935fe07`
-- Production stack rebuilt from this branch: yes
+- Branch / commit: `main` / `1b541a6` or later
+- Production stack rebuilt from main: yes
 
 Checks:
 
@@ -94,7 +94,7 @@ After 9:15 JST:
 - [ ] Paper day stop-loss exits emit `day_stop_exit` if stop is hit.
 - [ ] Paper day trailing updates emit `day_stop_trail` if trail is raised.
 - [ ] `live_stop_exit` / `live_stop_trail` are absent while live monitor is disabled.
-- [ ] `execution_gate_would_reject` is log-only.
+- [ ] Execution gate rejects poor BUYs when `EXECUTION_GATE_GUARD_ENABLED=true`.
 - [ ] `market_regime_risk_off` rejects only paper BUY.
 - [ ] SELL signals are not blocked by market regime guard.
 - [ ] closeout / exit orders are not blocked by execution gate.
@@ -103,7 +103,8 @@ Watch log events:
 
 - [ ] `market_regime_would_reject`
 - [ ] `signal_rejected reason=market_regime_risk_off trade_mode=paper`
-- [ ] `execution_gate_would_reject`
+- [ ] `signal_rejected reason=execution_*` if execution gate blocks poor BUYs
+- [ ] `execution_gate_would_reject` only if execution gate guard is disabled for an experiment
 - [ ] `order_published`
 - [ ] `paper_order_filled` or OMS Paper fill logs
 - [ ] `day_stop_exit`
@@ -164,9 +165,9 @@ Reject breakdown:
 | reason | count | expected? | note |
 | --- | ---: | --- | --- |
 | `market_regime_risk_off` |  |  |  |
-| `execution_spread_too_wide` |  | log-only |  |
-| `execution_spread_ticks_too_wide` |  | log-only |  |
-| `execution_insufficient_ask_depth` |  | log-only |  |
+| `execution_spread_too_wide` |  | guard reject |  |
+| `execution_spread_ticks_too_wide` |  | guard reject |  |
+| `execution_insufficient_ask_depth` |  | guard reject |  |
 | `opening_live_buy` / opening BUY guard |  |  |  |
 | `late_live_buy` / late BUY guard |  |  |  |
 | `market_closed` |  |  |  |
@@ -212,7 +213,7 @@ Guard impact:
 - [ ] OMS Paper no-fills exported or counted.
 - [ ] `backtest_report.json` generated or archived.
 - [ ] `market_regime_risk_off` rejects reviewed.
-- [ ] `execution_gate_would_reject` events reviewed.
+- [ ] execution gate rejects / would-reject events reviewed.
 - [ ] Missed-profit versus avoided-loss notes written.
 - [ ] Decision recorded: keep paper guard / adjust threshold / disable / continue observing.
 
