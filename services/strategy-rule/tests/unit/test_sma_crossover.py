@@ -108,3 +108,70 @@ def test_confidence_scales_with_gap(features_factory: Callable[..., ProcessedFea
     )
     assert signal is not None
     assert signal.confidence == 0.5
+
+
+def test_buy_entry_filters_block_unsafe_upward_cross(
+    features_factory: Callable[..., ProcessedFeatures],
+) -> None:
+    strategy = SmaCrossoverStrategy(
+        full_confidence_gap_ratio=Decimal("0.02"),
+        volume_ratio_min=Decimal("2.0"),
+        require_price_above_vwap=True,
+        max_spread_ticks=Decimal("2"),
+        min_ask_depth_5=300,
+        min_minutes_from_open=15,
+    )
+    state: dict[str, object] = {}
+    strategy.evaluate(
+        features_factory(price=Decimal("1000"), sma_short=Decimal("99"), sma_long=Decimal("100")),
+        state,
+    )
+    assert strategy.evaluate(
+        features_factory(
+            price=Decimal("1000"),
+            vwap=Decimal("1001"),
+            volume_ratio=Decimal("3.0"),
+            spread_ticks=Decimal("1"),
+            ask_depth_5=500,
+            minutes_from_open=20,
+            sma_short=Decimal("120"),
+            sma_long=Decimal("100"),
+        ),
+        state,
+    ) is None
+
+
+def test_buy_entry_filters_allow_safe_upward_cross(
+    features_factory: Callable[..., ProcessedFeatures],
+) -> None:
+    strategy = SmaCrossoverStrategy(
+        full_confidence_gap_ratio=Decimal("0.02"),
+        volume_ratio_min=Decimal("2.0"),
+        require_price_above_vwap=True,
+        max_spread_ticks=Decimal("2"),
+        min_ask_depth_5=300,
+        min_minutes_from_open=15,
+    )
+    state: dict[str, object] = {}
+    strategy.evaluate(
+        features_factory(price=Decimal("1000"), sma_short=Decimal("99"), sma_long=Decimal("100")),
+        state,
+    )
+    signal = strategy.evaluate(
+        features_factory(
+            price=Decimal("1002"),
+            vwap=Decimal("1001"),
+            volume_ratio=Decimal("3.0"),
+            spread_ticks=Decimal("1"),
+            ask_depth_5=500,
+            minutes_from_open=20,
+            sma_short=Decimal("120"),
+            sma_long=Decimal("100"),
+        ),
+        state,
+    )
+    assert signal is not None
+    assert signal.action is Action.BUY
+    assert signal.reasoning is not None
+    assert "volume_ratio_min=2.0" in signal.reasoning
+    assert "spread_ticks<=2" in signal.reasoning

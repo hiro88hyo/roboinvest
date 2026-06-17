@@ -33,6 +33,11 @@
       "topic": "raw-market-data"
     },
     {
+      "name": "oms-paper-raw-books",
+      "topic": "raw-market-data",
+      "filter": "attributes.kind = \"book\""
+    },
+    {
       "name": "oms-live-live-orders",
       "topic": "live-orders"
     },

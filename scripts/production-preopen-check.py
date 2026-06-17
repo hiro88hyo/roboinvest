@@ -75,11 +75,19 @@ CORE_SERVICES = (
 
 EXPECTED_ENV = {
     "AI_MAX_OUTPUT_TOKENS": "2048",
+    "STRATEGIES_ENABLED": "rsi_threshold,bollinger_breakout",
     "LIVE_DAY_NEW_BUY_START_TIME": "09:15",
     "MAX_HOLD_MINUTES": "45",
-    "MIN_CONFIDENCE_RULE_ONLY": "0.5",
+    "MIN_CONFIDENCE_RULE_ONLY": "0.45",
     "MIN_CONFIDENCE_AI_ONLY": "0.5",
     "MIN_CONFIDENCE_CONSENSUS": "0.3",
+    "ENTRY_VOLUME_RATIO_MIN": "2.0",
+    "ENTRY_MAX_SPREAD_TICKS": "2",
+    "ENTRY_MIN_ASK_DEPTH_5": "300",
+    "ENTRY_MIN_MINUTES_FROM_OPEN": "15",
+    "MARKET_REGIME_PAPER_GUARD_ENABLED": "true",
+    "SOFT_LOSS_THROTTLE_GUARD_ENABLED": "true",
+    "EXECUTION_GATE_GUARD_ENABLED": "true",
 }
 
 
@@ -388,7 +396,21 @@ def check_container_env(reporter: Reporter, args: argparse.Namespace) -> None:
     probes = {
         "strategy-ai": ("AI_MAX_OUTPUT_TOKENS", "GEMINI_MODEL"),
         "feature-engine": ("MAX_HOLD_MINUTES",),
-        "gateway": ("LIVE_DAY_NEW_BUY_START_TIME", "LIVE_DAY_NEW_BUY_CUTOFF_TIME", "TRADE_MODE"),
+        "strategy-rule": (
+            "STRATEGIES_ENABLED",
+            "ENTRY_VOLUME_RATIO_MIN",
+            "ENTRY_MAX_SPREAD_TICKS",
+            "ENTRY_MIN_ASK_DEPTH_5",
+            "ENTRY_MIN_MINUTES_FROM_OPEN",
+        ),
+        "gateway": (
+            "LIVE_DAY_NEW_BUY_START_TIME",
+            "LIVE_DAY_NEW_BUY_CUTOFF_TIME",
+            "TRADE_MODE",
+            "MARKET_REGIME_PAPER_GUARD_ENABLED",
+            "SOFT_LOSS_THROTTLE_GUARD_ENABLED",
+            "EXECUTION_GATE_GUARD_ENABLED",
+        ),
         "aggregator": (
             "MIN_CONFIDENCE_RULE_ONLY",
             "MIN_CONFIDENCE_AI_ONLY",

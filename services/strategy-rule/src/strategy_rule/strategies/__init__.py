@@ -20,6 +20,14 @@ def _make_sma(settings: StrategyRuleSettings) -> SmaCrossoverStrategy:
     return SmaCrossoverStrategy(
         min_gap_ratio=settings.sma_min_gap_ratio,
         full_confidence_gap_ratio=settings.sma_full_confidence_gap_ratio,
+        volume_ratio_min=settings.entry_volume_ratio_min,
+        require_price_above_vwap=settings.rsi_buy_require_price_above_vwap,
+        max_spread_bps=settings.entry_max_spread_bps,
+        max_spread_ticks=settings.entry_max_spread_ticks,
+        min_ask_depth_5=settings.entry_min_ask_depth_5,
+        min_book_imbalance_5=settings.entry_min_book_imbalance_5,
+        min_minutes_from_open=settings.entry_min_minutes_from_open,
+        min_minutes_to_close=settings.entry_min_minutes_to_close,
     )
 
 
@@ -30,6 +38,12 @@ def _make_rsi(settings: StrategyRuleSettings) -> RsiThresholdStrategy:
         volume_ratio_min=settings.entry_volume_ratio_min,
         require_price_above_vwap=settings.rsi_buy_require_price_above_vwap,
         require_sma_uptrend=settings.rsi_buy_require_sma_uptrend,
+        max_spread_bps=settings.entry_max_spread_bps,
+        max_spread_ticks=settings.entry_max_spread_ticks,
+        min_ask_depth_5=settings.entry_min_ask_depth_5,
+        min_book_imbalance_5=settings.entry_min_book_imbalance_5,
+        min_minutes_from_open=settings.entry_min_minutes_from_open,
+        min_minutes_to_close=settings.entry_min_minutes_to_close,
     )
 
 
@@ -38,6 +52,14 @@ def _make_bollinger(settings: StrategyRuleSettings) -> BollingerBreakoutStrategy
         tolerance=settings.bollinger_breakout_tolerance,
         volume_ratio_min=settings.entry_volume_ratio_min,
         require_buy_lower_reclaim=settings.bollinger_buy_require_lower_reclaim,
+        require_price_above_vwap=settings.bollinger_buy_require_price_above_vwap,
+        require_sma_uptrend=settings.bollinger_buy_require_sma_uptrend,
+        max_spread_bps=settings.entry_max_spread_bps,
+        max_spread_ticks=settings.entry_max_spread_ticks,
+        min_ask_depth_5=settings.entry_min_ask_depth_5,
+        min_book_imbalance_5=settings.entry_min_book_imbalance_5,
+        min_minutes_from_open=settings.entry_min_minutes_from_open,
+        min_minutes_to_close=settings.entry_min_minutes_to_close,
     )
 
 

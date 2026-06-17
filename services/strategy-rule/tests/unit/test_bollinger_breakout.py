@@ -108,6 +108,57 @@ def test_buy_volume_ratio_filter_blocks_low_volume(
     assert strategy.evaluate(f, {}) is None
 
 
+def test_buy_reclaim_uses_vwap_and_execution_filters(
+    features_factory: Callable[..., ProcessedFeatures],
+) -> None:
+    strategy = BollingerBreakoutStrategy(
+        require_buy_lower_reclaim=True,
+        require_price_above_vwap=True,
+        require_sma_uptrend=True,
+        max_spread_ticks=Decimal("2"),
+        min_ask_depth_5=300,
+    )
+    state: dict[str, object] = {}
+    below = features_factory(
+        price=Decimal("90"),
+        bollinger_upper=Decimal("110"),
+        bollinger_middle=Decimal("100"),
+        bollinger_lower=Decimal("95"),
+    )
+    assert strategy.evaluate(below, state) is None
+
+    blocked = features_factory(
+        price=Decimal("96"),
+        vwap=Decimal("100"),
+        sma_short=Decimal("101"),
+        sma_long=Decimal("100"),
+        spread_ticks=Decimal("1"),
+        ask_depth_5=500,
+        bollinger_upper=Decimal("110"),
+        bollinger_middle=Decimal("100"),
+        bollinger_lower=Decimal("95"),
+    )
+    assert strategy.evaluate(blocked, state) is None
+
+    allowed = features_factory(
+        price=Decimal("101"),
+        vwap=Decimal("100"),
+        sma_short=Decimal("101"),
+        sma_long=Decimal("100"),
+        spread_ticks=Decimal("1"),
+        ask_depth_5=500,
+        bollinger_upper=Decimal("110"),
+        bollinger_middle=Decimal("100"),
+        bollinger_lower=Decimal("95"),
+    )
+    signal = strategy.evaluate(allowed, state)
+    assert signal is not None
+    assert signal.action is Action.BUY
+    assert signal.reasoning is not None
+    assert "price>=vwap" in signal.reasoning
+    assert "spread_ticks<=2" in signal.reasoning
+
+
 def test_inside_band_returns_none(features_factory: Callable[..., ProcessedFeatures]) -> None:
     strategy = BollingerBreakoutStrategy()
     f = features_factory(

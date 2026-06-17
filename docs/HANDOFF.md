@@ -33,6 +33,7 @@
 
 - [docs/handoff/2026-05-operations-log.md](handoff/2026-05-operations-log.md)
 - [docs/handoff/2026-06-operations-log.md](handoff/2026-06-operations-log.md)
+- [docs/handoff/2026-06-17-paper-hardening-handoff.md](handoff/2026-06-17-paper-hardening-handoff.md)
 
 5月成績レビュー:
 
@@ -95,7 +96,7 @@
 
 4. **Aggregator の source 別 confidence threshold を観測する**
    - PR #67 で RULE / AI 単独シグナルは `0.5`、RULE+AI consensus は `0.3` を下限に変更済み。
-   - production `aggregator` は `MIN_CONFIDENCE_RULE_ONLY=0.5`、`MIN_CONFIDENCE_AI_ONLY=0.5`、`MIN_CONFIDENCE_CONSENSUS=0.3` で再起動済み。
+   - production `aggregator` は `MIN_CONFIDENCE_RULE_ONLY=0.45`、`MIN_CONFIDENCE_AI_ONLY=0.5`、`MIN_CONFIDENCE_CONSENSUS=0.3` で再起動済み。
    - 弱い RULE 単独通過を減らしつつ、AI 復旧後の consensus は落としすぎない狙い。
 
 5. **保有時間制限を検討する**

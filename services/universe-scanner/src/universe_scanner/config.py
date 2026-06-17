@@ -47,6 +47,13 @@ class ScannerSettings(BaseSettings):
     scan_weight_volatility: float = 1.0
     scan_weight_volume_surge: float = 1.0
     scan_weight_momentum: float = 1.0
+    scan_weight_risk_penalty: float = 1.0
+    scan_risk_volatility_z_weight: float = 0.75
+    scan_risk_negative_momentum_z_weight: float = 1.0
+    scan_risk_volume_surge_z_weight: float = 0.5
+    scan_risk_overheat_momentum_z_weight: float = 0.5
+    scan_risk_volume_surge_z: float = 1.5
+    scan_risk_overheat_momentum_z: float = 1.5
     market_regime_enabled: bool = True
     market_regime_write_enabled: bool = False
 

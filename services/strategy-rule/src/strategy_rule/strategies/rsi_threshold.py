@@ -8,7 +8,7 @@ from trade_contracts.enums import Action, SignalSource
 from trade_contracts.features import ProcessedFeatures
 from trade_contracts.signal import StrategySignal, execution_fields_from
 
-from .entry_filters import passes_buy_entry_filters
+from .entry_filters import buy_entry_filter_labels, passes_buy_entry_filters
 
 
 class RsiThresholdStrategy:
@@ -32,12 +32,24 @@ class RsiThresholdStrategy:
         volume_ratio_min: Decimal | None = None,
         require_price_above_vwap: bool = False,
         require_sma_uptrend: bool = False,
+        max_spread_bps: Decimal | None = None,
+        max_spread_ticks: Decimal | None = None,
+        min_ask_depth_5: int | None = None,
+        min_book_imbalance_5: Decimal | None = None,
+        min_minutes_from_open: int | None = None,
+        min_minutes_to_close: int | None = None,
     ) -> None:
         self._buy = buy_threshold
         self._sell = sell_threshold
         self._volume_ratio_min = volume_ratio_min
         self._require_price_above_vwap = require_price_above_vwap
         self._require_sma_uptrend = require_sma_uptrend
+        self._max_spread_bps = max_spread_bps
+        self._max_spread_ticks = max_spread_ticks
+        self._min_ask_depth_5 = min_ask_depth_5
+        self._min_book_imbalance_5 = min_book_imbalance_5
+        self._min_minutes_from_open = min_minutes_from_open
+        self._min_minutes_to_close = min_minutes_to_close
 
     def evaluate(
         self,
@@ -55,17 +67,27 @@ class RsiThresholdStrategy:
                 volume_ratio_min=self._volume_ratio_min,
                 require_price_above_vwap=self._require_price_above_vwap,
                 require_sma_uptrend=self._require_sma_uptrend,
+                max_spread_bps=self._max_spread_bps,
+                max_spread_ticks=self._max_spread_ticks,
+                min_ask_depth_5=self._min_ask_depth_5,
+                min_book_imbalance_5=self._min_book_imbalance_5,
+                min_minutes_from_open=self._min_minutes_from_open,
+                min_minutes_to_close=self._min_minutes_to_close,
             ):
                 return None
             action = Action.BUY
             confidence = 0.5 + 0.5 * float((self._buy - rsi) / self._buy) if self._buy > 0 else 1.0
-            filters = []
-            if self._volume_ratio_min is not None:
-                filters.append(f"volume_ratio_min={self._volume_ratio_min}")
-            if self._require_price_above_vwap:
-                filters.append("price>=vwap")
-            if self._require_sma_uptrend:
-                filters.append("sma_short>=sma_long")
+            filters = buy_entry_filter_labels(
+                volume_ratio_min=self._volume_ratio_min,
+                require_price_above_vwap=self._require_price_above_vwap,
+                require_sma_uptrend=self._require_sma_uptrend,
+                max_spread_bps=self._max_spread_bps,
+                max_spread_ticks=self._max_spread_ticks,
+                min_ask_depth_5=self._min_ask_depth_5,
+                min_book_imbalance_5=self._min_book_imbalance_5,
+                min_minutes_from_open=self._min_minutes_from_open,
+                min_minutes_to_close=self._min_minutes_to_close,
+            )
             filter_suffix = "" if not filters else f" filters=({','.join(filters)})"
             reasoning = f"rsi={rsi} <= buy_threshold={self._buy}{filter_suffix}"
         elif rsi >= self._sell:

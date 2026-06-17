@@ -20,8 +20,9 @@ Checks:
 - [ ] `infra/env.production` has `OMS_LIVE_DRY_RUN=true`.
 - [ ] `infra/env.production` has `MARKET_REGIME_PAPER_GUARD_ENABLED=true`.
 - [ ] `infra/env.production` has `MARKET_REGIME_GATEWAY_GUARD_ENABLED=false`.
+- [ ] `infra/env.production` has `SOFT_LOSS_THROTTLE_GUARD_ENABLED=true`.
 - [ ] `infra/env.production` has `EXECUTION_GATE_LOG_ONLY_ENABLED=true`.
-- [ ] `infra/env.production` has `EXECUTION_GATE_GUARD_ENABLED=false`.
+- [ ] `infra/env.production` has `EXECUTION_GATE_GUARD_ENABLED=true`.
 - [ ] `system_status.is_trading_allowed=true`.
 - [ ] `system_status.trade_mode=paper`.
 - [ ] live positions are empty.

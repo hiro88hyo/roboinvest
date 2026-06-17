@@ -137,6 +137,65 @@ def test_buy_trend_filters_allow_rebound_above_vwap_in_uptrend(
     assert "sma_short>=sma_long" in signal.reasoning
 
 
+def test_buy_execution_filters_block_wide_or_thin_entry(
+    features_factory: Callable[..., ProcessedFeatures],
+) -> None:
+    strategy = RsiThresholdStrategy(
+        buy_threshold=Decimal("30"),
+        max_spread_ticks=Decimal("2"),
+        min_ask_depth_5=300,
+        min_book_imbalance_5=Decimal("-0.5"),
+        min_minutes_from_open=15,
+        min_minutes_to_close=60,
+    )
+
+    assert strategy.evaluate(
+        features_factory(rsi=Decimal("20"), spread_ticks=Decimal("3"), ask_depth_5=500),
+        {},
+    ) is None
+    assert strategy.evaluate(
+        features_factory(rsi=Decimal("20"), spread_ticks=Decimal("1"), ask_depth_5=200),
+        {},
+    ) is None
+    assert strategy.evaluate(
+        features_factory(
+            rsi=Decimal("20"),
+            spread_ticks=Decimal("1"),
+            ask_depth_5=500,
+            book_imbalance_5=Decimal("-0.8"),
+        ),
+        {},
+    ) is None
+    assert strategy.evaluate(
+        features_factory(
+            rsi=Decimal("20"),
+            spread_ticks=Decimal("1"),
+            ask_depth_5=500,
+            book_imbalance_5=Decimal("0"),
+            minutes_from_open=10,
+            minutes_to_close=120,
+        ),
+        {},
+    ) is None
+
+    signal = strategy.evaluate(
+        features_factory(
+            rsi=Decimal("20"),
+            spread_ticks=Decimal("1"),
+            ask_depth_5=500,
+            book_imbalance_5=Decimal("0"),
+            minutes_from_open=20,
+            minutes_to_close=120,
+        ),
+        {},
+    )
+    assert signal is not None
+    assert signal.action is Action.BUY
+    assert signal.reasoning is not None
+    assert "spread_ticks<=2" in signal.reasoning
+    assert "ask_depth_5>=300" in signal.reasoning
+
+
 def test_buy_volume_ratio_filter_does_not_block_sell(
     features_factory: Callable[..., ProcessedFeatures],
 ) -> None:

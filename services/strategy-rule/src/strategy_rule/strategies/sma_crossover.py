@@ -8,6 +8,8 @@ from trade_contracts.enums import Action, SignalSource
 from trade_contracts.features import ProcessedFeatures
 from trade_contracts.signal import StrategySignal, execution_fields_from
 
+from .entry_filters import buy_entry_filter_labels, passes_buy_entry_filters
+
 _PREV_DIFF_KEY = "prev_diff"
 
 
@@ -29,9 +31,25 @@ class SmaCrossoverStrategy:
         *,
         min_gap_ratio: Decimal = Decimal("0"),
         full_confidence_gap_ratio: Decimal = Decimal("0.02"),
+        volume_ratio_min: Decimal | None = None,
+        require_price_above_vwap: bool = False,
+        max_spread_bps: Decimal | None = None,
+        max_spread_ticks: Decimal | None = None,
+        min_ask_depth_5: int | None = None,
+        min_book_imbalance_5: Decimal | None = None,
+        min_minutes_from_open: int | None = None,
+        min_minutes_to_close: int | None = None,
     ) -> None:
         self._min_gap_ratio = min_gap_ratio
         self._full_confidence_gap_ratio = full_confidence_gap_ratio
+        self._volume_ratio_min = volume_ratio_min
+        self._require_price_above_vwap = require_price_above_vwap
+        self._max_spread_bps = max_spread_bps
+        self._max_spread_ticks = max_spread_ticks
+        self._min_ask_depth_5 = min_ask_depth_5
+        self._min_book_imbalance_5 = min_book_imbalance_5
+        self._min_minutes_from_open = min_minutes_from_open
+        self._min_minutes_to_close = min_minutes_to_close
 
     def evaluate(
         self,
@@ -55,6 +73,19 @@ class SmaCrossoverStrategy:
             return None
 
         if prev_diff <= 0 and diff > 0:
+            if not passes_buy_entry_filters(
+                features,
+                volume_ratio_min=self._volume_ratio_min,
+                require_price_above_vwap=self._require_price_above_vwap,
+                require_sma_uptrend=False,
+                max_spread_bps=self._max_spread_bps,
+                max_spread_ticks=self._max_spread_ticks,
+                min_ask_depth_5=self._min_ask_depth_5,
+                min_book_imbalance_5=self._min_book_imbalance_5,
+                min_minutes_from_open=self._min_minutes_from_open,
+                min_minutes_to_close=self._min_minutes_to_close,
+            ):
+                return None
             action = Action.BUY
         elif prev_diff >= 0 and diff < 0:
             action = Action.SELL
@@ -66,6 +97,21 @@ class SmaCrossoverStrategy:
         else:
             confidence = 1.0
         confidence = min(1.0, max(0.0, confidence))
+        filter_suffix = ""
+        if action is Action.BUY:
+            filters = buy_entry_filter_labels(
+                volume_ratio_min=self._volume_ratio_min,
+                require_price_above_vwap=self._require_price_above_vwap,
+                require_sma_uptrend=False,
+                max_spread_bps=self._max_spread_bps,
+                max_spread_ticks=self._max_spread_ticks,
+                min_ask_depth_5=self._min_ask_depth_5,
+                min_book_imbalance_5=self._min_book_imbalance_5,
+                min_minutes_from_open=self._min_minutes_from_open,
+                min_minutes_to_close=self._min_minutes_to_close,
+            )
+            if filters:
+                filter_suffix = f" filters=({','.join(filters)})"
 
         return StrategySignal(
             source=SignalSource.RULE,
@@ -74,7 +120,8 @@ class SmaCrossoverStrategy:
             action=action,
             confidence=confidence,
             reasoning=(
-                f"sma_crossover: short-long diff {prev_diff} -> {diff} (gap_ratio={gap_ratio:.5f})"
+                f"sma_crossover: short-long diff {prev_diff} -> {diff} "
+                f"(gap_ratio={gap_ratio:.5f}){filter_suffix}"
             ),
             **execution_fields_from(features),
             created_at=features.timestamp,
