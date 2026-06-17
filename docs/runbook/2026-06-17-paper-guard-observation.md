@@ -78,6 +78,21 @@ Expected behavior:
 
 ## Quick Queries
 
+One-command Supabase observation summary:
+
+```bash
+set -a && . infra/.op.service-account.env && set +a
+op run --env-file infra/env.production -- \
+  uv run python scripts/report-paper-observation.py --timeout 30
+```
+
+For a specific JST date:
+
+```bash
+op run --env-file infra/env.production -- \
+  uv run python scripts/report-paper-observation.py --date YYYY-MM-DD --timeout 30
+```
+
 Use Supabase SQL editor or `psql` with the target JST date converted to UTC.
 For 2026-06-18 JST, use `2026-06-17 15:00:00+00` to
 `2026-06-18 15:00:00+00`.
