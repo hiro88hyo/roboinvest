@@ -18,6 +18,8 @@ Checks:
 - [ ] Windows Caddy reverse proxy is reachable.
 - [ ] `infra/env.production` has `TRADE_MODE=paper`.
 - [ ] `infra/env.production` has `OMS_LIVE_DRY_RUN=true`.
+- [ ] `infra/env.production` has `OMS_LIVE_STOP_MONITOR_ENABLED=false`.
+- [ ] `infra/env.production` has `PAPER_DAY_STOP_MONITOR_ENABLED=true`.
 - [ ] `infra/env.production` has `MARKET_REGIME_PAPER_GUARD_ENABLED=true`.
 - [ ] `infra/env.production` has `MARKET_REGIME_GATEWAY_GUARD_ENABLED=false`.
 - [ ] `infra/env.production` has `SOFT_LOSS_THROTTLE_GUARD_ENABLED=true`.
@@ -26,6 +28,10 @@ Checks:
 - [ ] `system_status.is_trading_allowed=true`.
 - [ ] `system_status.trade_mode=paper`.
 - [ ] live positions are empty.
+- [ ] `oms-paper` uses `PUBSUB_SUBSCRIPTION_RAW_MARKET_DATA=oms-paper-raw-books`.
+- [ ] `oms-live` uses `PUBSUB_SUBSCRIPTION_RAW_MARKET_DATA=oms-live-raw-books`.
+- [ ] managed Pub/Sub `oms-paper-raw-books` filter is `attributes.kind = "book"`.
+- [ ] managed Pub/Sub `oms-live-raw-books` filter is `attributes.kind = "book"`.
 - [ ] watchlist exists for the JST trading date.
 - [ ] daily OHLCV exists for watchlist symbols.
 - [ ] market regime row exists for the JST trading date.
@@ -85,6 +91,9 @@ After 9:15 JST:
 - [ ] OMS Paper consumes `paper-orders`.
 - [ ] `trades_paper` records fills if orders occur.
 - [ ] `positions(paper)` updates if fills occur.
+- [ ] Paper day stop-loss exits emit `day_stop_exit` if stop is hit.
+- [ ] Paper day trailing updates emit `day_stop_trail` if trail is raised.
+- [ ] `live_stop_exit` / `live_stop_trail` are absent while live monitor is disabled.
 - [ ] `execution_gate_would_reject` is log-only.
 - [ ] `market_regime_risk_off` rejects only paper BUY.
 - [ ] SELL signals are not blocked by market regime guard.
@@ -97,6 +106,9 @@ Watch log events:
 - [ ] `execution_gate_would_reject`
 - [ ] `order_published`
 - [ ] `paper_order_filled` or OMS Paper fill logs
+- [ ] `day_stop_exit`
+- [ ] `day_stop_trail`
+- [ ] no `live_stop_exit` unless live monitor was explicitly enabled
 - [ ] no `ERROR`
 - [ ] no `CRITICAL`
 - [ ] no `Traceback`
@@ -144,6 +156,8 @@ Signal / order counts:
 - paper fill count:
 - paper no-fill count:
 - partial fill count:
+- day stop exit count:
+- day stop trail count:
 
 Reject breakdown:
 
@@ -176,6 +190,7 @@ Execution quality:
 PnL / positions:
 
 - realized paper PnL:
+- paper stop/closeout SELL rows with `unified_signal_id is null`:
 - open paper positions after closeout:
 - unrealized paper PnL:
 - mark-to-market paper PnL:

@@ -160,6 +160,7 @@ services/oms-paper/
 - `PUBSUB_PROJECT_ID` / `PUBSUB_EMULATOR_HOST`
 - `PUBSUB_SUBSCRIPTION_PAPER_ORDERS`: `oms-paper-paper-orders`
 - `PUBSUB_SUBSCRIPTION_RAW_MARKET_DATA`: `oms-paper-raw-market-data`
+- `PAPER_DAY_STOP_MONITOR_ENABLED`: `true` で day position の `stop_loss_price` / `target_price` / `trailing_stop_pct` を raw book 更新ごとに評価する。paper 観測用の safety path
 - `DAY_CLOSEOUT_TIME`: デフォルト `14:50`
 - `DAY_CLOSEOUT_TIMEZONE`: デフォルト `Asia/Tokyo`
 

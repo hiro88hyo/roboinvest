@@ -18,6 +18,8 @@ gpt5.5pro feedback では、RULE-only の素朴なBUY、MARKET/執行品質、�
 - `strategy-rule`: rebuilt and recreated
 - `universe-scanner`: batch image rebuilt
 - `oms-paper`: raw book subscription fix reflected earlier in this session
+- `oms-live`: rebuilt and recreated after raw book stop-monitor wiring
+- `oms-paper`: rebuilt and recreated after day stop monitor wiring
 
 Current important env values verified in running containers:
 
@@ -37,6 +39,14 @@ gateway:
 
 aggregator:
   MIN_CONFIDENCE_RULE_ONLY=0.45
+
+oms-live:
+  PUBSUB_SUBSCRIPTION_RAW_MARKET_DATA=oms-live-raw-books
+  OMS_LIVE_STOP_MONITOR_ENABLED=false
+
+oms-paper:
+  PUBSUB_SUBSCRIPTION_RAW_MARKET_DATA=oms-paper-raw-books
+  PAPER_DAY_STOP_MONITOR_ENABLED=true
 ```
 
 Latest pre-open check:
@@ -44,6 +54,13 @@ Latest pre-open check:
 ```text
 production-preopen-check --kabu-offline --no-pubsub-smoke --expected-trade-mode paper
 OK 80 / WARN 0 / NG 0
+```
+
+After OMS Live/Paper stop-monitor wiring and production recreate:
+
+```text
+production-preopen-check --kabu-offline --no-pubsub-smoke --expected-trade-mode paper
+OK 92 / WARN 0 / NG 0
 ```
 
 ## Main Changes
@@ -203,6 +220,53 @@ SCAN_RISK_OVERHEAT_MOMENTUM_Z=1.5
 
 `watchlist.selected_reasons` now includes `opportunity_score` and `risk_penalty`.
 
+### OMS Paper day stop monitor
+
+Files:
+
+- `services/oms-paper/src/oms_paper/day_monitor.py`
+- `services/oms-paper/src/oms_paper/streaming/runner.py`
+- `services/oms-paper/src/oms_paper/config.py`
+- `infra/docker-compose.prod.yml`
+- `infra/env.production.tpl`
+- paper unit tests and runbooks
+
+Behavior:
+
+- `PAPER_DAY_STOP_MONITOR_ENABLED=true` by default in production.
+- OMS Paper evaluates day positions on fresh raw book updates.
+- Stop-loss, take-profit, and trailing-stop decisions are independent of strategy SELL signals.
+- Exit SELL rows are written to `trades_paper` with `unified_signal_id=null`, then `positions(paper)` is updated or deleted.
+- Trailing updates only `positions.stop_loss_price`.
+- Structured events:
+  - `day_stop_exit`
+  - `day_stop_trail`
+
+### OMS Live stop monitor wiring
+
+Files:
+
+- `services/oms-live/src/oms_live/stop_monitor.py`
+- `services/oms-live/src/oms_live/streaming/runner.py`
+- `services/oms-live/src/oms_live/clients/supabase.py`
+- `services/oms-live/src/oms_live/config.py`
+- `infra/pubsub/subscriptions.json`
+- `infra/docker-compose.prod.yml`
+- `infra/env.production.tpl`
+- live unit tests and runbooks
+
+Behavior:
+
+- Added managed Pub/Sub subscription `oms-live-raw-books` with filter `attributes.kind = "book"`.
+- OMS Live now pulls raw book updates and can evaluate live positions against stop-loss, take-profit, and trailing-stop rules.
+- Live stop exits reuse the closeout order path, write `trades_live`, update positions, and add realized PnL on fill.
+- Structured events:
+  - `live_stop_exit`
+  - `live_stop_trail`
+  - `live_stop_monitor_order_filled`
+- Production remains safe by default: `OMS_LIVE_STOP_MONITOR_ENABLED=false`.
+- Do not enable live stop automation until paper observations are reviewed and a HITL/dry-run rollout is explicitly accepted.
+
 ## Verification Run
 
 Tests run successfully:
@@ -231,6 +295,27 @@ uv run pytest services/strategy-rule/tests/unit/test_rsi_threshold.py \
 uv run pytest services/universe-scanner/tests/unit/test_dynamic_filter.py \
   services/universe-scanner/tests/unit/test_pipeline_market_regime.py
 # 9 passed
+
+uv run pytest services/oms-live/tests/unit
+# 167 passed
+
+uv run mypy services/oms-live/src/oms_live
+# success
+
+uv run pytest services/oms-paper/tests/unit
+# 168 passed
+
+uv run mypy services/oms-paper/src/oms_paper
+# success
+
+uv run ruff check scripts/production-preopen-check.py
+# success
+
+uv run python -m py_compile scripts/production-preopen-check.py
+# success
+
+git diff --check
+# success
 ```
 
 Compose/pre-open:
@@ -243,6 +328,11 @@ op run --env-file infra/env.production -- \
   uv run python scripts/production-preopen-check.py \
   --timeout 30 --kabu-offline --no-pubsub-smoke --expected-trade-mode paper
 # OK 80 / WARN 0 / NG 0
+
+op run --env-file infra/env.production -- \
+  uv run python scripts/production-preopen-check.py \
+  --timeout 30 --kabu-offline --no-pubsub-smoke --expected-trade-mode paper
+# OK 92 / WARN 0 / NG 0
 ```
 
 Production recreate/build commands already run:
@@ -259,6 +349,15 @@ op run --env-file infra/env.production -- \
 op run --env-file infra/env.production -- \
   docker compose --env-file infra/env.production -f infra/docker-compose.prod.yml \
   --profile batch build universe-scanner
+
+op run --env-file infra/env.production -- \
+  uv run python scripts/gcp-pubsub-admin.py --project-id "$PUBSUB_PROJECT_ID" --apply --timeout 30
+# ADD sub:oms-live-raw-books -> raw-market-data filter='attributes.kind = "book"'
+# RESULT OK
+
+op run --env-file infra/env.production -- \
+  docker compose --env-file infra/env.production -f infra/docker-compose.prod.yml \
+  up -d --build --no-deps oms-live oms-paper
 ```
 
 ## Expected Next Paper Behavior
@@ -278,23 +377,26 @@ Likely observation points:
   - `signal_rejected` reasons should include execution or regime reasons if quality is bad.
   - `order_published` should represent higher-quality surviving BUYs.
 - `trades_paper`: fills should happen if surviving orders reach OMS Paper and fresh book is available.
+- `trades_paper`: day stop exits, if triggered, should appear as SELL rows with `unified_signal_id is null`.
+- Cloud Logging: `day_stop_exit` / `day_stop_trail` may appear for paper; `live_stop_exit` / `live_stop_trail` should not appear while live monitor is disabled.
 
 ## Remaining Larger Work
 
 Not implemented in this session:
 
-- Stop-loss as an OMS/Gateway-side always-on safety mechanism independent of strategy SELL.
 - OMS Live/paper retry and open-order reconciliation for stop-loss orders.
 - More realistic passive/marketable-limit queue simulation.
 - Market regime live guard enablement. Current live guard remains off; paper guard is on.
 - Full long-window validation of the new entry filters and Universe Scanner risk penalty.
+- Live stop automation enablement. The code path exists but production env keeps it disabled.
 
 Recommended next session:
 
 1. During next paper day, monitor `strategy_logs`, `aggregator_logs`, `gateway` reject reasons, `order_published`, `trades_paper`.
 2. If zero orders all morning, temporarily inspect which filter is binding most often before loosening anything.
 3. Do not re-enable `sma_crossover` unless explicitly running an experiment.
-4. Plan stop-loss safety mechanism as a separate PR; do not squeeze it into paper-open config changes.
+4. Observe OMS Paper day stop behavior before enabling OMS Live stop monitor.
+5. Plan retry/open-order reconciliation for stop-loss exits before live automation.
 
 ## Current Worktree Note
 

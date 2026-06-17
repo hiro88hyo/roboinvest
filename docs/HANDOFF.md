@@ -1,6 +1,6 @@
 # Handoff Memo (for coding AIs)
 
-最終更新: 2026-06-01 / HEAD: `main`
+最終更新: 2026-06-17 / branch: `codex/execution-safety-gates`
 
 このファイルは、次の coding AI が最初に読むための短い索引です。日次の長い運用ログはここに積まず、必要な詳細だけリンク先で確認してください。
 
@@ -28,6 +28,9 @@
 - Paper trading は 2026-05-19 から 2026-05-21 まで確認済みで、合計 `+68,100円`。
 - 2026-05-31 に production 反映済み: `AI_MAX_OUTPUT_TOKENS=2048`、live/day 新規 BUY 開始 `09:15 JST`、Aggregator source 別 threshold (`RULE_ONLY=0.5`, `AI_ONLY=0.5`, `CONSENSUS=0.3`)。
 - `scripts/production-preopen-check.py` を追加済み。kabu station 起動後、`--kabu-offline` なしで `OK 60 / WARN 0 / NG 0` を確認済み。
+- 2026-06-17 paper hardening で Gateway paper guards、Strategy Rule entry filter、Universe Scanner risk penalty、OMS Paper raw book subscription を production 反映済み。
+- 2026-06-17 追加実装で OMS Paper day stop monitor を有効化し、OMS Live stop monitor は raw book subscription まで配線したうえで `OMS_LIVE_STOP_MONITOR_ENABLED=false` のまま安全側に保持。
+- 最新 production pre-open check は `--kabu-offline --no-pubsub-smoke --expected-trade-mode paper` で `OK 92 / WARN 0 / NG 0`。
 
 長い時系列ログ:
 
@@ -52,6 +55,15 @@
 ## 4. Active Follow-ups
 
 優先度が高い順:
+
+0. **2026-06-17 paper hardening / stop monitor は production 反映済み**
+   - OMS Paper は `oms-paper-raw-books` を読み、day position の stop/target/trailing を `PAPER_DAY_STOP_MONITOR_ENABLED=true` で評価する。
+   - OMS Live は `oms-live-raw-books` subscription と raw book cache を追加済み。ただし live 自動 stop SELL は `OMS_LIVE_STOP_MONITOR_ENABLED=false` のまま。
+   - Managed Pub/Sub は `oms-paper-raw-books` / `oms-live-raw-books` とも `attributes.kind = "book"` filter を確認済み。
+   - production では `oms-live` / `oms-paper` を rebuild/recreate 済み。
+   - latest pre-open check: `OK 92 / WARN 0 / NG 0`。
+   - 次は paper 中に `day_stop_exit` / `day_stop_trail`、`trades_paper.unified_signal_id is null` の SELL、Gateway reject reason、live stop event が出ていないことを観測する。
+   - Live stop monitor を有効化する前に、paper 観測と HITL での dry-run/ログ確認を挟む。
 
 0. **Cloud Logging は main マージ済み / production 段階反映済み**
    - PR #71 `Add structured Cloud Logging pipeline` を 2026-05-31 に main へマージ済み (`1244060`)。

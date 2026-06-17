@@ -135,6 +135,30 @@ jsonPayload.service="oms-live"
 jsonPayload.event="order_filled"
 ```
 
+OMS Paper day stop:
+
+```text
+logName:"roboinvest"
+jsonPayload.service="oms-paper"
+jsonPayload.event="day_stop_exit"
+```
+
+OMS Paper day trailing stop:
+
+```text
+logName:"roboinvest"
+jsonPayload.service="oms-paper"
+jsonPayload.event="day_stop_trail"
+```
+
+OMS Live stop monitor should normally be absent unless explicitly enabled:
+
+```text
+logName:"roboinvest"
+jsonPayload.service="oms-live"
+(jsonPayload.event="live_stop_exit" OR jsonPayload.event="live_stop_trail")
+```
+
 kabu API 発注 reject:
 
 ```text
@@ -207,6 +231,9 @@ Cloud Logging Console には以下の名前で保存しておく。
 | `roboinvest-gateway-reject-summary` | `logName:"roboinvest"`<br>`jsonPayload.service="gateway"`<br>`jsonPayload.event="signal_reject_summary"` |
 | `roboinvest-order-published` | `logName:"roboinvest"`<br>`jsonPayload.event="order_published"` |
 | `roboinvest-order-filled` | `logName:"roboinvest"`<br>`jsonPayload.service="oms-live"`<br>`jsonPayload.event="order_filled"` |
+| `roboinvest-paper-day-stop-exit` | `logName:"roboinvest"`<br>`jsonPayload.service="oms-paper"`<br>`jsonPayload.event="day_stop_exit"` |
+| `roboinvest-paper-day-stop-trail` | `logName:"roboinvest"`<br>`jsonPayload.service="oms-paper"`<br>`jsonPayload.event="day_stop_trail"` |
+| `roboinvest-live-stop-monitor` | `logName:"roboinvest"`<br>`jsonPayload.service="oms-live"`<br>`(jsonPayload.event="live_stop_exit" OR jsonPayload.event="live_stop_trail")` |
 | `roboinvest-broker-rejected` | `logName:"roboinvest"`<br>`jsonPayload.event="broker_order_rejected"` |
 | `roboinvest-closeout-completed` | `logName:"roboinvest"`<br>`jsonPayload.service="oms-live"`<br>`jsonPayload.event="closeout_completed"` |
 | `roboinvest-closeout-invariant` | `logName:"roboinvest"`<br>`jsonPayload.service="oms-live"`<br>`jsonPayload.event="closeout_invariant"` |
