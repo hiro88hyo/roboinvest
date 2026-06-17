@@ -33,6 +33,7 @@ class OmsPaperSettings(BaseSettings):
     pubsub_ack_deadline_seconds: int = 30
     market_data_stale_warn_seconds: float | None = 180.0
     order_book_max_age_seconds: float | None = 10.0
+    paper_day_stop_monitor_enabled: bool = True
 
     day_closeout_time: str = "14:50"
     day_closeout_timezone: str = "Asia/Tokyo"

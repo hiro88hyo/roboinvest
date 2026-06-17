@@ -41,6 +41,7 @@ from ..clients.pubsub import PubSubError, PubSubSubscriber, PulledMessage
 from ..clients.supabase import SupabaseClient, SupabaseError
 from ..closeout import build_closeout_orders
 from ..config import OmsPaperSettings
+from ..day_monitor import evaluate_day_exit
 from ..fill_simulator import simulate_fill
 from ..models import PaperPosition
 from ..position_updater import apply_fill, build_fill_record
@@ -69,6 +70,10 @@ class BatchStats:
     swing_trails: int = 0
     swing_no_fills: int = 0
     swing_write_errors: int = 0
+    day_stop_exits: int = 0
+    day_stop_trails: int = 0
+    day_stop_no_fills: int = 0
+    day_stop_write_errors: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,6 +99,7 @@ class StreamRunner:
     # swing 自動決済 (Phase 4) 用キャッシュ。symbol → PaperPosition (holding_type=swing)
     # のみ保持。TTL 経過で list_paper_positions から再フェッチ。
     swing_position_cache: dict[str, PaperPosition] = field(default_factory=dict)
+    day_position_cache: dict[str, PaperPosition] = field(default_factory=dict)
     swing_cache_ttl_seconds: float = 30.0
     swing_cache_loaded_at: float | None = None
     summary_log_interval_seconds: float = 60.0
@@ -142,6 +148,17 @@ class StreamRunner:
             swing_no_fills,
             swing_write_errors,
         ) = await self._evaluate_swing_for_symbols(updated_symbols)
+        day_stop_exits = 0
+        day_stop_trails = 0
+        day_stop_no_fills = 0
+        day_stop_write_errors = 0
+        if self.settings.paper_day_stop_monitor_enabled:
+            (
+                day_stop_exits,
+                day_stop_trails,
+                day_stop_no_fills,
+                day_stop_write_errors,
+            ) = await self._evaluate_day_stops_for_symbols(updated_symbols)
 
         order_msgs = await self.subscriber.pull(
             self.settings.pubsub_subscription_paper_orders,
@@ -200,6 +217,10 @@ class StreamRunner:
             swing_trails=swing_trails,
             swing_no_fills=swing_no_fills,
             swing_write_errors=swing_write_errors,
+            day_stop_exits=day_stop_exits,
+            day_stop_trails=day_stop_trails,
+            day_stop_no_fills=day_stop_no_fills,
+            day_stop_write_errors=day_stop_write_errors,
         )
         self._record_summary(stats)
         return stats
@@ -432,10 +453,11 @@ class StreamRunner:
             ),
         )
 
-    async def _ensure_swing_cache_fresh(self) -> None:
-        """``swing_cache_ttl_seconds`` を超過していたら ``list_paper_positions`` で再取得。
+    async def _ensure_position_caches_fresh(self) -> None:
+        """``swing_cache_ttl_seconds`` を超過していたら positions cache を再取得。
 
-        ``holding_type=swing`` のポジションだけをキャッシュに残す。
+        ``list_paper_positions`` は day/swing monitor で共有し、同一 run_once 内の
+        DB fetch とテスト fixture 消費を増やさない。
         """
         now = self.monotonic()
         if (
@@ -447,7 +469,14 @@ class StreamRunner:
         self.swing_position_cache = {
             p.symbol: p for p in positions if p.holding_type is TradingStyle.SWING
         }
+        self.day_position_cache = {
+            p.symbol: p for p in positions if p.holding_type is TradingStyle.DAY
+        }
         self.swing_cache_loaded_at = now
+
+    async def _ensure_swing_cache_fresh(self) -> None:
+        """Backward-compatible wrapper for swing tests/call sites."""
+        await self._ensure_position_caches_fresh()
 
     async def _evaluate_swing_for_symbols(self, symbols: set[str]) -> tuple[int, int, int, int]:
         """板更新のあった symbol について swing 自動決済を評価する。
@@ -598,6 +627,154 @@ class StreamRunner:
             symbol=symbol, stop_loss_price=str(new_stop_loss_price)
         )
         logger.info("swing trail: symbol=%s new_stop=%s", symbol, new_stop_loss_price)
+
+    async def _evaluate_day_stops_for_symbols(
+        self, symbols: set[str]
+    ) -> tuple[int, int, int, int]:
+        """板更新のあった symbol について day stop/target/trailing を評価する."""
+        if not symbols:
+            return 0, 0, 0, 0
+        try:
+            await self._ensure_position_caches_fresh()
+        except SupabaseError:
+            logger.exception("day stop cache refresh failed; will retry next cycle")
+            return 0, 0, 0, 1
+
+        exits = 0
+        trails = 0
+        no_fills = 0
+        write_errors = 0
+        now = self.wall_clock()
+
+        for symbol in symbols:
+            position = self.day_position_cache.get(symbol)
+            if position is None:
+                continue
+            book = self.book_cache.get(symbol)
+            if book is None or not book.bids:
+                logger.info("day stop skip: no bids for symbol=%s", symbol)
+                no_fills += 1
+                continue
+            latest_price = book.bids[0].price
+            decision = evaluate_day_exit(position=position, latest_price=latest_price, now=now)
+            if decision.action == "hold":
+                continue
+            try:
+                if decision.action == "exit":
+                    outcome = await self._run_day_stop_exit(
+                        position=position,
+                        book=book,
+                        reason=decision.reason or "",
+                        now=now,
+                    )
+                    if outcome == "exit":
+                        exits += 1
+                        self.day_position_cache.pop(symbol, None)
+                    else:
+                        no_fills += 1
+                else:
+                    assert decision.new_stop_loss_price is not None
+                    await self._run_day_stop_trail(
+                        symbol=symbol,
+                        new_stop_loss_price=decision.new_stop_loss_price,
+                    )
+                    self.day_position_cache[symbol] = position.model_copy(
+                        update={"stop_loss_price": decision.new_stop_loss_price}
+                    )
+                    trails += 1
+            except SupabaseError:
+                logger.exception(
+                    "day stop decision write failed: symbol=%s action=%s",
+                    symbol,
+                    decision.action,
+                )
+                write_errors += 1
+        return exits, trails, no_fills, write_errors
+
+    async def _run_day_stop_exit(
+        self,
+        *,
+        position: PaperPosition,
+        book: OrderBookSnapshot,
+        reason: str,
+        now: datetime,
+    ) -> str:
+        order = OrderRequest(
+            unified_signal_id=None,
+            symbol=position.symbol,
+            side=Side.SELL,
+            quantity=position.quantity,
+            order_type=OrderType.MARKET,
+            trade_mode=TradeMode.PAPER,
+            signal_source=SignalSource.CONSENSUS,
+            created_at=now,
+        )
+        fill = simulate_fill(order=order, book=book)
+        if fill.filled_quantity == 0 or fill.fill_price is None:
+            logger.warning(
+                "day stop exit no_fill: symbol=%s reason=%s fill_reason=%s",
+                position.symbol,
+                reason,
+                fill.reason,
+            )
+            return "no_fill"
+        update = apply_fill(
+            order=order,
+            fill=fill,
+            existing=position,
+            holding_type=position.holding_type,
+            executed_at=now,
+        )
+        if update.error is not None:
+            logger.warning(
+                "day stop exit apply_fill error: symbol=%s error=%s",
+                position.symbol,
+                update.error,
+            )
+            return "no_fill"
+        record = build_fill_record(order=order, fill=fill, executed_at=now)
+        if record is None:
+            return "no_fill"
+
+        await self.supabase.insert_trade_paper(record)
+        if update.delete:
+            await self.supabase.delete_paper_position(symbol=position.symbol)
+        elif update.position is not None:
+            await self.supabase.update_paper_position_quantity(
+                symbol=position.symbol,
+                quantity=update.position.quantity,
+                entry_price=str(update.position.entry_price),
+            )
+        logger.info(
+            "day stop exit filled: symbol=%s reason=%s qty=%d price=%s",
+            position.symbol,
+            reason,
+            record.quantity,
+            record.price,
+            extra=event_extra(
+                "day_stop_exit",
+                symbol=position.symbol,
+                reason=reason,
+                quantity=record.quantity,
+                price=str(record.price),
+            ),
+        )
+        return "exit"
+
+    async def _run_day_stop_trail(self, *, symbol: str, new_stop_loss_price: Decimal) -> None:
+        await self.supabase.update_paper_position_stop_loss(
+            symbol=symbol, stop_loss_price=str(new_stop_loss_price)
+        )
+        logger.info(
+            "day stop trail: symbol=%s new_stop=%s",
+            symbol,
+            new_stop_loss_price,
+            extra=event_extra(
+                "day_stop_trail",
+                symbol=symbol,
+                new_stop_loss_price=str(new_stop_loss_price),
+            ),
+        )
 
     async def _process_order(self, order: OrderRequest) -> str:
         """Returns 'filled', 'no_fill', or 'skipped_duplicate'.

@@ -19,6 +19,7 @@ import httpx
 import pytest
 from oms_live._testing import (
     DEFAULT_TS,
+    make_order_book,
     make_order_request,
 )
 from oms_live.clients.pubsub import PubSubSubscriber
@@ -46,6 +47,7 @@ def _settings(**overrides: Any) -> OmsLiveSettings:
         pubsub_project_id="trade-ai-dev",
         pubsub_emulator_host="pubsub:8085",
         pubsub_subscription_live_orders=LIVE_ORDERS_SUB,
+        pubsub_subscription_raw_market_data="",
         pubsub_pull_max_messages=10,
         order_fill_poll_interval_seconds=0.0,
         order_fill_timeout_seconds=5.0,
@@ -322,6 +324,80 @@ async def _with_runner(
 
 
 # --- run_once: BUY 新規 -----------------------------------------------------
+
+
+async def test_run_once_live_stop_monitor_exits_position_on_book_update() -> None:
+    book = make_order_book(bids=[("950", 500)], asks=[("951", 500)])
+    pubsub = _PubSubRouter(
+        batches=[
+            _pull_response([("book-1", book.model_dump_json().encode())]),
+            {},  # live-orders pull
+        ]
+    )
+    supabase = _SupabaseRouter(
+        list_position_rows=[
+            [_position_row(quantity=100, entry_price="1000", stop_loss_price="950")]
+        ],
+        system_status_rows=[_system_status_row(daily_pnl="0", weekly_pnl="0", monthly_pnl="0")],
+    )
+    kabu = _KabuRouter(
+        sendorder_responses=[{"Result": 0, "OrderId": "OID-STOP"}],
+        order_states={
+            "OID-STOP": [
+                _kabu_order_payload(
+                    order_id="OID-STOP",
+                    side="1",
+                    state=5,
+                    cum_qty=100,
+                    order_qty=100,
+                    detail_price=940,
+                )
+            ]
+        },
+    )
+    settings = _settings(
+        pubsub_subscription_raw_market_data="oms-live-raw-books",
+        oms_live_stop_monitor_enabled=True,
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        kabu=kabu,
+        settings=settings,
+        run_body=_body,
+    )
+
+    assert stats.books_pulled == 1
+    assert stats.books_applied == 1
+    assert stats.orders_pulled == 0
+    assert stats.stop_exits == 1
+    assert stats.stop_no_fills == 0
+    assert stats.acked == 1
+
+    send_calls = [r for r in kabu.requests if r.url.path.endswith("/sendorder")]
+    assert len(send_calls) == 1
+    send_body = json.loads(send_calls[0].content.decode())
+    assert send_body["Symbol"] == "7203"
+    assert send_body["Side"] == "1"  # SELL
+
+    methods = [(r.method, r.url.path) for r in supabase.requests]
+    assert ("POST", "/rest/v1/trades_live") in methods
+    assert ("DELETE", "/rest/v1/positions") in methods
+    assert ("PATCH", "/rest/v1/system_status") in methods
+    patch_req = next(
+        r
+        for r in supabase.requests
+        if r.method == "PATCH" and r.url.path == "/rest/v1/system_status"
+    )
+    assert json.loads(patch_req.content.decode()) == {
+        "daily_pnl": "-6000.00",
+        "weekly_pnl": "-6000.00",
+        "monthly_pnl": "-6000.00",
+    }
 
 
 async def test_run_once_buy_new_position_writes_trade_and_position_and_acks() -> None:

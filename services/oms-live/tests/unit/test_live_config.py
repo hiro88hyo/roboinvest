@@ -34,3 +34,11 @@ def test_max_qty_per_order_defaults_to_none() -> None:
 
 def test_dry_run_defaults_to_false() -> None:
     assert _settings().oms_live_dry_run is False
+
+
+def test_raw_market_data_subscription_defaults_to_live_books() -> None:
+    assert _settings().pubsub_subscription_raw_market_data == "oms-live-raw-books"
+
+
+def test_stop_monitor_defaults_to_disabled() -> None:
+    assert _settings().oms_live_stop_monitor_enabled is False

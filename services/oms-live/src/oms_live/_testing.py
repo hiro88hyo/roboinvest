@@ -7,12 +7,14 @@ mypy duplicate-module 衝突回避のため ``conftest.py`` ではなくサー�
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
 from trade_contracts.enums import OrderType, Side, SignalSource, TradeMode, TradingStyle
+from trade_contracts.market import OrderBookSnapshot, PriceLevel
 from trade_contracts.order import OrderRequest
 
 from oms_live.models import LiveFillRecord, LivePosition
@@ -50,6 +52,24 @@ def make_order_request(
         trailing_stop_pct=trailing_stop_pct,
         max_hold_days=max_hold_days,
         created_at=created_at or DEFAULT_TS,
+    )
+
+
+def make_order_book(
+    *,
+    symbol: str = "7203",
+    bids: Sequence[tuple[Decimal | str | int, int]] = (("999", 200), ("998", 500)),
+    asks: Sequence[tuple[Decimal | str | int, int]] = (("1000", 200), ("1001", 500)),
+    timestamp: datetime | None = None,
+) -> OrderBookSnapshot:
+    def _to_levels(raw: Sequence[tuple[Decimal | str | int, int]]) -> list[PriceLevel]:
+        return [PriceLevel(price=Decimal(str(p)), quantity=q) for p, q in raw]
+
+    return OrderBookSnapshot(
+        symbol=symbol,
+        timestamp=timestamp or DEFAULT_TS,
+        bids=_to_levels(bids),
+        asks=_to_levels(asks),
     )
 
 
