@@ -149,34 +149,46 @@ def test_buy_execution_filters_block_wide_or_thin_entry(
         min_minutes_to_close=60,
     )
 
-    assert strategy.evaluate(
-        features_factory(rsi=Decimal("20"), spread_ticks=Decimal("3"), ask_depth_5=500),
-        {},
-    ) is None
-    assert strategy.evaluate(
-        features_factory(rsi=Decimal("20"), spread_ticks=Decimal("1"), ask_depth_5=200),
-        {},
-    ) is None
-    assert strategy.evaluate(
-        features_factory(
-            rsi=Decimal("20"),
-            spread_ticks=Decimal("1"),
-            ask_depth_5=500,
-            book_imbalance_5=Decimal("-0.8"),
-        ),
-        {},
-    ) is None
-    assert strategy.evaluate(
-        features_factory(
-            rsi=Decimal("20"),
-            spread_ticks=Decimal("1"),
-            ask_depth_5=500,
-            book_imbalance_5=Decimal("0"),
-            minutes_from_open=10,
-            minutes_to_close=120,
-        ),
-        {},
-    ) is None
+    assert (
+        strategy.evaluate(
+            features_factory(rsi=Decimal("20"), spread_ticks=Decimal("3"), ask_depth_5=500),
+            {},
+        )
+        is None
+    )
+    assert (
+        strategy.evaluate(
+            features_factory(rsi=Decimal("20"), spread_ticks=Decimal("1"), ask_depth_5=200),
+            {},
+        )
+        is None
+    )
+    assert (
+        strategy.evaluate(
+            features_factory(
+                rsi=Decimal("20"),
+                spread_ticks=Decimal("1"),
+                ask_depth_5=500,
+                book_imbalance_5=Decimal("-0.8"),
+            ),
+            {},
+        )
+        is None
+    )
+    assert (
+        strategy.evaluate(
+            features_factory(
+                rsi=Decimal("20"),
+                spread_ticks=Decimal("1"),
+                ask_depth_5=500,
+                book_imbalance_5=Decimal("0"),
+                minutes_from_open=10,
+                minutes_to_close=120,
+            ),
+            {},
+        )
+        is None
+    )
 
     signal = strategy.evaluate(
         features_factory(

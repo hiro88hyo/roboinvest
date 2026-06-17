@@ -107,41 +107,44 @@ def score_candidates(
         )
     )
 
-    scored = agg.with_columns(
-        [
-            _zscore(pl.col("volatility")).alias("z_vol"),
-            _zscore(pl.col("volume_surge")).alias("z_surge"),
-            _zscore(pl.col("momentum")).alias("z_mom"),
-        ]
-    ).with_columns(
-        [
+    scored = (
+        agg.with_columns(
+            [
+                _zscore(pl.col("volatility")).alias("z_vol"),
+                _zscore(pl.col("volume_surge")).alias("z_surge"),
+                _zscore(pl.col("momentum")).alias("z_mom"),
+            ]
+        )
+        .with_columns(
+            [
+                (
+                    pl.col("z_vol") * config.weight_volatility
+                    + pl.col("z_surge") * config.weight_volume_surge
+                    + pl.col("z_mom") * config.weight_momentum
+                ).alias("opportunity_score"),
+                (
+                    pl.max_horizontal(pl.col("z_vol"), pl.lit(0.0))
+                    * config.risk_volatility_z_weight
+                    + pl.max_horizontal(-pl.col("z_mom"), pl.lit(0.0))
+                    * config.risk_negative_momentum_z_weight
+                    + pl.max_horizontal(
+                        pl.col("z_surge") - config.risk_volume_surge_z,
+                        pl.lit(0.0),
+                    )
+                    * config.risk_volume_surge_z_weight
+                    + pl.max_horizontal(
+                        pl.col("z_mom") - config.risk_overheat_momentum_z,
+                        pl.lit(0.0),
+                    )
+                    * config.risk_overheat_momentum_z_weight
+                ).alias("risk_penalty"),
+            ]
+        )
+        .with_columns(
             (
-                pl.col("z_vol") * config.weight_volatility
-                + pl.col("z_surge") * config.weight_volume_surge
-                + pl.col("z_mom") * config.weight_momentum
-            ).alias("opportunity_score"),
-            (
-                pl.max_horizontal(pl.col("z_vol"), pl.lit(0.0))
-                * config.risk_volatility_z_weight
-                + pl.max_horizontal(-pl.col("z_mom"), pl.lit(0.0))
-                * config.risk_negative_momentum_z_weight
-                + pl.max_horizontal(
-                    pl.col("z_surge") - config.risk_volume_surge_z,
-                    pl.lit(0.0),
-                )
-                * config.risk_volume_surge_z_weight
-                + pl.max_horizontal(
-                    pl.col("z_mom") - config.risk_overheat_momentum_z,
-                    pl.lit(0.0),
-                )
-                * config.risk_overheat_momentum_z_weight
-            ).alias("risk_penalty"),
-        ]
-    ).with_columns(
-        (
-            pl.col("opportunity_score")
-            - pl.col("risk_penalty") * config.weight_risk_penalty
-        ).alias("score")
+                pl.col("opportunity_score") - pl.col("risk_penalty") * config.weight_risk_penalty
+            ).alias("score")
+        )
     )
 
     result = (

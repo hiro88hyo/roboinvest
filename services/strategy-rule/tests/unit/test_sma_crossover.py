@@ -126,19 +126,22 @@ def test_buy_entry_filters_block_unsafe_upward_cross(
         features_factory(price=Decimal("1000"), sma_short=Decimal("99"), sma_long=Decimal("100")),
         state,
     )
-    assert strategy.evaluate(
-        features_factory(
-            price=Decimal("1000"),
-            vwap=Decimal("1001"),
-            volume_ratio=Decimal("3.0"),
-            spread_ticks=Decimal("1"),
-            ask_depth_5=500,
-            minutes_from_open=20,
-            sma_short=Decimal("120"),
-            sma_long=Decimal("100"),
-        ),
-        state,
-    ) is None
+    assert (
+        strategy.evaluate(
+            features_factory(
+                price=Decimal("1000"),
+                vwap=Decimal("1001"),
+                volume_ratio=Decimal("3.0"),
+                spread_ticks=Decimal("1"),
+                ask_depth_5=500,
+                minutes_from_open=20,
+                sma_short=Decimal("120"),
+                sma_long=Decimal("100"),
+            ),
+            state,
+        )
+        is None
+    )
 
 
 def test_buy_entry_filters_allow_safe_upward_cross(

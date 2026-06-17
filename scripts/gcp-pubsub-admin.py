@@ -206,8 +206,7 @@ def ensure_subscriptions(
                     ok = False
                 elif actual_filter != spec.filter:
                     print(
-                        f"NG   sub:{spec.name} filter={actual_filter!r}, "
-                        f"expected={spec.filter!r}"
+                        f"NG   sub:{spec.name} filter={actual_filter!r}, expected={spec.filter!r}"
                     )
                     ok = False
                 else:
@@ -226,9 +225,7 @@ def ensure_subscriptions(
                     }
                     if spec.filter:
                         request["filter"] = spec.filter
-                    subscriber.create_subscription(
-                        request=request
-                    )
+                    subscriber.create_subscription(request=request)
                     suffix = f" filter={spec.filter!r}" if spec.filter else ""
                     print(f"ADD  sub:{spec.name} -> {spec.topic}{suffix}")
                     ok = True

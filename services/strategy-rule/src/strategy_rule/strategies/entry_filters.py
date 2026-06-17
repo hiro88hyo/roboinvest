@@ -53,10 +53,7 @@ def passes_buy_entry_filters(
         return False
     return not (
         min_minutes_to_close is not None
-        and (
-            features.minutes_to_close is None
-            or features.minutes_to_close < min_minutes_to_close
-        )
+        and (features.minutes_to_close is None or features.minutes_to_close < min_minutes_to_close)
     )
 
 
