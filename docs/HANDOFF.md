@@ -162,6 +162,8 @@ bash scripts/deploy-production.sh --apply --kabu-offline
 
 ## 7. Test And Lint Conventions
 
+- `git push` 前は必ずトップレベル [CLAUDE.md](../CLAUDE.md) の **Push 前ゲート** を実行する。最低限 `make lint-all` と、変更したサービスの unit test を push 前に通す。
+- formatter 適用や追加コミット後も、push する前に再度 `make lint-all` を通す。CI で初めて `ruff format --check .` の漏れを見つけない。
 - Python は `uv` を使う。`pip` / `poetry` 直叩きは避ける。
 - 新サービスで `tests/conftest.py` を作らない。fixture は `src/<service>/_testing.py` に置く。
 - `tests/__init__.py` は作らない。
