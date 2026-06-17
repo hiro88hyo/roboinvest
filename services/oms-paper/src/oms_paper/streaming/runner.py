@@ -628,9 +628,7 @@ class StreamRunner:
         )
         logger.info("swing trail: symbol=%s new_stop=%s", symbol, new_stop_loss_price)
 
-    async def _evaluate_day_stops_for_symbols(
-        self, symbols: set[str]
-    ) -> tuple[int, int, int, int]:
+    async def _evaluate_day_stops_for_symbols(self, symbols: set[str]) -> tuple[int, int, int, int]:
         """板更新のあった symbol について day stop/target/trailing を評価する."""
         if not symbols:
             return 0, 0, 0, 0

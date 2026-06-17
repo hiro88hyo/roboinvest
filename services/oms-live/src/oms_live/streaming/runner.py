@@ -1266,9 +1266,7 @@ class StreamRunner:
         await self.supabase.insert_trade_live(record)
         await self._write_position_change(existing=existing, update=update, symbol=order.symbol)
         filled_event = (
-            "closeout_order_filled"
-            if log_phase == "closeout"
-            else f"{log_phase}_order_filled"
+            "closeout_order_filled" if log_phase == "closeout" else f"{log_phase}_order_filled"
         )
         logger.info(
             "%s order filled: symbol=%s qty=%d price=%s pnl=%s",
