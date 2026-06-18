@@ -130,16 +130,12 @@ class StreamRunner:
         return results
 
     async def run_once(self) -> BatchStats:
-        books_msgs = await self.subscriber.pull(
-            self.settings.pubsub_subscription_raw_market_data,
-            max_messages=self.settings.pubsub_pull_max_messages,
-            return_immediately=True,
-        )
-        books_applied, book_acks, updated_symbols = self._consume_books(books_msgs)
-        if book_acks:
-            await self.subscriber.acknowledge(
-                self.settings.pubsub_subscription_raw_market_data, book_acks
-            )
+        (
+            books_pulled,
+            books_applied,
+            books_acked,
+            updated_symbols,
+        ) = await self._pull_and_consume_books()
 
         # 板更新があった symbol について swing position を評価
         (
@@ -204,14 +200,14 @@ class StreamRunner:
             )
 
         stats = BatchStats(
-            books_pulled=len(books_msgs),
+            books_pulled=books_pulled,
             books_applied=books_applied,
             orders_pulled=len(order_msgs),
             parse_errors=parse_errors,
             filled=filled,
             no_fills=no_fills,
             write_errors=write_errors,
-            acked=len(book_acks) + len(order_acks),
+            acked=books_acked + len(order_acks),
             skipped_duplicate=skipped_duplicate,
             swing_exits=swing_exits,
             swing_trails=swing_trails,
@@ -224,6 +220,32 @@ class StreamRunner:
         )
         self._record_summary(stats)
         return stats
+
+    async def _pull_and_consume_books(self) -> tuple[int, int, int, set[str]]:
+        """Drain raw book batches before order processing so cache freshness catches up."""
+        max_batches = max(1, self.settings.raw_book_drain_max_batches)
+        books_pulled = 0
+        books_applied = 0
+        books_acked = 0
+        updated_symbols: set[str] = set()
+        for _ in range(max_batches):
+            books_msgs = await self.subscriber.pull(
+                self.settings.pubsub_subscription_raw_market_data,
+                max_messages=self.settings.pubsub_pull_max_messages,
+                return_immediately=True,
+            )
+            if not books_msgs:
+                break
+            applied, book_acks, updated = self._consume_books(books_msgs)
+            if book_acks:
+                await self.subscriber.acknowledge(
+                    self.settings.pubsub_subscription_raw_market_data, book_acks
+                )
+            books_pulled += len(books_msgs)
+            books_applied += applied
+            books_acked += len(book_acks)
+            updated_symbols.update(updated)
+        return books_pulled, books_applied, books_acked, updated_symbols
 
     async def run_closeout(self) -> CloseoutStats:
         """14:50 JST cron から呼ばれる前提の paper 全建玉強制決済。
@@ -353,7 +375,8 @@ class StreamRunner:
                 )
                 continue
             self.book_cache[book.symbol] = book
-            self._latest_book_timestamp = book.timestamp
+            if self._latest_book_timestamp is None or book.timestamp > self._latest_book_timestamp:
+                self._latest_book_timestamp = book.timestamp
             updated.add(book.symbol)
             applied += 1
         return applied, acks, updated
@@ -788,6 +811,15 @@ class StreamRunner:
                 "order skipped_duplicate: symbol=%s signal_id=%s",
                 order.symbol,
                 order.unified_signal_id,
+                extra=event_extra(
+                    "paper_order_skipped_duplicate",
+                    symbol=order.symbol,
+                    side=order.side.value,
+                    quantity=order.quantity,
+                    signal_id=str(order.unified_signal_id),
+                    signal_source=order.signal_source.value,
+                    created_at=order.created_at.isoformat(),
+                ),
             )
             return "skipped_duplicate"
 
@@ -797,15 +829,47 @@ class StreamRunner:
                 "order no_fill: no book yet symbol=%s signal_id=%s",
                 order.symbol,
                 order.unified_signal_id,
+                extra=event_extra(
+                    "paper_order_no_fill",
+                    reason="no_book",
+                    symbol=order.symbol,
+                    side=order.side.value,
+                    quantity=order.quantity,
+                    signal_id=(
+                        str(order.unified_signal_id)
+                        if order.unified_signal_id is not None
+                        else None
+                    ),
+                    signal_source=order.signal_source.value,
+                    created_at=order.created_at.isoformat(),
+                ),
             )
             return "no_fill"
         if self._is_book_too_old_for_order(book=book, order=order):
+            book_age_seconds = (order.created_at - book.timestamp).total_seconds()
             logger.warning(
                 "order no_fill: stale book symbol=%s book_ts=%s order_ts=%s signal_id=%s",
                 order.symbol,
                 book.timestamp.isoformat(),
                 order.created_at.isoformat(),
                 order.unified_signal_id,
+                extra=event_extra(
+                    "paper_order_no_fill",
+                    reason="stale_book",
+                    symbol=order.symbol,
+                    side=order.side.value,
+                    quantity=order.quantity,
+                    signal_id=(
+                        str(order.unified_signal_id)
+                        if order.unified_signal_id is not None
+                        else None
+                    ),
+                    signal_source=order.signal_source.value,
+                    created_at=order.created_at.isoformat(),
+                    book_timestamp=book.timestamp.isoformat(),
+                    book_age_seconds=round(book_age_seconds, 3),
+                    max_book_age_seconds=self.settings.order_book_max_age_seconds,
+                ),
             )
             return "no_fill"
 
@@ -816,6 +880,21 @@ class StreamRunner:
                 order.symbol,
                 fill.reason,
                 order.unified_signal_id,
+                extra=event_extra(
+                    "paper_order_no_fill",
+                    reason=fill.reason,
+                    symbol=order.symbol,
+                    side=order.side.value,
+                    quantity=order.quantity,
+                    signal_id=(
+                        str(order.unified_signal_id)
+                        if order.unified_signal_id is not None
+                        else None
+                    ),
+                    signal_source=order.signal_source.value,
+                    created_at=order.created_at.isoformat(),
+                    book_timestamp=book.timestamp.isoformat(),
+                ),
             )
             return "no_fill"
 
@@ -840,6 +919,21 @@ class StreamRunner:
                 order.symbol,
                 update.error,
                 order.unified_signal_id,
+                extra=event_extra(
+                    "paper_order_no_fill",
+                    reason="apply_fill_error",
+                    symbol=order.symbol,
+                    side=order.side.value,
+                    quantity=order.quantity,
+                    signal_id=(
+                        str(order.unified_signal_id)
+                        if order.unified_signal_id is not None
+                        else None
+                    ),
+                    signal_source=order.signal_source.value,
+                    created_at=order.created_at.isoformat(),
+                    error=update.error,
+                ),
             )
             return "no_fill"
 
@@ -862,6 +956,19 @@ class StreamRunner:
             record.quantity,
             record.price,
             order.unified_signal_id,
+            extra=event_extra(
+                "paper_order_filled",
+                symbol=record.symbol,
+                side=record.side.value,
+                quantity=record.quantity,
+                price=str(record.price),
+                signal_id=(
+                    str(order.unified_signal_id) if order.unified_signal_id is not None else None
+                ),
+                signal_source=record.signal_source.value,
+                created_at=order.created_at.isoformat(),
+                book_timestamp=book.timestamp.isoformat(),
+            ),
         )
         return "filled"
 

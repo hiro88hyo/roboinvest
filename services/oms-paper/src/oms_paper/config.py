@@ -30,6 +30,7 @@ class OmsPaperSettings(BaseSettings):
     pubsub_subscription_paper_orders: str = "oms-paper-paper-orders"
     pubsub_subscription_raw_market_data: str = "oms-paper-raw-market-data"
     pubsub_pull_max_messages: int = 100
+    raw_book_drain_max_batches: int = 1
     pubsub_ack_deadline_seconds: int = 30
     market_data_stale_warn_seconds: float | None = 180.0
     order_book_max_age_seconds: float | None = 10.0

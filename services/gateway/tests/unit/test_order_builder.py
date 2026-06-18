@@ -52,6 +52,31 @@ def test_build_buy_order_fills_default_stop_loss(unified_signal_factory) -> None
     assert order.stop_loss_price == Decimal("1685.208")
 
 
+def test_build_buy_order_applies_limit_offset_ticks(unified_signal_factory) -> None:  # type: ignore[no-untyped-def]
+    signal = unified_signal_factory(action=Action.BUY)
+    order = order_builder.build(
+        signal=signal,
+        quantity=100,
+        trade_mode=TradeMode.PAPER,
+        entry_price=Decimal("2500"),
+        buy_limit_offset_ticks=3,
+    )
+    assert order.order_type is OrderType.LIMIT
+    assert order.limit_price == Decimal("2503")
+
+
+def test_build_buy_order_limit_offset_uses_price_band_tick(unified_signal_factory) -> None:  # type: ignore[no-untyped-def]
+    signal = unified_signal_factory(action=Action.BUY)
+    order = order_builder.build(
+        signal=signal,
+        quantity=100,
+        trade_mode=TradeMode.PAPER,
+        entry_price=Decimal("4000"),
+        buy_limit_offset_ticks=3,
+    )
+    assert order.limit_price == Decimal("4015")
+
+
 def test_build_buy_order_keeps_explicit_stop_loss(unified_signal_factory) -> None:  # type: ignore[no-untyped-def]
     signal = unified_signal_factory(action=Action.BUY, stop_loss_price=Decimal("1650"))
     order = order_builder.build(

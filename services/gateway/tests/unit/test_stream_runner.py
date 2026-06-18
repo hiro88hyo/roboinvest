@@ -892,6 +892,99 @@ async def test_paper_mode_publishes_to_paper_orders(tmp_path: Path) -> None:
     assert archived.symbol == "7203"
 
 
+async def test_paper_buy_limit_offset_ticks_applies_to_paper_order(tmp_path: Path) -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response([("a1", _unified_payload(action=Action.BUY, stop_loss_price="2400"))])
+        ]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trade_mode="paper")],
+        positions_quantity_rows=[[]],
+        positions_price_rows=[[{"current_price": "2500"}]],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    archive = OrderArchiveWriter(tmp_path / "orders")
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        settings=_settings(
+            liquidity_sizing_enabled=False,
+            paper_buy_limit_offset_ticks=3,
+        ),
+        order_archive=archive,
+        run_body=_body,
+    )
+
+    assert stats.approved == 1
+    body = json.loads(pubsub.published[0].content.decode())
+    order = json.loads(base64.b64decode(body["messages"][0]["data"]).decode("utf-8"))
+    assert order["order_type"] == "LIMIT"
+    assert order["limit_price"] == "2503"
+
+
+async def test_paper_duplicate_buy_is_rejected_by_symbol_cooldown(caplog: Any) -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response(
+                [
+                    (
+                        "a1",
+                        _unified_payload(
+                            symbol="6966",
+                            action=Action.BUY,
+                            price="1250",
+                            stop_loss_price="1225",
+                        ),
+                    ),
+                    (
+                        "a2",
+                        _unified_payload(
+                            symbol="6966",
+                            action=Action.BUY,
+                            price="1249",
+                            stop_loss_price="1224",
+                        ),
+                    ),
+                ]
+            )
+        ]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[
+            _system_status_row(trade_mode="paper"),
+            _system_status_row(trade_mode="paper"),
+        ],
+        positions_quantity_rows=[[]],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    caplog.set_level(logging.INFO, logger="gateway.streaming.runner")
+
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        settings=_settings(
+            liquidity_sizing_enabled=False,
+            paper_symbol_order_cooldown_seconds=300,
+        ),
+        run_body=_body,
+    )
+
+    assert stats.approved == 1
+    assert stats.rejected == 1
+    assert len(pubsub.published) == 1
+    rejected = [
+        record for record in caplog.records if getattr(record, "event", None) == "signal_rejected"
+    ]
+    assert [record.reason for record in rejected] == ["paper_symbol_order_cooldown"]
+
+
 async def test_market_regime_risk_off_logs_would_reject_without_blocking(caplog: Any) -> None:
     pubsub = _PubSubRouter(
         pull_batches=[

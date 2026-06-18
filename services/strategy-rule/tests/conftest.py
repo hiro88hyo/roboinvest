@@ -11,6 +11,7 @@ from uuid import uuid4
 import httpx
 import pytest
 from trade_contracts.features import ProcessedFeatures
+from trade_contracts.market import OrderBookSnapshot
 
 FeaturesFactory = Callable[..., ProcessedFeatures]
 
@@ -28,6 +29,7 @@ def _make_features(
     bollinger_upper: Decimal | None = None,
     bollinger_middle: Decimal | None = None,
     bollinger_lower: Decimal | None = None,
+    order_book: OrderBookSnapshot | None = None,
     best_bid: Decimal | None = None,
     best_ask: Decimal | None = None,
     spread_bps: Decimal | None = None,
@@ -52,6 +54,7 @@ def _make_features(
         bollinger_upper=bollinger_upper,
         bollinger_middle=bollinger_middle,
         bollinger_lower=bollinger_lower,
+        order_book=order_book,
         best_bid=best_bid,
         best_ask=best_ask,
         spread_bps=spread_bps,

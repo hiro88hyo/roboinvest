@@ -12,6 +12,8 @@ class StaticFilterConfig:
     price_min: Decimal
     price_max: Decimal
     allowed_segments: tuple[str, ...]
+    min_lot_size: int = 100
+    max_min_lot_notional_jpy: Decimal | None = None
     turnover_lookback_days: int = 20
 
 
@@ -46,6 +48,10 @@ def apply_static_filter(
     min_turnover = float(config.min_turnover_jpy)
     price_min = float(config.price_min)
     price_max = float(config.price_max)
+    min_lot_size = float(config.min_lot_size)
+    max_min_lot_notional = (
+        None if config.max_min_lot_notional_jpy is None else float(config.max_min_lot_notional_jpy)
+    )
 
     joined = master.join(agg, on="symbol", how="inner")
     filtered = joined.filter(
@@ -54,6 +60,11 @@ def apply_static_filter(
         & (pl.col("avg_turnover") >= min_turnover)
         & (pl.col("latest_close") >= price_min)
         & (pl.col("latest_close") <= price_max)
+        & (
+            pl.lit(True)
+            if max_min_lot_notional is None
+            else (pl.col("latest_close") * min_lot_size <= max_min_lot_notional)
+        )
         & (pl.col("latest_date") == latest_date)
     )
     return filtered.select(master.columns)

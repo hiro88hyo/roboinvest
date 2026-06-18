@@ -26,6 +26,8 @@ def test_defaults() -> None:
     assert s.entry_min_book_imbalance_5 is None
     assert s.entry_min_minutes_from_open is None
     assert s.entry_min_minutes_to_close is None
+    assert s.entry_max_book_age_seconds is None
+    assert s.entry_max_price is None
 
 
 def test_strategies_enabled_accepts_csv_string() -> None:
@@ -61,6 +63,8 @@ def test_entry_risk_filters_accept_env_values() -> None:
         entry_min_book_imbalance_5="-0.5",
         entry_min_minutes_from_open="15",
         entry_min_minutes_to_close="60",
+        entry_max_book_age_seconds="30",
+        entry_max_price="5000",
     )
     assert s.entry_max_spread_bps == Decimal("30")
     assert s.entry_max_spread_ticks == Decimal("2")
@@ -68,3 +72,5 @@ def test_entry_risk_filters_accept_env_values() -> None:
     assert s.entry_min_book_imbalance_5 == Decimal("-0.5")
     assert s.entry_min_minutes_from_open == 15
     assert s.entry_min_minutes_to_close == 60
+    assert s.entry_max_book_age_seconds == Decimal("30")
+    assert s.entry_max_price == Decimal("5000")

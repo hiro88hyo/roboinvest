@@ -34,9 +34,11 @@ class ScannerSettings(BaseSettings):
     supabase_url: str
     supabase_secret_key: str
 
-    scan_static_min_turnover_jpy: Decimal = Decimal("100000000")
+    scan_static_min_turnover_jpy: Decimal = Decimal("200000000")
     scan_static_price_min: Decimal = Decimal("300")
-    scan_static_price_max: Decimal = Decimal("20000")
+    scan_static_price_max: Decimal = Decimal("5000")
+    scan_static_min_lot_size: int = 100
+    scan_static_max_min_lot_notional_jpy: Decimal = Decimal("500000")
     scan_static_market_segments: tuple[str, ...] = Field(
         default=("プライム", "スタンダード", "グロース")
     )

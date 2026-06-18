@@ -53,6 +53,8 @@ class StrategyRuleSettings(BaseSettings):
     entry_min_book_imbalance_5: Decimal | None = None
     entry_min_minutes_from_open: int | None = None
     entry_min_minutes_to_close: int | None = None
+    entry_max_book_age_seconds: Decimal | None = None
+    entry_max_price: Decimal | None = None
 
     backtest_output_dir: Path = Path("./out/strategy-rule")
 
@@ -71,6 +73,8 @@ class StrategyRuleSettings(BaseSettings):
         "entry_min_minutes_from_open",
         "entry_min_minutes_to_close",
         "entry_min_ask_depth_5",
+        "entry_max_book_age_seconds",
+        "entry_max_price",
         mode="before",
     )
     @classmethod

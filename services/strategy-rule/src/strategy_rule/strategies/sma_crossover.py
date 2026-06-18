@@ -33,23 +33,27 @@ class SmaCrossoverStrategy:
         full_confidence_gap_ratio: Decimal = Decimal("0.02"),
         volume_ratio_min: Decimal | None = None,
         require_price_above_vwap: bool = False,
+        max_price: Decimal | None = None,
         max_spread_bps: Decimal | None = None,
         max_spread_ticks: Decimal | None = None,
         min_ask_depth_5: int | None = None,
         min_book_imbalance_5: Decimal | None = None,
         min_minutes_from_open: int | None = None,
         min_minutes_to_close: int | None = None,
+        max_book_age_seconds: Decimal | None = None,
     ) -> None:
         self._min_gap_ratio = min_gap_ratio
         self._full_confidence_gap_ratio = full_confidence_gap_ratio
         self._volume_ratio_min = volume_ratio_min
         self._require_price_above_vwap = require_price_above_vwap
+        self._max_price = max_price
         self._max_spread_bps = max_spread_bps
         self._max_spread_ticks = max_spread_ticks
         self._min_ask_depth_5 = min_ask_depth_5
         self._min_book_imbalance_5 = min_book_imbalance_5
         self._min_minutes_from_open = min_minutes_from_open
         self._min_minutes_to_close = min_minutes_to_close
+        self._max_book_age_seconds = max_book_age_seconds
 
     def evaluate(
         self,
@@ -76,6 +80,7 @@ class SmaCrossoverStrategy:
             if not passes_buy_entry_filters(
                 features,
                 volume_ratio_min=self._volume_ratio_min,
+                max_price=self._max_price,
                 require_price_above_vwap=self._require_price_above_vwap,
                 require_sma_uptrend=False,
                 max_spread_bps=self._max_spread_bps,
@@ -84,6 +89,7 @@ class SmaCrossoverStrategy:
                 min_book_imbalance_5=self._min_book_imbalance_5,
                 min_minutes_from_open=self._min_minutes_from_open,
                 min_minutes_to_close=self._min_minutes_to_close,
+                max_book_age_seconds=self._max_book_age_seconds,
             ):
                 return None
             action = Action.BUY
@@ -101,6 +107,7 @@ class SmaCrossoverStrategy:
         if action is Action.BUY:
             filters = buy_entry_filter_labels(
                 volume_ratio_min=self._volume_ratio_min,
+                max_price=self._max_price,
                 require_price_above_vwap=self._require_price_above_vwap,
                 require_sma_uptrend=False,
                 max_spread_bps=self._max_spread_bps,
@@ -109,6 +116,7 @@ class SmaCrossoverStrategy:
                 min_book_imbalance_5=self._min_book_imbalance_5,
                 min_minutes_from_open=self._min_minutes_from_open,
                 min_minutes_to_close=self._min_minutes_to_close,
+                max_book_age_seconds=self._max_book_age_seconds,
             )
             if filters:
                 filter_suffix = f" filters=({','.join(filters)})"

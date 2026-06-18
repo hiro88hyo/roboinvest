@@ -61,6 +61,13 @@ def _make_master() -> pl.DataFrame:
                 "sector": "情報通信",
                 "is_active": True,
             },
+            {
+                "symbol": "6666",
+                "symbol_name": "Expensive Co",
+                "market_segment": "プライム",
+                "sector": "情報通信",
+                "is_active": True,
+            },
         ]
     )
 
@@ -72,6 +79,7 @@ def _make_ohlcv() -> pl.DataFrame:
     rows += _ohlcv_rows("3333", days=20, close=100.0, turnover=5e8)  # fail: price < min
     rows += _ohlcv_rows("4444", days=20, close=1000.0, turnover=5e8)  # fail: inactive
     rows += _ohlcv_rows("5555", days=20, close=1000.0, turnover=5e8)  # fail: segment
+    rows += _ohlcv_rows("6666", days=20, close=6000.0, turnover=5e8)  # fail: min lot notional
     return pl.DataFrame(rows)
 
 
@@ -79,8 +87,10 @@ def _config() -> StaticFilterConfig:
     return StaticFilterConfig(
         min_turnover_jpy=Decimal("100000000"),
         price_min=Decimal("300"),
-        price_max=Decimal("20000"),
+        price_max=Decimal("5000"),
         allowed_segments=("プライム", "スタンダード", "グロース"),
+        min_lot_size=100,
+        max_min_lot_notional_jpy=Decimal("500000"),
     )
 
 
