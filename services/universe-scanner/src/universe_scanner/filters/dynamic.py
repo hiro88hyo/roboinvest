@@ -96,6 +96,9 @@ def score_candidates(
                     pl.col("volume").tail(short).mean()
                     / pl.col("volume").tail(long_).mean().replace(0, None)
                 ).alias("volume_surge"),
+                pl.col("close").tail(1).last().alias("latest_close"),
+                pl.col("turnover").tail(long_).mean().alias("avg_turnover_20"),
+                pl.col("volume").tail(1).last().alias("latest_volume"),
             ]
         )
         .with_columns(
@@ -103,6 +106,7 @@ def score_candidates(
                 pl.col("volatility").fill_null(0.0),
                 pl.col("momentum").fill_null(0.0),
                 pl.col("volume_surge").fill_null(1.0),
+                (pl.col("latest_close") * 100).alias("min_lot_notional"),
             ]
         )
     )
@@ -163,6 +167,10 @@ def score_candidates(
             "volatility",
             "volume_surge",
             "momentum",
+            "latest_close",
+            "avg_turnover_20",
+            "latest_volume",
+            "min_lot_notional",
         ]
     )
 
@@ -177,6 +185,10 @@ def to_watchlist_rows(scored: pl.DataFrame, *, valid_date_iso: str) -> list[dict
             "volatility": row["volatility"],
             "volume_surge": row["volume_surge"],
             "momentum": row["momentum"],
+            "latest_close": row.get("latest_close"),
+            "avg_turnover_20": row.get("avg_turnover_20"),
+            "latest_volume": row.get("latest_volume"),
+            "min_lot_notional": row.get("min_lot_notional"),
         }
         rows.append(
             {

@@ -53,6 +53,8 @@ async def run_pipeline(
         price_min=settings.scan_static_price_min,
         price_max=settings.scan_static_price_max,
         allowed_segments=settings.scan_static_market_segments,
+        min_lot_size=settings.scan_static_min_lot_size,
+        max_min_lot_notional_jpy=settings.scan_static_max_min_lot_notional_jpy,
     )
     scoring_config = DynamicScoringConfig(
         top_n=settings.scan_dynamic_top_n,

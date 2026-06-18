@@ -153,6 +153,10 @@ def test_to_watchlist_rows_shape():
                 "volatility": 0.02,
                 "volume_surge": 1.5,
                 "momentum": 0.1,
+                "latest_close": 2500.0,
+                "avg_turnover_20": 300000000.0,
+                "latest_volume": 120000,
+                "min_lot_notional": 250000.0,
             }
         ]
     )
@@ -170,4 +174,8 @@ def test_to_watchlist_rows_shape():
         "volatility",
         "volume_surge",
         "momentum",
+        "latest_close",
+        "avg_turnover_20",
+        "latest_volume",
+        "min_lot_notional",
     }

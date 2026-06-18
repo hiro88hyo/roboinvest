@@ -104,6 +104,9 @@ class StreamRunner:
     _pending_live_order_deadlines: dict[tuple[str, str, str], float] = field(
         default_factory=dict, init=False
     )
+    _pending_paper_buy_deadlines: dict[tuple[str, str, str], float] = field(
+        default_factory=dict, init=False
+    )
     _cached_live_capital: Decimal | None = field(default=None, init=False)
 
     async def run(self, *, iterations: int | None = None) -> list[BatchStats]:
@@ -197,6 +200,10 @@ class StreamRunner:
 
         if self._has_pending_live_order(signal=signal, trade_mode=trade_mode):
             self._log_reject(signal, "pending_live_order", trade_mode)
+            return _Decision(approved=False, kill_switch_fired=False)
+
+        if self._has_pending_paper_buy_order(signal=signal, trade_mode=trade_mode):
+            self._log_reject(signal, "paper_symbol_order_cooldown", trade_mode)
             return _Decision(approved=False, kill_switch_fired=False)
 
         if self._soft_loss_throttle_blocks_buy(signal=signal, state=state):
@@ -321,10 +328,20 @@ class StreamRunner:
             quantity=quantity,
             trade_mode=trade_mode,
             entry_price=entry_price,
+            buy_limit_offset_ticks=(
+                self.settings.paper_buy_limit_offset_ticks if trade_mode is TradeMode.PAPER else 0
+            ),
             default_stop_loss_spread_pct=self.risk_config.default_stop_loss_spread_pct,
             created_at=now,
         )
-        reservation_risk = self._risk_amount_for_order(order=order, entry_price=entry_price)
+        reservation_entry_price = self._reservation_entry_price(
+            order=order,
+            entry_price=entry_price,
+        )
+        reservation_risk = self._risk_amount_for_order(
+            order=order,
+            entry_price=reservation_entry_price,
+        )
         if reservation_risk is not None:
             reservation = await self.supabase.reserve_order_risk(
                 order_id=order.order_id,
@@ -335,7 +352,7 @@ class StreamRunner:
                 symbol=order.symbol,
                 side=order.side.value,
                 risk_amount=reservation_risk,
-                notional_amount=(entry_price or Decimal("0")) * Decimal(order.quantity),
+                notional_amount=(reservation_entry_price or Decimal("0")) * Decimal(order.quantity),
             )
             if not reservation.passed:
                 self._log_reject(signal, reservation.reason or "risk_reservation", trade_mode)
@@ -371,6 +388,7 @@ class StreamRunner:
                     order.order_id,
                 )
         self._mark_pending_live_order(signal=signal, trade_mode=trade_mode)
+        self._mark_pending_paper_buy_order(signal=signal, trade_mode=trade_mode)
         self._record_publish_summary(
             trade_mode=order.trade_mode.value,
             side=order.side.value,
@@ -409,6 +427,13 @@ class StreamRunner:
             return None
         return risk_per_share * Decimal(order.quantity)
 
+    def _reservation_entry_price(
+        self, *, order: OrderRequest, entry_price: Decimal | None
+    ) -> Decimal | None:
+        if order.side.value == "BUY" and order.limit_price is not None:
+            return order.limit_price
+        return entry_price
+
     def _pending_live_order_key(
         self, *, signal: UnifiedTradeSignal, trade_mode: TradeMode
     ) -> tuple[str, str, str]:
@@ -422,6 +447,8 @@ class StreamRunner:
             self._pending_live_order_deadlines.pop(key, None)
 
     def _has_pending_live_order(self, *, signal: UnifiedTradeSignal, trade_mode: TradeMode) -> bool:
+        if trade_mode is not TradeMode.LIVE:
+            return False
         now = self.monotonic()
         self._prune_pending_live_orders(now=now)
         return (
@@ -432,6 +459,8 @@ class StreamRunner:
     def _mark_pending_live_order(
         self, *, signal: UnifiedTradeSignal, trade_mode: TradeMode
     ) -> None:
+        if trade_mode is not TradeMode.LIVE:
+            return
         cooldown = self.settings.live_symbol_order_cooldown_seconds
         if cooldown <= 0:
             return
@@ -439,6 +468,43 @@ class StreamRunner:
         self._prune_pending_live_orders(now=now)
         self._pending_live_order_deadlines[
             self._pending_live_order_key(signal=signal, trade_mode=trade_mode)
+        ] = now + cooldown
+
+    def _pending_paper_buy_order_key(
+        self, *, signal: UnifiedTradeSignal, trade_mode: TradeMode
+    ) -> tuple[str, str, str]:
+        return (trade_mode.value, signal.symbol, signal.action.value)
+
+    def _prune_pending_paper_buy_orders(self, *, now: float) -> None:
+        expired = [
+            key for key, deadline in self._pending_paper_buy_deadlines.items() if deadline <= now
+        ]
+        for key in expired:
+            self._pending_paper_buy_deadlines.pop(key, None)
+
+    def _has_pending_paper_buy_order(
+        self, *, signal: UnifiedTradeSignal, trade_mode: TradeMode
+    ) -> bool:
+        cooldown = self.settings.paper_symbol_order_cooldown_seconds
+        if trade_mode is not TradeMode.PAPER or signal.action is not Action.BUY or cooldown <= 0:
+            return False
+        now = self.monotonic()
+        self._prune_pending_paper_buy_orders(now=now)
+        return (
+            self._pending_paper_buy_order_key(signal=signal, trade_mode=trade_mode)
+            in self._pending_paper_buy_deadlines
+        )
+
+    def _mark_pending_paper_buy_order(
+        self, *, signal: UnifiedTradeSignal, trade_mode: TradeMode
+    ) -> None:
+        cooldown = self.settings.paper_symbol_order_cooldown_seconds
+        if trade_mode is not TradeMode.PAPER or signal.action is not Action.BUY or cooldown <= 0:
+            return
+        now = self.monotonic()
+        self._prune_pending_paper_buy_orders(now=now)
+        self._pending_paper_buy_deadlines[
+            self._pending_paper_buy_order_key(signal=signal, trade_mode=trade_mode)
         ] = now + cooldown
 
     async def _rebudget_buy_quantity(

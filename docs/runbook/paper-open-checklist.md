@@ -115,6 +115,54 @@ set -a && . infra/.op.service-account.env && set +a
 op run --env-file infra/env.production --   docker compose -f infra/docker-compose.prod.yml logs --tail=100 feeder feature-engine strategy-rule strategy-ai aggregator gateway oms-paper
 ```
 
+### 5.1 Paper Checkpoint Report
+
+寄り付き後はログだけでなく、Supabase / paper archive / compose logs をまとめた checkpoint report で
+約定パイプラインを確認する。目安は 9:15 以降、前引け、大引け。
+
+```bash
+set -a && . infra/.op.service-account.env && set +a
+op run --env-file infra/env.production -- \
+  uv run python scripts/report-paper-checkpoint.py --checkpoint open
+
+op run --env-file infra/env.production -- \
+  uv run python scripts/report-paper-checkpoint.py --checkpoint midday
+
+op run --env-file infra/env.production -- \
+  uv run python scripts/report-paper-checkpoint.py --checkpoint close
+```
+
+重点確認:
+
+- `watchlist_count` が 0 ではない
+- `aggregator by source/action` で BUY が極端に偏っていない
+- `orders archived_total / archived_buy` が aggregator BUY に対して極端に少なくない
+- `trades_paper_total` と open positions が増えているか
+- gateway reject reason に `paper_symbol_order_cooldown` 以外の想定外理由が増えていないか
+- oms-paper no-fill reason が `stale_book` / `no_book` に寄っていないか
+- `latest_market_data_summary.latest_book_age_seconds` が大きくなっていないか
+
+現在の paper 設定:
+
+- `PAPER_BUY_LIMIT_OFFSET_TICKS=3`
+  - 2026-06-18 archive replay では original limit の fill が 14/77、`orig+3t` が 62/77
+  - 平均 fill price は original 比 +10.80 bps、最大 +54.95 bps
+- `PAPER_SYMBOL_ORDER_COOLDOWN_SECONDS=300`
+  - 2026-06-18 archive simulation では 77 BUY のうち kept 40 / rejected 37
+- `OMS_PAPER_RAW_BOOK_DRAIN_MAX_BATCHES=10`
+  - oms-paper が古い book batch だけを見て no-fill に寄るのを避ける
+
+当日後の深掘り:
+
+```bash
+op run --env-file infra/env.production -- \
+  uv run python scripts/report-paper-execution-diagnostics.py --date YYYY-MM-DD
+
+uv run python scripts/explore-paper-limit-prices.py \
+  --date YYYY-MM-DD \
+  --output-csv out/paper-archive-YYYY-MM-DD/limit-price-sweep.csv
+```
+
 任意の paper 実験:
 
 - `ENTRY_VOLUME_RATIO_MIN=2.0` を設定すると、RSI / Bollinger の BUY entry は直近出来高が
@@ -167,3 +215,5 @@ op run --env-file infra/env.production --   docker compose -f infra/docker-compo
 3. `docker compose ... up -d --build` で paper services 起動
 4. `health-check.py --check supabase services` を確認
 5. 寄り付き後に logs を監視
+6. 9:15 以降に `report-paper-checkpoint.py --checkpoint open` を実行
+7. 前引けに `--checkpoint midday`、大引けに `--checkpoint close` を実行

@@ -44,6 +44,7 @@ class GatewaySettings(BaseSettings):
     max_risk_per_trade_pct: Decimal = Decimal("0.02")
     swing_risk_scale: Decimal = Decimal("0.5")
     default_stop_loss_spread_pct: Decimal = Decimal("0.02")
+    paper_buy_limit_offset_ticks: int = 0
     min_lot_size: int = 100
     oms_live_max_qty_per_order: int | None = Field(
         default=None,
@@ -51,6 +52,7 @@ class GatewaySettings(BaseSettings):
     )
     live_signal_max_age_seconds: float | None = 300.0
     live_symbol_order_cooldown_seconds: float = 15.0
+    paper_symbol_order_cooldown_seconds: float = 0.0
     day_same_symbol_reentry_block_enabled: bool = True
     market_regime_gateway_log_only_enabled: bool = True
     market_regime_gateway_guard_enabled: bool = False

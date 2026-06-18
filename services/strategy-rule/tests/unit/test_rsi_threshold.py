@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from strategy_rule.strategies.rsi_threshold import RsiThresholdStrategy
 from trade_contracts.enums import Action
 from trade_contracts.features import ProcessedFeatures
+from trade_contracts.market import OrderBookSnapshot
 
 
 def test_no_rsi_returns_none(features_factory: Callable[..., ProcessedFeatures]) -> None:
@@ -206,6 +208,72 @@ def test_buy_execution_filters_block_wide_or_thin_entry(
     assert signal.reasoning is not None
     assert "spread_ticks<=2" in signal.reasoning
     assert "ask_depth_5>=300" in signal.reasoning
+
+
+def test_buy_price_and_book_age_filters_block_entry(
+    features_factory: Callable[..., ProcessedFeatures],
+) -> None:
+    timestamp = datetime(2026, 6, 18, 9, 30, tzinfo=UTC)
+    strategy = RsiThresholdStrategy(
+        buy_threshold=Decimal("30"),
+        max_price=Decimal("5000"),
+        max_book_age_seconds=Decimal("30"),
+    )
+
+    assert (
+        strategy.evaluate(
+            features_factory(
+                timestamp=timestamp,
+                price=Decimal("5001"),
+                rsi=Decimal("20"),
+                order_book=OrderBookSnapshot(
+                    symbol="7203",
+                    timestamp=timestamp,
+                    bids=[],
+                    asks=[],
+                ),
+            ),
+            {},
+        )
+        is None
+    )
+
+    assert (
+        strategy.evaluate(
+            features_factory(
+                timestamp=timestamp,
+                price=Decimal("4999"),
+                rsi=Decimal("20"),
+                order_book=OrderBookSnapshot(
+                    symbol="7203",
+                    timestamp=timestamp - timedelta(seconds=31),
+                    bids=[],
+                    asks=[],
+                ),
+            ),
+            {},
+        )
+        is None
+    )
+
+    signal = strategy.evaluate(
+        features_factory(
+            timestamp=timestamp,
+            price=Decimal("4999"),
+            rsi=Decimal("20"),
+            order_book=OrderBookSnapshot(
+                symbol="7203",
+                timestamp=timestamp - timedelta(seconds=30),
+                bids=[],
+                asks=[],
+            ),
+        ),
+        {},
+    )
+    assert signal is not None
+    assert signal.reasoning is not None
+    assert "price<=5000" in signal.reasoning
+    assert "book_age_seconds<=30" in signal.reasoning
 
 
 def test_buy_volume_ratio_filter_does_not_block_sell(

@@ -351,6 +351,31 @@ async def test_order_with_no_book_in_cache_is_no_fill_and_acked() -> None:
     assert any(PAPER_ORDERS_SUB in p for p in ack_paths)
 
 
+async def test_order_no_fill_log_has_structured_reason(caplog: Any) -> None:
+    order = make_order_request(symbol="7203", side=Side.BUY, quantity=100)
+    pubsub = _PubSubRouter(
+        order_batches=[_pull_response([("ord-1", order.model_dump_json().encode("utf-8"))])],
+    )
+    supabase = _SupabaseRouter()
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    caplog.set_level(logging.INFO, logger="oms_paper.streaming.runner")
+
+    await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+
+    records = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "paper_order_no_fill"
+    ]
+    assert len(records) == 1
+    assert records[0].reason == "no_book"
+    assert records[0].symbol == "7203"
+    assert records[0].side == "BUY"
+
+
 async def test_order_with_stale_book_is_no_fill_and_acked() -> None:
     old_book = make_order_book(
         symbol="7203",
@@ -375,6 +400,48 @@ async def test_order_with_stale_book_is_no_fill_and_acked() -> None:
     writes = [r for r in supabase.requests if r.method in {"POST", "PATCH", "DELETE"}]
     assert writes == []
     assert any(PAPER_ORDERS_SUB in r.url.path for r in pubsub.acked)
+
+
+async def test_raw_books_are_drained_before_order_processing() -> None:
+    stale_book = make_order_book(
+        symbol="7203",
+        asks=(("900", 200),),
+        timestamp=DEFAULT_TS - timedelta(seconds=60),
+    )
+    fresh_book = make_order_book(
+        symbol="7203",
+        asks=(("1000", 200),),
+        timestamp=DEFAULT_TS,
+    )
+    order = make_order_request(symbol="7203", side=Side.BUY, quantity=100, created_at=DEFAULT_TS)
+    pubsub = _PubSubRouter(
+        order_batches=[_pull_response([("ord-1", order.model_dump_json().encode("utf-8"))])],
+        book_batches=[
+            _pull_response([("bk-stale", stale_book.model_dump_json().encode("utf-8"))]),
+            _pull_response([("bk-fresh", fresh_book.model_dump_json().encode("utf-8"))]),
+        ],
+    )
+    supabase = _SupabaseRouter(paper_position_rows=[[]])
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        settings=_settings(raw_book_drain_max_batches=2),
+        run_body=_body,
+    )
+
+    assert stats.books_pulled == 2
+    assert stats.books_applied == 2
+    assert stats.filled == 1
+    assert stats.no_fills == 0
+    insert_trade = next(
+        r for r in supabase.requests if r.method == "POST" and r.url.path == "/rest/v1/trades_paper"
+    )
+    body = json.loads(insert_trade.content.decode())
+    assert body[0]["price"] == "1000"
 
 
 async def test_older_book_does_not_overwrite_newer_cache() -> None:
@@ -414,6 +481,39 @@ async def test_older_book_does_not_overwrite_newer_cache() -> None:
     )
     body = json.loads(insert_trade.content.decode())
     assert body[0]["price"] == "1000"
+
+
+async def test_latest_book_timestamp_keeps_global_max_across_symbols() -> None:
+    fresh = make_order_book(
+        symbol="7203",
+        asks=(("1000", 200),),
+        timestamp=DEFAULT_TS,
+    )
+    old_other_symbol = make_order_book(
+        symbol="9984",
+        asks=(("800", 200),),
+        timestamp=DEFAULT_TS - timedelta(seconds=600),
+    )
+    pubsub = _PubSubRouter(
+        book_batches=[
+            _pull_response(
+                [
+                    ("bk-fresh", fresh.model_dump_json().encode("utf-8")),
+                    ("bk-old-other", old_other_symbol.model_dump_json().encode("utf-8")),
+                ]
+            )
+        ],
+    )
+    supabase = _SupabaseRouter()
+
+    async def _body(runner: StreamRunner) -> Any:
+        stats = await runner.run_once()
+        return stats, runner._latest_book_timestamp
+
+    stats, latest = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+
+    assert stats.books_applied == 2
+    assert latest == DEFAULT_TS
 
 
 async def test_buy_into_existing_position_patches_quantity_and_entry() -> None:

@@ -12,6 +12,7 @@ from decimal import Decimal
 from trade_contracts.enums import Action, OrderType, Side, TradeMode
 from trade_contracts.order import OrderRequest
 from trade_contracts.signal import UnifiedTradeSignal
+from trade_contracts.tick_size import tse_tick_size
 
 
 def _side_for(action: Action) -> Side:
@@ -28,6 +29,7 @@ def build(
     quantity: int,
     trade_mode: TradeMode,
     entry_price: Decimal | None = None,
+    buy_limit_offset_ticks: int = 0,
     default_stop_loss_spread_pct: Decimal | None = None,
     created_at: datetime | None = None,
 ) -> OrderRequest:
@@ -36,6 +38,7 @@ def build(
     order_type, limit_price = _order_type_and_limit_price(
         signal=signal,
         entry_price=entry_price,
+        buy_limit_offset_ticks=buy_limit_offset_ticks,
     )
     stop_loss_price = _stop_loss_price(
         signal=signal,
@@ -63,12 +66,16 @@ def _order_type_and_limit_price(
     *,
     signal: UnifiedTradeSignal,
     entry_price: Decimal | None,
+    buy_limit_offset_ticks: int,
 ) -> tuple[OrderType, Decimal | None]:
     if signal.action is not Action.BUY:
         return OrderType.MARKET, None
     if entry_price is None or entry_price <= 0:
         raise ValueError("entry_price is required for BUY LIMIT order")
-    return OrderType.LIMIT, entry_price
+    if buy_limit_offset_ticks <= 0:
+        return OrderType.LIMIT, entry_price
+    tick_size = tse_tick_size(entry_price)
+    return OrderType.LIMIT, entry_price + (tick_size * Decimal(buy_limit_offset_ticks))
 
 
 def _stop_loss_price(
