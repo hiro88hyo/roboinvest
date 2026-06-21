@@ -13,26 +13,26 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "next": "^16.2.6",
-    "react": "^19.2.6",
-    "react-dom": "^19.2.6",
-    "@supabase/ssr": "^0.10.3",
+    "next": "^16.2.9",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "@supabase/ssr": "^0.12.0",
     "@supabase/supabase-js": "^2.106.2"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.4.16",
-    "@tailwindcss/postcss": "^4.3.0",
+    "@biomejs/biome": "^2.5.0",
+    "@tailwindcss/postcss": "^4.3.1",
     "@testing-library/jest-dom": "^6.5.0",
     "@testing-library/react": "^16.0.0",
     "@types/node": "^25.9.1",
-    "@types/react": "^19.2.15",
+    "@types/react": "^19.2.17",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^6.0.2",
     "jsdom": "^29.1.1",
     "tailwindcss": "^4.0.0",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.7",
-    "vite": "^8.0.14"
+    "vitest": "^4.1.9",
+    "vite": "^8.0.16"
   },
   "volta": {
     "node": "24.15.0",
