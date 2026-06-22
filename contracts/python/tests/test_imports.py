@@ -15,6 +15,7 @@ from trade_contracts import (
     PriceLevel,
     ProcessedFeatures,
     RiskCheck,
+    ScannerGateThresholds,
     Side,
     SignalSource,
     StrategySignal,
@@ -23,6 +24,7 @@ from trade_contracts import (
     TradeType,
     TradingStyle,
     UnifiedTradeSignal,
+    scanner_gate_reject_reason,
     tse_tick_size,
 )
 
@@ -67,6 +69,8 @@ def test_models_have_expected_attributes() -> None:
     assert ProcessedFeatures.model_fields["tick_size"].annotation == Decimal | None
     assert ProcessedFeatures.model_fields["session_phase"].annotation == str | None
     assert StrategySignal.model_fields["spread_bps"].annotation == Decimal | None
+    assert StrategySignal.model_fields["target_price"].annotation == Decimal | None
+    assert StrategySignal.model_fields["trailing_stop_pct"].annotation == Decimal | None
     assert UnifiedTradeSignal.model_fields["tick_size"].annotation == Decimal | None
     assert UnifiedTradeSignal.model_fields["ask_depth_5"].annotation == int | None
     assert OrderRequest.model_fields["trade_mode"].annotation is TradeMode
@@ -82,3 +86,32 @@ def test_tse_tick_size_tables() -> None:
     assert tse_tick_size(Decimal("2500")) == Decimal("1")
     assert tse_tick_size(Decimal("4000")) == Decimal("5")
     assert tse_tick_size(Decimal("2500"), is_topix500=True) == Decimal("0.5")
+
+
+def test_scanner_gate_reject_reason() -> None:
+    thresholds = ScannerGateThresholds(
+        max_risk_penalty=Decimal("1.5"),
+        max_volume_surge=Decimal("2.1"),
+        max_momentum=Decimal("0.4"),
+    )
+    assert scanner_gate_reject_reason(None, thresholds) == "scanner_gate_missing_watchlist"
+    assert (
+        scanner_gate_reject_reason({"risk_penalty": 2, "volume_surge": 1}, thresholds)
+        == "scanner_gate_risk_penalty"
+    )
+    assert (
+        scanner_gate_reject_reason({"risk_penalty": 1, "volume_surge": 3}, thresholds)
+        == "scanner_gate_volume_surge"
+    )
+    assert (
+        scanner_gate_reject_reason(
+            {"risk_penalty": 1, "volume_surge": 1, "momentum": 0.5}, thresholds
+        )
+        == "scanner_gate_momentum"
+    )
+    assert (
+        scanner_gate_reject_reason(
+            {"risk_penalty": 1, "volume_surge": 1, "momentum": 0.1}, thresholds
+        )
+        is None
+    )

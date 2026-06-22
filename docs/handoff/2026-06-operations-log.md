@@ -1,5 +1,124 @@
 # June 2026 Operations Log
 
+## 2026-06-22 paper session close review and OMS Paper fixes
+
+Production was intentionally kept in `TRADE_MODE=paper`; live trading stayed flat.
+The day was used to observe the post-hardening paper path, not to validate a live
+size increase.
+
+Pre-open / session state:
+
+- Pre-open production check with JST Monday context passed:
+  `OK 132 / WARN 0 / NG 0 / SKIP 0`.
+- `TRADE_MODE=paper`, `OMS_LIVE_DRY_RUN=true`.
+- `watchlist` had 30 rows for `valid_date=2026-06-22`.
+- Managed Pub/Sub, Supabase, feeder/kabu register, and production compose checks
+  were clean.
+- Live trades and live positions remained `0` throughout the day.
+
+Paper outcome:
+
+- End-of-day `strategy_logs`:
+  - `AI BUY: 1`, `AI SELL: 5`
+  - `RULE BUY: 157`, `RULE SELL: 837`
+- End-of-day `aggregator_logs`:
+  - `CONSENSUS BUY: 3`
+  - `RULE BUY: 339`
+  - `RULE SELL: 1`
+- `trades_paper`: `BUY 9 / SELL 10`.
+- Open positions after close: `paper=0`, `live=0`.
+- FIFO long-only PnL excluding the execution anomaly was approximately `-6,500円`.
+- Raw trade ledger was invalid because of an extra `6752` SELL:
+  - `6752` BUY 100 @ 4424
+  - `6752` SELL 100 @ 4423
+  - `6752` extra SELL 100 @ 4420 with `unified_signal_id=None`
+  - Resulting ledger net quantity for `6752`: `-100`
+
+Root-cause findings:
+
+- The `6752` extra SELL was traced to OMS Paper stop-monitor behavior:
+  day/swing stop monitors used a 30-second cached position snapshot. If a normal
+  order-driven SELL deleted the DB position, the stop monitor could still use the
+  stale cached position and emit a second SELL. Since `delete_paper_position` is
+  idempotent, this could write a phantom `trades_paper` SELL without failing.
+- OMS Paper also dropped many Gateway-approved BUY orders as `stale_book`.
+  For 2026-06-22:
+  - aggregator BUY signals: `342`
+  - Gateway archived BUY orders: `37`
+  - DB paper BUY fills: `9`
+  - archived BUY orders without DB fill: `28`
+  - archive replay showed `27` of those DB-unfilled orders would have filled on
+    archived books.
+  - OMS Paper no-fill reasons included `stale_book: 33`, `apply_fill_error: 4`,
+    and `limit_not_crossed: 1`.
+- `stale_book` age distribution on 2026-06-22:
+  - min: about `10.0s`
+  - median: about `19.8s`
+  - p90: about `30.1s`
+  - max: about `120.3s`
+- OMS Paper was effectively using `ORDER_BOOK_MAX_AGE_SECONDS=10`, while
+  Strategy Rule entry freshness was `ENTRY_MAX_BOOK_AGE_SECONDS=30`. The 10-second
+  OMS threshold was inconsistent with observed book cadence and caused many paper
+  fills to be discarded before strategy quality could be evaluated.
+
+Implemented after close:
+
+- OMS Paper now refreshes the current DB position before day/swing auto-exit writes.
+  If the position is gone, the auto-exit returns `no_fill` and does not write a
+  phantom SELL.
+- OMS Paper now synchronizes the day/swing position caches after OMS-owned position
+  writes, so normal order fills invalidate or update stop-monitor caches.
+- Added regression coverage:
+  stale cached day position with no current DB position must not emit a phantom SELL.
+- `services/oms-paper/tests/unit/test_paper_stream_runner.py` passed:
+  `40 passed`.
+- Full OMS Paper test suite passed:
+  `172 passed, 4 skipped`.
+- `docker-compose.prod.yml` now passes `ORDER_BOOK_MAX_AGE_SECONDS` into the
+  `oms-paper` service.
+- `infra/env.production.tpl` was updated from `ORDER_BOOK_MAX_AGE_SECONDS=10` to
+  `45`.
+- The active production env file was also updated to `ORDER_BOOK_MAX_AGE_SECONDS=45`.
+- Rebuilt and restarted only `oms-paper`:
+  `docker compose -f infra/docker-compose.prod.yml up -d --build oms-paper`.
+- Confirmed restarted container state:
+  - `trade-ai-prod-oms-paper-1` was `Up`.
+  - container env included `ORDER_BOOK_MAX_AGE_SECONDS=45`,
+    `PUBSUB_PULL_MAX_MESSAGES=500`, and `RAW_BOOK_DRAIN_MAX_BATCHES=10`.
+
+Diagnostics added:
+
+- `scripts/report-paper-execution-diagnostics.py` now reports trade-ledger integrity:
+  unmatched SELL quantity, duplicate `unified_signal_id`, and nonzero net quantities
+  inferred from `trades_paper`.
+- On 2026-06-22 data it correctly reported:
+  `unmatched_sell_count=1`, `unmatched_sell_quantity=100`, symbol `6752`.
+
+Strategy interpretation:
+
+- Do not treat the 2026-06-22 paper result as a clean strategy result.
+  The sample was distorted by both the phantom SELL and the 10-second stale-book
+  no-fill behavior.
+- Candidate BUY signals across 2026-06-19 and 2026-06-22 still showed small positive
+  10-15 minute long-side follow-through, while actual fills were weak at 5 minutes
+  and mixed afterward.
+- The current hypothesis is that paper execution and exit timing were too restrictive
+  for the observed book cadence. This must be re-observed after the OMS Paper fixes
+  before changing strategy thresholds or daily watchlist logic.
+
+Next paper-session checks:
+
+1. Confirm `paper_order_no_fill reason=stale_book` drops materially after the 45-second
+   OMS Paper threshold.
+2. Confirm `report-paper-execution-diagnostics.py` shows
+   `unmatched_sell_count=0`.
+3. Watch for any remaining `apply_fill_error`; if it recurs, inspect the exact
+   symbol/side/error immediately before logs rotate or the container is restarted.
+4. Compare `archived_buy_orders` to `db_paper_buy_fills`; the fill-through rate
+   should be much closer than 2026-06-22.
+5. Only after clean paper execution, revisit `same_day_reentry_after_sell`, stop/target
+   policy, and hold-time parameters.
+
 ## 2026-06-15 paper session risk-sizing notes
 
 Production paper trading was used instead of live trading. The session surfaced a

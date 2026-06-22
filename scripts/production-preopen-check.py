@@ -39,6 +39,7 @@ from zoneinfo import ZoneInfo
 import httpx
 from google.api_core.exceptions import GoogleAPICallError, NotFound
 from google.cloud import pubsub_v1
+from trade_contracts.scanner_gate import ScannerGateThresholds, scanner_gate_reject_reason
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 COMPOSE_FILE = REPO_ROOT / "infra" / "docker-compose.prod.yml"
@@ -78,7 +79,7 @@ EXPECTED_ENV = {
     "AI_MAX_OUTPUT_TOKENS": "2048",
     "STRATEGIES_ENABLED": "rsi_threshold,bollinger_breakout",
     "LIVE_DAY_NEW_BUY_START_TIME": "09:15",
-    "MAX_HOLD_MINUTES": "45",
+    "MAX_HOLD_MINUTES": "15",
     "MIN_CONFIDENCE_RULE_ONLY": "0.45",
     "MIN_CONFIDENCE_AI_ONLY": "0.5",
     "MIN_CONFIDENCE_CONSENSUS": "0.3",
@@ -87,6 +88,9 @@ EXPECTED_ENV = {
     "SCAN_STATIC_PRICE_MAX": "5000",
     "SCAN_STATIC_MIN_LOT_SIZE": "100",
     "SCAN_STATIC_MAX_MIN_LOT_NOTIONAL_JPY": "500000",
+    "SCAN_DYNAMIC_MAX_RISK_PENALTY": "1.5",
+    "SCAN_DYNAMIC_MAX_VOLUME_SURGE": "2.1",
+    "SCAN_DYNAMIC_MAX_MOMENTUM": "0.4",
     "ENTRY_VOLUME_RATIO_MIN": "",
     "ENTRY_MAX_SPREAD_BPS": "30",
     "ENTRY_MAX_SPREAD_TICKS": "1",
@@ -95,11 +99,17 @@ EXPECTED_ENV = {
     "ENTRY_MIN_MINUTES_FROM_OPEN": "15",
     "ENTRY_MAX_BOOK_AGE_SECONDS": "30",
     "ENTRY_MAX_PRICE": "5000",
+    "BUY_TARGET_PCT": "",
+    "BUY_TRAILING_STOP_PCT": "0.002",
     "PAPER_BUY_LIMIT_OFFSET_TICKS": "3",
     "PAPER_SYMBOL_ORDER_COOLDOWN_SECONDS": "300",
     "MARKET_REGIME_PAPER_GUARD_ENABLED": "true",
     "SOFT_LOSS_THROTTLE_GUARD_ENABLED": "true",
     "EXECUTION_GATE_GUARD_ENABLED": "true",
+    "SCANNER_GATE_GUARD_ENABLED": "true",
+    "SCANNER_GATE_MAX_RISK_PENALTY": "1.5",
+    "SCANNER_GATE_MAX_VOLUME_SURGE": "2.1",
+    "SCANNER_GATE_MAX_MOMENTUM": "0.4",
     "OMS_LIVE_STOP_MONITOR_ENABLED": "false",
     "OMS_LIVE_PUBSUB_SUBSCRIPTION_RAW_MARKET_DATA": "oms-live-raw-books",
     "OMS_PAPER_RAW_BOOK_DRAIN_MAX_BATCHES": "10",
@@ -429,6 +439,8 @@ def check_container_env(reporter: Reporter, args: argparse.Namespace) -> None:
             "ENTRY_MIN_MINUTES_FROM_OPEN",
             "ENTRY_MAX_BOOK_AGE_SECONDS",
             "ENTRY_MAX_PRICE",
+            "BUY_TARGET_PCT",
+            "BUY_TRAILING_STOP_PCT",
         ),
         "gateway": (
             "LIVE_DAY_NEW_BUY_START_TIME",
@@ -439,6 +451,10 @@ def check_container_env(reporter: Reporter, args: argparse.Namespace) -> None:
             "MARKET_REGIME_PAPER_GUARD_ENABLED",
             "SOFT_LOSS_THROTTLE_GUARD_ENABLED",
             "EXECUTION_GATE_GUARD_ENABLED",
+            "SCANNER_GATE_GUARD_ENABLED",
+            "SCANNER_GATE_MAX_RISK_PENALTY",
+            "SCANNER_GATE_MAX_VOLUME_SURGE",
+            "SCANNER_GATE_MAX_MOMENTUM",
         ),
         "aggregator": (
             "MIN_CONFIDENCE_RULE_ONLY",
@@ -560,6 +576,117 @@ def check_supabase(reporter: Reporter, args: argparse.Namespace) -> None:
                 reporter.emit("OK", "live positions", "empty")
         else:
             reporter.emit("NG", "live positions", f"HTTP {resp.status_code} {resp.text[:120]}")
+
+        _check_watchlist_gate(reporter, args, client)
+
+
+def _check_watchlist_gate(
+    reporter: Reporter, args: argparse.Namespace, client: httpx.Client
+) -> None:
+    valid_date = datetime.now(ZoneInfo("Asia/Tokyo")).date()
+    resp = client.get(
+        "/rest/v1/watchlist",
+        params={
+            "select": "symbol,selected_reasons",
+            "valid_date": f"eq.{valid_date.isoformat()}",
+            "order": "score.desc",
+        },
+    )
+    if resp.status_code != 200:
+        reporter.emit("NG", "watchlist today", f"HTTP {resp.status_code} {resp.text[:120]}")
+        return
+
+    rows = resp.json()
+    if not isinstance(rows, list):
+        reporter.emit("NG", "watchlist today", f"unexpected payload={type(rows).__name__}")
+        return
+    if not rows:
+        reporter.emit("NG", "watchlist today", f"empty valid_date={valid_date.isoformat()}")
+        return
+
+    reporter.emit("OK", "watchlist today", f"{len(rows)} rows valid_date={valid_date.isoformat()}")
+
+    pass_symbols: list[str] = []
+    fail_counts: dict[str, int] = {}
+    for row in rows:
+        reasons = row.get("selected_reasons") if isinstance(row, dict) else None
+        reason = scanner_gate_reject_reason(
+            reasons if isinstance(reasons, dict) else None,
+            _scanner_gate_thresholds_from_env(),
+            reason_prefix="",
+        )
+        if reason is None:
+            symbol = str(row.get("symbol", "")) if isinstance(row, dict) else ""
+            if symbol:
+                pass_symbols.append(symbol)
+        else:
+            fail_counts[reason] = fail_counts.get(reason, 0) + 1
+
+    pass_count = len(pass_symbols)
+    if pass_count == 0:
+        reporter.emit("NG", "watchlist scanner gate", f"pass=0 fail={len(rows)}")
+    elif fail_counts:
+        detail = ", ".join(f"{key}={value}" for key, value in sorted(fail_counts.items()))
+        reporter.emit("OK", "watchlist scanner gate", f"pass={pass_count} reject={detail}")
+    else:
+        reporter.emit("OK", "watchlist scanner gate", f"pass={pass_count}")
+
+    _check_oms_live_allowed_symbols(reporter, args, pass_symbols)
+
+
+def _check_oms_live_allowed_symbols(
+    reporter: Reporter, args: argparse.Namespace, pass_symbols: list[str]
+) -> None:
+    proc = _run(
+        _compose_cmd(
+            args,
+            "exec",
+            "-T",
+            "oms-live",
+            "sh",
+            "-c",
+            'printf "%s\\n" "$OMS_LIVE_ALLOWED_SYMBOLS"',
+        ),
+        timeout=args.timeout,
+    )
+    if proc.returncode != 0:
+        reporter.emit("NG", "oms-live allowed symbols", _truncate_output(proc))
+        return
+
+    raw_allowed = proc.stdout.strip()
+    if not raw_allowed:
+        reporter.emit("WARN", "oms-live allowed symbols", "missing")
+        return
+
+    allowed = sorted(symbol.strip() for symbol in raw_allowed.split(",") if symbol.strip())
+    expected = sorted(pass_symbols)
+    if allowed == expected:
+        reporter.emit("OK", "oms-live allowed scanner gate", f"{len(allowed)} symbols")
+        return
+
+    missing = sorted(set(expected) - set(allowed))
+    extra = sorted(set(allowed) - set(expected))
+    detail_parts = [f"allowed={len(allowed)} expected={len(expected)}"]
+    if missing:
+        detail_parts.append(f"missing={','.join(missing[:8])}")
+    if extra:
+        detail_parts.append(f"extra={','.join(extra[:8])}")
+    reporter.emit("NG", "oms-live allowed scanner gate", " ".join(detail_parts))
+
+
+def _scanner_gate_thresholds_from_env() -> ScannerGateThresholds:
+    return ScannerGateThresholds(
+        max_risk_penalty=_env_decimal("SCAN_DYNAMIC_MAX_RISK_PENALTY"),
+        max_volume_surge=_env_decimal("SCAN_DYNAMIC_MAX_VOLUME_SURGE"),
+        max_momentum=_env_decimal("SCAN_DYNAMIC_MAX_MOMENTUM"),
+    )
+
+
+def _env_decimal(name: str) -> Decimal | None:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        return None
+    return Decimal(value)
 
 
 def _load_topics() -> list[str]:

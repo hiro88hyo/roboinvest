@@ -278,6 +278,16 @@ async def test_day_stop_loss_breach_triggers_exit() -> None:
                 )
             ]
         ],
+        paper_position_rows=[
+            [
+                _position_row(
+                    quantity=100,
+                    entry_price="1000",
+                    stop_loss_price="950",
+                    target_price="1100",
+                )
+            ]
+        ],
     )
 
     async def _body(runner: StreamRunner) -> Any:
@@ -303,6 +313,42 @@ async def test_day_stop_loss_breach_triggers_exit() -> None:
 
     deletes = [r for r in supabase.requests if r.method == "DELETE"]
     assert len(deletes) == 1
+
+
+async def test_day_stop_stale_cached_position_does_not_emit_phantom_sell() -> None:
+    book = make_order_book(symbol="7203", bids=(("950", 500),))
+    pubsub = _PubSubRouter(
+        book_batches=[_pull_response([("bk-1", book.model_dump_json().encode("utf-8"))])],
+    )
+    supabase = _SupabaseRouter(
+        paper_position_rows=[[]],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        runner.day_position_cache["7203"] = make_paper_position(
+            symbol="7203",
+            quantity=100,
+            entry_price=Decimal("1000"),
+            stop_loss_price=Decimal("950"),
+            target_price=Decimal("1100"),
+        )
+        runner.swing_cache_loaded_at = runner.monotonic()
+        return await runner.run_once()
+
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+
+    assert stats.day_stop_exits == 0
+    assert stats.day_stop_no_fills == 1
+    fresh_position_reads = [
+        r
+        for r in supabase.requests
+        if r.method == "GET"
+        and r.url.path == "/rest/v1/positions"
+        and r.url.params.get("symbol") == "eq.7203"
+    ]
+    assert len(fresh_position_reads) == 1
+    write_reqs = [r for r in supabase.requests if r.method in {"POST", "PATCH", "DELETE"}]
+    assert write_reqs == []
 
 
 async def test_day_trailing_stop_patches_stop_loss_only() -> None:
@@ -844,6 +890,16 @@ async def test_swing_stop_loss_breach_triggers_exit() -> None:
                 )
             ]
         ],
+        paper_position_rows=[
+            [
+                _swing_position_row(
+                    quantity=100,
+                    entry_price="1000",
+                    stop_loss_price="950",
+                    target_price="1100",
+                )
+            ]
+        ],
     )
 
     async def _body(runner: StreamRunner) -> Any:
@@ -879,6 +935,9 @@ async def test_swing_target_hit_triggers_exit() -> None:
     )
     supabase = _SupabaseRouter(
         list_position_rows=[
+            [_swing_position_row(quantity=100, target_price="1100", stop_loss_price="950")]
+        ],
+        paper_position_rows=[
             [_swing_position_row(quantity=100, target_price="1100", stop_loss_price="950")]
         ],
     )
@@ -996,6 +1055,7 @@ async def test_swing_consecutive_books_only_exit_once() -> None:
         list_position_rows=[
             [_swing_position_row(quantity=100, stop_loss_price="950")],
         ],
+        paper_position_rows=[[_swing_position_row(quantity=100, stop_loss_price="950")]],
     )
 
     async def _body(runner: StreamRunner) -> Any:
@@ -1043,6 +1103,10 @@ async def test_swing_supabase_write_failure_keeps_position_in_cache() -> None:
     )
     supabase = _SupabaseRouter(
         list_position_rows=[[_swing_position_row(quantity=100, stop_loss_price="950")]],
+        paper_position_rows=[
+            [_swing_position_row(quantity=100, stop_loss_price="950")],
+            [_swing_position_row(quantity=100, stop_loss_price="950")],
+        ],
         insert_trade_status=500,
     )
 

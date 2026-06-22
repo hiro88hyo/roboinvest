@@ -21,6 +21,9 @@ class DynamicScoringConfig:
     risk_overheat_momentum_z_weight: float = 0.5
     risk_volume_surge_z: float = 1.5
     risk_overheat_momentum_z: float = 1.5
+    max_risk_penalty: float | None = None
+    max_volume_surge: float | None = None
+    max_momentum: float | None = None
     volatility_window: int = 20
     momentum_window: int = 20
     volume_surge_short: int = 5
@@ -151,12 +154,19 @@ def score_candidates(
         )
     )
 
-    result = (
-        candidates.select(["symbol", "symbol_name"])
-        .join(scored, on="symbol", how="inner")
-        .sort("score", descending=True)
-        .head(config.top_n)
-    )
+    filters: list[pl.Expr] = []
+    if config.max_risk_penalty is not None:
+        filters.append(pl.col("risk_penalty") <= config.max_risk_penalty)
+    if config.max_volume_surge is not None:
+        filters.append(pl.col("volume_surge") <= config.max_volume_surge)
+    if config.max_momentum is not None:
+        filters.append(pl.col("momentum") <= config.max_momentum)
+
+    joined = candidates.select(["symbol", "symbol_name"]).join(scored, on="symbol", how="inner")
+    if filters:
+        joined = joined.filter(pl.all_horizontal(filters))
+
+    result = joined.sort("score", descending=True).head(config.top_n)
     return result.select(
         [
             "symbol",

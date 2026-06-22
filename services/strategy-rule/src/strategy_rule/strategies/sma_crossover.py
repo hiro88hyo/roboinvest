@@ -9,6 +9,7 @@ from trade_contracts.features import ProcessedFeatures
 from trade_contracts.signal import StrategySignal, execution_fields_from
 
 from .entry_filters import buy_entry_filter_labels, passes_buy_entry_filters
+from .exit_fields import buy_exit_fields
 
 _PREV_DIFF_KEY = "prev_diff"
 
@@ -41,6 +42,8 @@ class SmaCrossoverStrategy:
         min_minutes_from_open: int | None = None,
         min_minutes_to_close: int | None = None,
         max_book_age_seconds: Decimal | None = None,
+        buy_target_pct: Decimal | None = None,
+        buy_trailing_stop_pct: Decimal | None = None,
     ) -> None:
         self._min_gap_ratio = min_gap_ratio
         self._full_confidence_gap_ratio = full_confidence_gap_ratio
@@ -54,6 +57,8 @@ class SmaCrossoverStrategy:
         self._min_minutes_from_open = min_minutes_from_open
         self._min_minutes_to_close = min_minutes_to_close
         self._max_book_age_seconds = max_book_age_seconds
+        self._buy_target_pct = buy_target_pct
+        self._buy_trailing_stop_pct = buy_trailing_stop_pct
 
     def evaluate(
         self,
@@ -130,6 +135,12 @@ class SmaCrossoverStrategy:
             reasoning=(
                 f"sma_crossover: short-long diff {prev_diff} -> {diff} "
                 f"(gap_ratio={gap_ratio:.5f}){filter_suffix}"
+            ),
+            **buy_exit_fields(
+                action=action,
+                price=features.price,
+                target_pct=self._buy_target_pct,
+                trailing_stop_pct=self._buy_trailing_stop_pct,
             ),
             **execution_fields_from(features),
             created_at=features.timestamp,

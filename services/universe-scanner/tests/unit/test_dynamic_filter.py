@@ -71,6 +71,28 @@ def test_score_top_n_truncates():
     assert result.height == 2
 
 
+def test_score_applies_dynamic_risk_gates() -> None:
+    closes_low = [100.0 for _ in range(25)]
+    closes_high = [100.0 + i * 6 for i in range(25)]
+    volumes_low = [1000] * 25
+    volumes_high = [1000] * 20 + [5000] * 5
+    ohlcv = pl.DataFrame(
+        _series("LOW", closes_low, volumes_low) + _series("HIGH", closes_high, volumes_high)
+    )
+
+    result = score_candidates(
+        candidates=_candidates(["LOW", "HIGH"]),
+        ohlcv=ohlcv,
+        config=DynamicScoringConfig(
+            top_n=2,
+            max_momentum=0.4,
+            max_volume_surge=2.1,
+        ),
+    )
+
+    assert result.get_column("symbol").to_list() == ["LOW"]
+
+
 def test_risk_penalty_demotes_negative_momentum() -> None:
     closes_a = [100.0 + i for i in range(25)]
     closes_b = [150.0 - i for i in range(25)]

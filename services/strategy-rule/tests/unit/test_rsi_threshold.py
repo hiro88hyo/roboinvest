@@ -24,6 +24,19 @@ def test_oversold_emits_buy(features_factory: Callable[..., ProcessedFeatures]) 
     assert abs(signal.confidence - (0.5 + 0.5 * (10 / 30))) < 1e-9
 
 
+def test_buy_signal_carries_exit_fields(features_factory: Callable[..., ProcessedFeatures]) -> None:
+    strategy = RsiThresholdStrategy(
+        buy_threshold=Decimal("30"),
+        buy_target_pct=Decimal("0.003"),
+        buy_trailing_stop_pct=Decimal("0.002"),
+    )
+    signal = strategy.evaluate(features_factory(rsi=Decimal("20"), price=Decimal("1000")), {})
+    assert signal is not None
+    assert signal.action is Action.BUY
+    assert signal.target_price == Decimal("1003.000")
+    assert signal.trailing_stop_pct == Decimal("0.002")
+
+
 def test_signal_carries_execution_context(
     features_factory: Callable[..., ProcessedFeatures],
 ) -> None:
@@ -60,10 +73,16 @@ def test_signal_carries_execution_context(
 
 
 def test_overbought_emits_sell(features_factory: Callable[..., ProcessedFeatures]) -> None:
-    strategy = RsiThresholdStrategy(sell_threshold=Decimal("70"))
+    strategy = RsiThresholdStrategy(
+        sell_threshold=Decimal("70"),
+        buy_target_pct=Decimal("0.003"),
+        buy_trailing_stop_pct=Decimal("0.002"),
+    )
     signal = strategy.evaluate(features_factory(rsi=Decimal("80")), {})
     assert signal is not None
     assert signal.action is Action.SELL
+    assert signal.target_price is None
+    assert signal.trailing_stop_pct is None
     # confidence = 0.5 + 0.5 * (80 - 70) / 30 = 0.6666...
     assert abs(signal.confidence - (0.5 + 0.5 * (10 / 30))) < 1e-9
 

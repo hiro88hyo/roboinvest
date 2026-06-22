@@ -68,6 +68,9 @@ async def run_pipeline(
         risk_overheat_momentum_z_weight=settings.scan_risk_overheat_momentum_z_weight,
         risk_volume_surge_z=settings.scan_risk_volume_surge_z,
         risk_overheat_momentum_z=settings.scan_risk_overheat_momentum_z,
+        max_risk_penalty=settings.scan_dynamic_max_risk_penalty,
+        max_volume_surge=settings.scan_dynamic_max_volume_surge,
+        max_momentum=settings.scan_dynamic_max_momentum,
     )
 
     async with (

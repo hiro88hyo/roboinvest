@@ -132,6 +132,7 @@ minversion = "8.0"
 asyncio_mode = "auto"
 addopts = "-ra --strict-markers --import-mode=importlib"
 testpaths = [
+    "scripts/tests",
     "contracts/python/tests",
     "services/universe-scanner/tests",
     "services/feature-engine/tests",

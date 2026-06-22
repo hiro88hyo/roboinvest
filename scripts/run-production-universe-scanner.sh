@@ -68,59 +68,16 @@ resolve_target_date() {
 
 sync_oms_live_allowed_symbols() {
   local valid_date="$1"
-  local symbols
+  local sync_output
 
-  symbols="$(op run --env-file infra/env.production -- \
-    uv run python - "$valid_date" <<'PY'
-import os
-import sys
+  sync_output="$(op run --env-file infra/env.production -- \
+    uv run python scripts/sync_oms_live_allowed_symbols.py "$valid_date" \
+      --env-file infra/env.production)"
+  echo "$sync_output"
 
-import httpx
-
-valid_date = sys.argv[1]
-url = os.environ["SUPABASE_URL"].rstrip("/")
-key = os.environ["SUPABASE_SECRET_KEY"]
-headers = {"apikey": key, "Authorization": f"Bearer {key}"}
-path = (
-    "/rest/v1/watchlist?select=symbol"
-    f"&valid_date=eq.{valid_date}"
-    "&order=symbol.asc"
-)
-with httpx.Client(timeout=30) as client:
-    response = client.get(url + path, headers=headers)
-    response.raise_for_status()
-    rows = response.json()
-print(",".join(row["symbol"] for row in rows))
-PY
-  )"
-
-  if [ -z "$symbols" ]; then
-    echo "[post] skip OMS_LIVE_ALLOWED_SYMBOLS sync: watchlist empty for ${valid_date}"
+  if [[ "$sync_output" == *"SYNC_STATUS=skipped"* ]]; then
     return 0
   fi
-
-  op run --env-file infra/env.production -- \
-    uv run python - "$symbols" <<'PY'
-from pathlib import Path
-import sys
-
-symbols = sys.argv[1]
-path = Path("infra/env.production")
-lines = path.read_text(encoding="utf-8").splitlines()
-updated = False
-for index, line in enumerate(lines):
-    if line.startswith("OMS_LIVE_ALLOWED_SYMBOLS="):
-        if line == f"OMS_LIVE_ALLOWED_SYMBOLS={symbols}":
-            print("UNCHANGED OMS_LIVE_ALLOWED_SYMBOLS")
-        else:
-            lines[index] = f"OMS_LIVE_ALLOWED_SYMBOLS={symbols}"
-            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-            print(f"UPDATED OMS_LIVE_ALLOWED_SYMBOLS count={len(symbols.split(','))}")
-        updated = True
-        break
-if not updated:
-    raise SystemExit("OMS_LIVE_ALLOWED_SYMBOLS line not found in infra/env.production")
-PY
 
   echo "[post] validate production compose config after OMS live sync..."
   op run --env-file infra/env.production -- \

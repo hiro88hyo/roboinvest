@@ -55,6 +55,8 @@ class StrategyRuleSettings(BaseSettings):
     entry_min_minutes_to_close: int | None = None
     entry_max_book_age_seconds: Decimal | None = None
     entry_max_price: Decimal | None = None
+    buy_target_pct: Decimal | None = None
+    buy_trailing_stop_pct: Decimal | None = None
 
     backtest_output_dir: Path = Path("./out/strategy-rule")
 
@@ -75,6 +77,8 @@ class StrategyRuleSettings(BaseSettings):
         "entry_min_ask_depth_5",
         "entry_max_book_age_seconds",
         "entry_max_price",
+        "buy_target_pct",
+        "buy_trailing_stop_pct",
         mode="before",
     )
     @classmethod

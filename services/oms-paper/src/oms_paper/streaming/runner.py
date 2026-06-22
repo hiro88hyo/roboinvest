@@ -501,6 +501,25 @@ class StreamRunner:
         """Backward-compatible wrapper for swing tests/call sites."""
         await self._ensure_position_caches_fresh()
 
+    def _sync_position_caches(
+        self,
+        *,
+        symbol: str,
+        position: PaperPosition | None,
+        delete: bool,
+    ) -> None:
+        """Keep stop-monitor caches consistent after OMS-owned position writes."""
+        if delete or position is None:
+            self.swing_position_cache.pop(symbol, None)
+            self.day_position_cache.pop(symbol, None)
+            return
+        if position.holding_type is TradingStyle.SWING:
+            self.swing_position_cache[position.symbol] = position
+            self.day_position_cache.pop(position.symbol, None)
+        else:
+            self.day_position_cache[position.symbol] = position
+            self.swing_position_cache.pop(position.symbol, None)
+
     async def _evaluate_swing_for_symbols(self, symbols: set[str]) -> tuple[int, int, int, int]:
         """板更新のあった symbol について swing 自動決済を評価する。
 
@@ -588,6 +607,16 @@ class StreamRunner:
         closeout と同じく ``unified_signal_id`` は ``None`` (対応する
         ``aggregator_logs`` 行を持たないため)。
         """
+        current = await self.supabase.read_paper_position(symbol=position.symbol)
+        if current is None:
+            logger.info(
+                "swing exit no_fill: stale cached position symbol=%s reason=%s",
+                position.symbol,
+                reason,
+            )
+            self._sync_position_caches(symbol=position.symbol, position=None, delete=True)
+            return "no_fill"
+        position = current
         order = OrderRequest(
             unified_signal_id=None,
             symbol=position.symbol,
@@ -635,6 +664,11 @@ class StreamRunner:
                 quantity=update.position.quantity,
                 entry_price=str(update.position.entry_price),
             )
+        self._sync_position_caches(
+            symbol=position.symbol,
+            position=update.position,
+            delete=update.delete,
+        )
         logger.info(
             "swing exit filled: symbol=%s reason=%s qty=%d price=%s",
             position.symbol,
@@ -720,6 +754,16 @@ class StreamRunner:
         reason: str,
         now: datetime,
     ) -> str:
+        current = await self.supabase.read_paper_position(symbol=position.symbol)
+        if current is None:
+            logger.info(
+                "day stop exit no_fill: stale cached position symbol=%s reason=%s",
+                position.symbol,
+                reason,
+            )
+            self._sync_position_caches(symbol=position.symbol, position=None, delete=True)
+            return "no_fill"
+        position = current
         order = OrderRequest(
             unified_signal_id=None,
             symbol=position.symbol,
@@ -766,6 +810,11 @@ class StreamRunner:
                 quantity=update.position.quantity,
                 entry_price=str(update.position.entry_price),
             )
+        self._sync_position_caches(
+            symbol=position.symbol,
+            position=update.position,
+            delete=update.delete,
+        )
         logger.info(
             "day stop exit filled: symbol=%s reason=%s qty=%d price=%s",
             position.symbol,
@@ -989,6 +1038,7 @@ class StreamRunner:
     ) -> None:
         if delete:
             await self.supabase.delete_paper_position(symbol=symbol)
+            self._sync_position_caches(symbol=symbol, position=None, delete=True)
             return
         if update_position is None:
             return  # no-op (apply_fill guarantees error path returns earlier)
@@ -1000,6 +1050,7 @@ class StreamRunner:
                 quantity=update_position.quantity,
                 entry_price=str(update_position.entry_price),
             )
+        self._sync_position_caches(symbol=symbol, position=update_position, delete=False)
 
 
 def _parse_order(msg: PulledMessage) -> OrderRequest | None:

@@ -23,10 +23,22 @@ EXECUTION_FIELD_NAMES = (
     "session_phase",
 )
 
+ORDER_FIELD_NAMES = (
+    "stop_loss_price",
+    "target_price",
+    "trailing_stop_pct",
+    "max_hold_days",
+)
+
 
 def execution_fields_from(payload: Any) -> dict[str, Any]:
     """Copy optional execution context fields between feature/signal models."""
     return {name: getattr(payload, name, None) for name in EXECUTION_FIELD_NAMES}
+
+
+def order_fields_from(payload: Any) -> dict[str, Any]:
+    """Copy optional order management fields between signal models."""
+    return {name: getattr(payload, name, None) for name in ORDER_FIELD_NAMES}
 
 
 class StrategySignal(BaseModel):
@@ -39,6 +51,10 @@ class StrategySignal(BaseModel):
     action: Action
     confidence: float = Field(ge=0.0, le=1.0)
     reasoning: str | None = None
+    stop_loss_price: Decimal | None = None
+    target_price: Decimal | None = None
+    trailing_stop_pct: Decimal | None = None
+    max_hold_days: int | None = Field(default=None, ge=1)
     best_bid: Decimal | None = None
     best_ask: Decimal | None = None
     spread_bps: Decimal | None = None

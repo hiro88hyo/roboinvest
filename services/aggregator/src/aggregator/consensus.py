@@ -13,7 +13,12 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 from trade_contracts.enums import Action, SignalSource, TradingStyle
-from trade_contracts.signal import StrategySignal, UnifiedTradeSignal, execution_fields_from
+from trade_contracts.signal import (
+    StrategySignal,
+    UnifiedTradeSignal,
+    execution_fields_from,
+    order_fields_from,
+)
 
 from .config import ConflictPolicy
 
@@ -91,6 +96,7 @@ def _build_unified(
         strategy_signal_id_a=rule.signal_id if rule is not None else None,
         strategy_signal_id_b=ai.signal_id if ai is not None else None,
         holding_type=holding_type,
+        **order_fields_from(execution_source),
         **execution_fields_from(execution_source),
         created_at=now,
     )

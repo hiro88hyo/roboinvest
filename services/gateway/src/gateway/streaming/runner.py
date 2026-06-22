@@ -48,6 +48,7 @@ from trade_contracts.enums import Action, SignalSource, TradeMode, TradingStyle
 from trade_contracts.logging import event_extra
 from trade_contracts.order import OrderRequest
 from trade_contracts.risk import KillSwitchState
+from trade_contracts.scanner_gate import ScannerGateThresholds, scanner_gate_reject_reason
 from trade_contracts.signal import UnifiedTradeSignal
 
 from .. import lot_calculator
@@ -229,6 +230,17 @@ class StreamRunner:
                 trade_mode=trade_mode,
                 regime=regime,
                 reason=reason,
+            )
+
+        scanner_gate_reason = await self._scanner_gate_reject_reason(signal=signal, now=now)
+        if scanner_gate_reason is not None:
+            if self.settings.scanner_gate_guard_enabled:
+                self._log_reject(signal, scanner_gate_reason, trade_mode)
+                return _Decision(approved=False, kill_switch_fired=False)
+            self._log_scanner_gate_would_reject(
+                signal=signal,
+                trade_mode=trade_mode,
+                reason=scanner_gate_reason,
             )
 
         entry_price: Decimal | None = None
@@ -705,6 +717,36 @@ class StreamRunner:
             trade_mode is TradeMode.PAPER and self.settings.market_regime_paper_guard_enabled
         )
 
+    async def _scanner_gate_reject_reason(
+        self, *, signal: UnifiedTradeSignal, now: datetime
+    ) -> str | None:
+        if signal.action is not Action.BUY:
+            return None
+        if (
+            not self.settings.scanner_gate_log_only_enabled
+            and not self.settings.scanner_gate_guard_enabled
+        ):
+            return None
+        if not ScannerGateThresholds(
+            max_risk_penalty=self.settings.scanner_gate_max_risk_penalty,
+            max_volume_surge=self.settings.scanner_gate_max_volume_surge,
+            max_momentum=self.settings.scanner_gate_max_momentum,
+        ).enabled:
+            return None
+        valid_date = now.astimezone(ZoneInfo(self.settings.day_closeout_timezone)).date()
+        reasons = await self.supabase.read_watchlist_reasons(
+            symbol=signal.symbol,
+            valid_date=valid_date,
+        )
+        return scanner_gate_reject_reason(
+            reasons,
+            ScannerGateThresholds(
+                max_risk_penalty=self.settings.scanner_gate_max_risk_penalty,
+                max_volume_surge=self.settings.scanner_gate_max_volume_surge,
+                max_momentum=self.settings.scanner_gate_max_momentum,
+            ),
+        )
+
     def _cap_buy_quantity(
         self,
         *,
@@ -1025,6 +1067,48 @@ class StreamRunner:
             ),
         )
 
+    def _log_scanner_gate_would_reject(
+        self,
+        *,
+        signal: UnifiedTradeSignal,
+        trade_mode: TradeMode,
+        reason: str,
+    ) -> None:
+        logger.info(
+            "scanner gate would reject: symbol=%s action=%s reason=%s trade_mode=%s",
+            signal.symbol,
+            signal.action.value,
+            reason,
+            trade_mode.value,
+            extra=event_extra(
+                "scanner_gate_would_reject",
+                trade_mode=trade_mode.value,
+                symbol=signal.symbol,
+                signal_id=str(signal.signal_id),
+                reason=reason,
+                source=signal.signal_source.value,
+                holding_type=signal.holding_type.value,
+                action=signal.action.value,
+                confidence=signal.confidence,
+                guard_enabled=self.settings.scanner_gate_guard_enabled,
+                max_risk_penalty=(
+                    None
+                    if self.settings.scanner_gate_max_risk_penalty is None
+                    else float(self.settings.scanner_gate_max_risk_penalty)
+                ),
+                max_volume_surge=(
+                    None
+                    if self.settings.scanner_gate_max_volume_surge is None
+                    else float(self.settings.scanner_gate_max_volume_surge)
+                ),
+                max_momentum=(
+                    None
+                    if self.settings.scanner_gate_max_momentum is None
+                    else float(self.settings.scanner_gate_max_momentum)
+                ),
+            ),
+        )
+
     def _record_reject_summary(self, *, reason: str) -> None:
         now = self.monotonic()
         if self._reject_summary_started_at is None:
@@ -1109,3 +1193,9 @@ def _parse_signal(msg: PulledMessage) -> UnifiedTradeSignal | None:
     except ValidationError:
         logger.exception("schema invalid: message_id=%s", msg.message_id)
         return None
+
+
+def _decimal_reason(value: object, *, default: Decimal) -> Decimal:
+    if value is None or value == "":
+        return default
+    return Decimal(str(value))

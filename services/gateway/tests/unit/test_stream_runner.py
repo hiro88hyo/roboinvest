@@ -182,6 +182,7 @@ class _SupabaseRouter:
     trades_live_rows: list[list[dict[str, Any]]] = field(default_factory=list)
     trades_paper_rows: list[list[dict[str, Any]]] = field(default_factory=list)
     market_regime_rows: list[list[dict[str, Any]]] = field(default_factory=list)
+    watchlist_rows: list[list[dict[str, Any]]] = field(default_factory=list)
     risk_reservation_rows: list[dict[str, Any]] = field(default_factory=list)
     released_risk_order_ids: list[str] = field(default_factory=list)
     disable_status: int = 204
@@ -240,6 +241,9 @@ class _SupabaseRouter:
             return httpx.Response(200, json=rows)
         if request.method == "GET" and path == "/rest/v1/market_regime":
             rows = self.market_regime_rows.pop(0) if self.market_regime_rows else []
+            return httpx.Response(200, json=rows)
+        if request.method == "GET" and path == "/rest/v1/watchlist":
+            rows = self.watchlist_rows.pop(0) if self.watchlist_rows else []
             return httpx.Response(200, json=rows)
         if request.method == "GET" and path == "/rest/v1/trades_live":
             rows = self.trades_live_rows.pop(0) if self.trades_live_rows else []
@@ -506,6 +510,101 @@ async def test_execution_gate_guard_rejects_insufficient_ask_depth() -> None:
     assert stats.approved == 0
     assert stats.rejected == 1
     assert len(pubsub.published) == 0
+
+
+async def test_scanner_gate_log_only_keeps_publishing(caplog: pytest.LogCaptureFixture) -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response(
+                [("a1", _unified_payload(action=Action.BUY, price="2500", stop_loss_price="2400"))]
+            )
+        ]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trade_mode="paper")],
+        watchlist_rows=[
+            [
+                {
+                    "selected_reasons": {
+                        "risk_penalty": 2.0,
+                        "volume_surge": 1.0,
+                        "momentum": 0.1,
+                    }
+                }
+            ]
+        ],
+        positions_quantity_rows=[[]],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    caplog.set_level(logging.INFO, logger="gateway.streaming.runner")
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        settings=_settings(
+            scanner_gate_log_only_enabled=True,
+            scanner_gate_guard_enabled=False,
+            scanner_gate_max_risk_penalty=Decimal("1.5"),
+            liquidity_sizing_enabled=False,
+        ),
+        run_body=_body,
+    )
+
+    assert stats.approved == 1
+    assert len(pubsub.published) == 1
+    records = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "scanner_gate_would_reject"
+    ]
+    assert len(records) == 1
+    record: Any = records[0]
+    assert record.reason == "scanner_gate_risk_penalty"
+    assert record.guard_enabled is False
+
+
+async def test_scanner_gate_guard_rejects_buy() -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response(
+                [("a1", _unified_payload(action=Action.BUY, price="2500", stop_loss_price="2400"))]
+            )
+        ]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trade_mode="paper")],
+        watchlist_rows=[
+            [
+                {
+                    "selected_reasons": {
+                        "risk_penalty": 0.5,
+                        "volume_surge": 3.0,
+                        "momentum": 0.1,
+                    }
+                }
+            ]
+        ],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        settings=_settings(
+            scanner_gate_guard_enabled=True,
+            scanner_gate_max_volume_surge=Decimal("2.1"),
+        ),
+        run_body=_body,
+    )
+
+    assert stats.approved == 0
+    assert stats.rejected == 1
+    assert pubsub.published == []
+    assert not any(req.url.path == "/rest/v1/positions" for req in supabase.requests)
 
 
 async def test_live_buy_rejected_when_risk_reservation_fails(caplog: Any) -> None:

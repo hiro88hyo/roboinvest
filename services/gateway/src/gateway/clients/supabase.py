@@ -412,6 +412,46 @@ class SupabaseClient:
         wait=wait_exponential(multiplier=1, min=1, max=10),
         retry=retry_if_exception_type((httpx.HTTPError, SupabaseError)),
     )
+    async def read_watchlist_reasons(
+        self, *, symbol: str, valid_date: date
+    ) -> dict[str, Any] | None:
+        """Return `watchlist.selected_reasons` for a symbol/date, if present."""
+        assert self._client is not None
+        resp = await self._client.get(
+            "/rest/v1/watchlist",
+            params={
+                "select": "selected_reasons",
+                "symbol": f"eq.{symbol}",
+                "valid_date": f"eq.{valid_date.isoformat()}",
+                "limit": "1",
+            },
+        )
+        if resp.status_code >= 500:
+            raise SupabaseError(
+                f"transient error: table=watchlist status={resp.status_code} body={resp.text[:200]}"
+            )
+        if resp.status_code >= 300:
+            raise SupabaseError(
+                f"read failed: table=watchlist status={resp.status_code} body={resp.text[:200]}"
+            )
+        rows = resp.json()
+        if not isinstance(rows, list):
+            raise SupabaseError(f"unexpected watchlist payload: {type(rows).__name__}")
+        if not rows:
+            return None
+        reasons = rows[0].get("selected_reasons")
+        if reasons is None:
+            return {}
+        if not isinstance(reasons, dict):
+            raise SupabaseError(f"invalid watchlist.selected_reasons: {reasons!r}")
+        return reasons
+
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((httpx.HTTPError, SupabaseError)),
+    )
     async def read_latest_daily_liquidity(self, *, symbol: str) -> DailyLiquiditySnapshot | None:
         """Return the latest daily close/volume/turnover for liquidity sizing."""
         assert self._client is not None

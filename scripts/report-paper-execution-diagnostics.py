@@ -284,6 +284,61 @@ def _repeat_diagnostics(orders: list[dict[str, Any]], *, window_seconds: float) 
     }
 
 
+def _trade_integrity(paper_trades: list[dict[str, Any]]) -> dict[str, Any]:
+    """Detect long-only paper trade inconsistencies from the trade ledger."""
+    open_qty: Counter[str] = Counter()
+    unmatched_sell_details: list[dict[str, Any]] = []
+    duplicate_trade_ids = [
+        signal_id
+        for signal_id, count in Counter(
+            str(row.get("unified_signal_id"))
+            for row in paper_trades
+            if row.get("unified_signal_id") is not None
+        ).items()
+        if count > 1
+    ]
+
+    for row in sorted(paper_trades, key=lambda item: str(item.get("executed_at") or "")):
+        symbol = str(row.get("symbol") or "")
+        if not symbol:
+            continue
+        quantity = int(row.get("quantity") or 0)
+        if row.get("side") == "BUY":
+            open_qty[symbol] += quantity
+            continue
+        if row.get("side") != "SELL":
+            continue
+        unmatched = max(0, quantity - open_qty[symbol])
+        if unmatched:
+            unmatched_sell_details.append(
+                {
+                    "executed_at": row.get("executed_at"),
+                    "symbol": symbol,
+                    "quantity": quantity,
+                    "unmatched_quantity": unmatched,
+                    "price": row.get("price"),
+                    "signal_source": row.get("signal_source"),
+                    "unified_signal_id": row.get("unified_signal_id"),
+                }
+            )
+        open_qty[symbol] = max(0, open_qty[symbol] - quantity)
+
+    nonzero_net = [
+        {"symbol": symbol, "net_quantity": quantity}
+        for symbol, quantity in sorted(open_qty.items())
+        if quantity != 0
+    ]
+    return {
+        "unmatched_sell_count": len(unmatched_sell_details),
+        "unmatched_sell_quantity": sum(
+            int(row["unmatched_quantity"]) for row in unmatched_sell_details
+        ),
+        "unmatched_sell_details": unmatched_sell_details,
+        "nonzero_net_positions_from_trades": nonzero_net,
+        "duplicate_unified_signal_ids": sorted(duplicate_trade_ids),
+    }
+
+
 def _build_result(
     *,
     trading_date: date,
@@ -379,6 +434,7 @@ def _build_result(
             "top_replay_no_fill_symbols": _top_symbols(replay_rejected),
             "unfilled_buy_order_details": unfilled_details,
         },
+        "integrity": _trade_integrity(paper_trades),
         "repeats": _repeat_diagnostics(
             archived_buy_orders,
             window_seconds=duplicate_window_seconds,
@@ -401,6 +457,7 @@ def _print_result(result: dict[str, Any], *, max_rows: int) -> None:
     archive = result["archive"]
     replay = result["replay"]
     gaps = result["gaps"]
+    integrity = result["integrity"]
     repeats = result["repeats"]
 
     print(f"== Paper execution diagnostics {result['date_jst']} JST ==")
@@ -425,6 +482,31 @@ def _print_result(result: dict[str, Any], *, max_rows: int) -> None:
     _print_counts("archived orders by source/side", archive["orders_by_source_side"])
     _print_counts("db paper trades by source/side", db["paper_trades_by_source_side"])
     _print_counts("archive replay no_fill by reason", replay["no_fill_by_reason"])
+    print()
+
+    print("trade ledger integrity")
+    print(
+        f"  unmatched_sell_count={integrity['unmatched_sell_count']} "
+        f"unmatched_sell_quantity={integrity['unmatched_sell_quantity']}"
+    )
+    if integrity["nonzero_net_positions_from_trades"]:
+        print("  nonzero net quantities from trades")
+        for row in integrity["nonzero_net_positions_from_trades"][:max_rows]:
+            print(f"    {row['symbol']}: {row['net_quantity']}")
+    if integrity["duplicate_unified_signal_ids"]:
+        print("  duplicate unified_signal_id trades")
+        for signal_id in integrity["duplicate_unified_signal_ids"][:max_rows]:
+            print(f"    {signal_id}")
+    if integrity["unmatched_sell_details"]:
+        print("  unmatched SELL details")
+        for row in integrity["unmatched_sell_details"][:max_rows]:
+            print(
+                "    "
+                f"{row['executed_at']} {row['symbol']} "
+                f"qty={row['quantity']} unmatched={row['unmatched_quantity']} "
+                f"price={row['price']} source={row['signal_source']} "
+                f"signal_id={row['unified_signal_id']}"
+            )
     print()
 
     print(f"same-symbol BUY repeats (window={repeats['window_seconds']}s)")

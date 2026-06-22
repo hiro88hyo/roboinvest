@@ -30,6 +30,8 @@ def _make_sma(settings: StrategyRuleSettings) -> SmaCrossoverStrategy:
         min_minutes_from_open=settings.entry_min_minutes_from_open,
         min_minutes_to_close=settings.entry_min_minutes_to_close,
         max_book_age_seconds=settings.entry_max_book_age_seconds,
+        buy_target_pct=settings.buy_target_pct,
+        buy_trailing_stop_pct=settings.buy_trailing_stop_pct,
     )
 
 
@@ -48,6 +50,8 @@ def _make_rsi(settings: StrategyRuleSettings) -> RsiThresholdStrategy:
         min_minutes_from_open=settings.entry_min_minutes_from_open,
         min_minutes_to_close=settings.entry_min_minutes_to_close,
         max_book_age_seconds=settings.entry_max_book_age_seconds,
+        buy_target_pct=settings.buy_target_pct,
+        buy_trailing_stop_pct=settings.buy_trailing_stop_pct,
     )
 
 
@@ -66,6 +70,8 @@ def _make_bollinger(settings: StrategyRuleSettings) -> BollingerBreakoutStrategy
         min_minutes_from_open=settings.entry_min_minutes_from_open,
         min_minutes_to_close=settings.entry_min_minutes_to_close,
         max_book_age_seconds=settings.entry_max_book_age_seconds,
+        buy_target_pct=settings.buy_target_pct,
+        buy_trailing_stop_pct=settings.buy_trailing_stop_pct,
     )
 
 

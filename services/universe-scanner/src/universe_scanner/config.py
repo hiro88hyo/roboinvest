@@ -3,7 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 from enum import StrEnum
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -56,7 +56,22 @@ class ScannerSettings(BaseSettings):
     scan_risk_overheat_momentum_z_weight: float = 0.5
     scan_risk_volume_surge_z: float = 1.5
     scan_risk_overheat_momentum_z: float = 1.5
+    scan_dynamic_max_risk_penalty: float | None = None
+    scan_dynamic_max_volume_surge: float | None = None
+    scan_dynamic_max_momentum: float | None = None
     market_regime_enabled: bool = True
     market_regime_write_enabled: bool = False
 
     log_level: str = "INFO"
+
+    @field_validator(
+        "scan_dynamic_max_risk_penalty",
+        "scan_dynamic_max_volume_surge",
+        "scan_dynamic_max_momentum",
+        mode="before",
+    )
+    @classmethod
+    def _empty_optional_float(cls, value: object) -> object:
+        if value == "":
+            return None
+        return value

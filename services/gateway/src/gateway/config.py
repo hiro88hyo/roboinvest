@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -65,6 +65,11 @@ class GatewaySettings(BaseSettings):
     execution_gate_max_spread_bps: Decimal = Decimal("30")
     execution_gate_max_spread_ticks: Decimal = Decimal("2")
     execution_gate_min_ask_depth_multiplier: Decimal = Decimal("3")
+    scanner_gate_log_only_enabled: bool = True
+    scanner_gate_guard_enabled: bool = False
+    scanner_gate_max_risk_penalty: Decimal | None = None
+    scanner_gate_max_volume_surge: Decimal | None = None
+    scanner_gate_max_momentum: Decimal | None = None
     liquidity_sizing_enabled: bool = True
     liquidity_thin_daily_volume: int = 50000
     liquidity_thin_daily_turnover_jpy: Decimal = Decimal("50000000")
@@ -78,6 +83,18 @@ class GatewaySettings(BaseSettings):
     order_archive_dir: Path = Path("./data/orders")
 
     backtest_output_dir: Path = Path("./out/gateway")
+
+    @field_validator(
+        "scanner_gate_max_risk_penalty",
+        "scanner_gate_max_volume_surge",
+        "scanner_gate_max_momentum",
+        mode="before",
+    )
+    @classmethod
+    def _empty_optional_decimal(cls, value: object) -> object:
+        if value == "":
+            return None
+        return value
 
 
 @dataclass(frozen=True, slots=True)

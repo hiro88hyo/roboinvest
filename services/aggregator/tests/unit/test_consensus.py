@@ -79,6 +79,20 @@ def test_rule_only_carries_execution_context(signal_factory) -> None:  # type: i
     assert unified.session_phase == "morning"
 
 
+def test_rule_only_carries_order_fields(signal_factory) -> None:  # type: ignore[no-untyped-def]
+    rule = signal_factory(
+        source=SignalSource.RULE,
+        action=Action.BUY,
+        confidence=0.8,
+        target_price=Decimal("1002"),
+        trailing_stop_pct=Decimal("0.002"),
+    )
+    unified = aggregate([rule], config=_cfg())
+    assert unified is not None
+    assert unified.target_price == Decimal("1002")
+    assert unified.trailing_stop_pct == Decimal("0.002")
+
+
 def test_consensus_uses_latest_signal_execution_context(signal_factory) -> None:  # type: ignore[no-untyped-def]
     older = datetime(2026, 4, 20, 9, 0, tzinfo=UTC)
     newer = datetime(2026, 4, 20, 9, 1, tzinfo=UTC)
