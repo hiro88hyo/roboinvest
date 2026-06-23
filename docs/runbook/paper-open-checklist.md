@@ -144,7 +144,7 @@ op run --env-file infra/env.production -- \
 
 現在の paper 設定:
 
-- `PAPER_BUY_LIMIT_OFFSET_TICKS=3`
+- `PAPER_BUY_LIMIT_OFFSET_TICKS=0`
   - 2026-06-18 archive replay では original limit の fill が 14/77、`orig+3t` が 62/77
   - 平均 fill price は original 比 +10.80 bps、最大 +54.95 bps
 - `PAPER_SYMBOL_ORDER_COOLDOWN_SECONDS=300`
