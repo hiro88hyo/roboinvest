@@ -127,6 +127,69 @@ def test_default_holding_type_applied_to_new_buy() -> None:
     assert summary.final_positions["7203"].holding_type is TradingStyle.SWING
 
 
+def test_buy_carries_order_management_fields_to_new_position() -> None:
+    book = make_order_book(symbol="7203", asks=(("1000", 500),), timestamp=_ts(0))
+    order = make_order_request(
+        symbol="7203",
+        side=Side.BUY,
+        quantity=100,
+        stop_loss_price=Decimal("950"),
+        target_price=Decimal("1100"),
+        trailing_stop_pct=Decimal("0.03"),
+        max_hold_days=3,
+        created_at=_ts(1),
+    )
+    summary = run_backtest(orders=[order], books=[book])
+
+    position = summary.final_positions["7203"]
+    assert position.stop_loss_price == Decimal("950")
+    assert position.target_price == Decimal("1100")
+    assert position.trailing_stop_pct == Decimal("0.03")
+    assert position.max_hold_days == 3
+
+
+def test_day_target_exit_runs_on_later_book() -> None:
+    book_buy = make_order_book(symbol="7203", asks=(("1000", 500),), timestamp=_ts(0))
+    book_target = make_order_book(symbol="7203", bids=(("1100", 500),), timestamp=_ts(2))
+    order = make_order_request(
+        symbol="7203",
+        side=Side.BUY,
+        quantity=100,
+        target_price=Decimal("1100"),
+        stop_loss_price=Decimal("950"),
+        created_at=_ts(1),
+    )
+
+    summary = run_backtest(orders=[order], books=[book_buy, book_target])
+
+    assert summary.fill_count == 2
+    assert summary.final_positions == {}
+    assert len(summary.closed_trades) == 1
+    assert summary.closed_trades[0].exit_price == Decimal("1100")
+    assert summary.realized_pnl == Decimal("9792.1")
+
+
+def test_day_stop_exit_runs_on_later_book() -> None:
+    book_buy = make_order_book(symbol="7203", asks=(("1000", 500),), timestamp=_ts(0))
+    book_stop = make_order_book(symbol="7203", bids=(("950", 500),), timestamp=_ts(2))
+    order = make_order_request(
+        symbol="7203",
+        side=Side.BUY,
+        quantity=100,
+        target_price=Decimal("1100"),
+        stop_loss_price=Decimal("950"),
+        created_at=_ts(1),
+    )
+
+    summary = run_backtest(orders=[order], books=[book_buy, book_stop])
+
+    assert summary.fill_count == 2
+    assert summary.final_positions == {}
+    assert len(summary.closed_trades) == 1
+    assert summary.closed_trades[0].exit_price == Decimal("950")
+    assert summary.realized_pnl == Decimal("-5193.05")
+
+
 def test_existing_position_holding_type_preserved_on_buy_average() -> None:
     seed = {
         "7203": make_paper_position(

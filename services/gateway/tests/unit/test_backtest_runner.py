@@ -48,6 +48,66 @@ def test_approves_valid_buy(  # type: ignore[no-untyped-def]
     assert order.trade_mode is TradeMode.LIVE  # from state
 
 
+def test_uses_signal_price_when_entry_price_not_supplied(  # type: ignore[no-untyped-def]
+    unified_signal_factory, kill_switch_state_factory
+) -> None:
+    signal = unified_signal_factory(
+        action=Action.BUY,
+        price=Decimal("2000"),
+        stop_loss_price=Decimal("1900"),
+    )
+    summary = run_backtest(
+        [signal],
+        state=kill_switch_state_factory(),
+        risk_config=_risk_cfg(),
+        entry_price=None,
+    )
+
+    [order] = summary.approved
+    assert order.limit_price == Decimal("2000")
+    assert order.quantity == 200
+
+
+def test_buy_limit_offset_ticks_are_applied(  # type: ignore[no-untyped-def]
+    unified_signal_factory, kill_switch_state_factory
+) -> None:
+    signal = unified_signal_factory(
+        action=Action.BUY,
+        price=Decimal("2000"),
+        stop_loss_price=Decimal("1900"),
+    )
+    summary = run_backtest(
+        [signal],
+        state=kill_switch_state_factory(),
+        risk_config=_risk_cfg(),
+        entry_price=None,
+        buy_limit_offset_ticks=3,
+    )
+
+    [order] = summary.approved
+    assert order.limit_price == Decimal("2003")
+
+
+def test_rejects_buy_without_any_entry_price(  # type: ignore[no-untyped-def]
+    unified_signal_factory, kill_switch_state_factory
+) -> None:
+    signal = unified_signal_factory(
+        action=Action.BUY,
+        price=None,
+        stop_loss_price=Decimal("1900"),
+    )
+    summary = run_backtest(
+        [signal],
+        state=kill_switch_state_factory(),
+        risk_config=_risk_cfg(),
+        entry_price=None,
+    )
+
+    assert summary.approved == []
+    [rejected] = summary.rejected
+    assert rejected.reason == "missing_entry_price"
+
+
 def test_rejects_hold(  # type: ignore[no-untyped-def]
     unified_signal_factory, kill_switch_state_factory
 ) -> None:
@@ -149,7 +209,26 @@ def test_mixed_batch_splits_correctly(  # type: ignore[no-untyped-def]
     assert reasons == {"9984": "action_hold", "6758": "no_position_for_sell"}
 
 
-def test_now_fixes_created_at_for_approved(  # type: ignore[no-untyped-def]
+def test_signal_created_at_is_used_for_approved_by_default(  # type: ignore[no-untyped-def]
+    unified_signal_factory, kill_switch_state_factory
+) -> None:
+    signal_time = datetime(2026, 4, 23, 9, 15, tzinfo=UTC)
+    signal = unified_signal_factory(
+        action=Action.BUY,
+        stop_loss_price=Decimal("950"),
+        created_at=signal_time,
+    )
+    summary = run_backtest(
+        [signal],
+        state=kill_switch_state_factory(),
+        risk_config=_risk_cfg(),
+        entry_price=Decimal("1000"),
+    )
+    [order] = summary.approved
+    assert order.created_at == signal_time
+
+
+def test_now_overrides_created_at_for_approved(  # type: ignore[no-untyped-def]
     unified_signal_factory, kill_switch_state_factory
 ) -> None:
     signal = unified_signal_factory(action=Action.BUY, stop_loss_price=Decimal("950"))

@@ -5,11 +5,15 @@ from __future__ import annotations
 from ..config import StrategyRuleSettings
 from ..registry import register
 from .bollinger_breakout import BollingerBreakoutStrategy
+from .opening_range_breakout import OpeningRangeBreakoutStrategy
+from .relative_momentum import RelativeMomentumStrategy
 from .rsi_threshold import RsiThresholdStrategy
 from .sma_crossover import SmaCrossoverStrategy
 
 __all__ = [
     "BollingerBreakoutStrategy",
+    "OpeningRangeBreakoutStrategy",
+    "RelativeMomentumStrategy",
     "RsiThresholdStrategy",
     "SmaCrossoverStrategy",
     "register_builtin",
@@ -75,8 +79,48 @@ def _make_bollinger(settings: StrategyRuleSettings) -> BollingerBreakoutStrategy
     )
 
 
+def _make_opening_range_breakout(settings: StrategyRuleSettings) -> OpeningRangeBreakoutStrategy:
+    return OpeningRangeBreakoutStrategy(
+        range_minutes=settings.orb_range_minutes,
+        entry_minute=settings.orb_entry_minute,
+        min_minutes_to_close=settings.orb_min_minutes_to_close,
+        max_stop_risk_bps=settings.orb_max_stop_risk_bps,
+        cooldown_seconds=settings.orb_cooldown_seconds,
+        require_vwap=settings.orb_require_vwap,
+        target_r_multiple=settings.orb_target_r_multiple,
+        min_breakout_volume_delta=settings.orb_min_breakout_volume_delta,
+        min_opening_range_volume=settings.orb_min_opening_range_volume,
+        max_price=settings.entry_max_price,
+        max_spread_bps=settings.entry_max_spread_bps,
+        max_spread_ticks=settings.entry_max_spread_ticks,
+        min_ask_depth_5=settings.entry_min_ask_depth_5,
+        min_book_imbalance_5=settings.entry_min_book_imbalance_5,
+        max_book_age_seconds=settings.entry_max_book_age_seconds,
+    )
+
+
+def _make_relative_momentum(settings: StrategyRuleSettings) -> RelativeMomentumStrategy:
+    return RelativeMomentumStrategy(
+        min_return_from_open_bps=settings.relative_momentum_min_return_from_open_bps,
+        min_peer_percentile=settings.relative_momentum_min_peer_percentile,
+        min_vwap_distance_bps=settings.relative_momentum_min_vwap_distance_bps,
+        min_minutes_from_open=settings.relative_momentum_min_minutes_from_open,
+        min_minutes_to_close=settings.relative_momentum_min_minutes_to_close,
+        max_stop_risk_bps=settings.relative_momentum_max_stop_risk_bps,
+        target_r_multiple=settings.relative_momentum_target_r_multiple,
+        max_price=settings.entry_max_price,
+        max_spread_bps=settings.entry_max_spread_bps,
+        max_spread_ticks=settings.entry_max_spread_ticks,
+        min_ask_depth_5=settings.entry_min_ask_depth_5,
+        min_book_imbalance_5=settings.entry_min_book_imbalance_5,
+        max_book_age_seconds=settings.entry_max_book_age_seconds,
+    )
+
+
 def register_builtin() -> None:
     """Register all built-in strategies. Idempotent."""
     register("sma_crossover", _make_sma)
     register("rsi_threshold", _make_rsi)
     register("bollinger_breakout", _make_bollinger)
+    register("opening_range_breakout", _make_opening_range_breakout)
+    register("relative_momentum", _make_relative_momentum)

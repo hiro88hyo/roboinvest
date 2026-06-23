@@ -21,6 +21,7 @@ KillSwitchStateFactory = Callable[..., KillSwitchState]
 def _make_unified_signal(
     *,
     symbol: str = "7203",
+    price: Decimal | None = None,
     action: Action = Action.BUY,
     confidence: float = 0.7,
     signal_source: SignalSource = SignalSource.CONSENSUS,
@@ -37,6 +38,7 @@ def _make_unified_signal(
     return UnifiedTradeSignal(
         signal_id=uuid4(),
         symbol=symbol,
+        price=price,
         action=action,
         confidence=confidence,
         signal_source=signal_source,

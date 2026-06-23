@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import datetime, time
+from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -56,6 +56,11 @@ class StreamingFeatureState:
     buffer_size: int
     _ticks: dict[str, deque[dict[str, Any]]] = field(default_factory=dict)
     _books: dict[str, OrderBookSnapshot] = field(default_factory=dict)
+    _last_cumulative_volume: dict[str, int] = field(default_factory=dict)
+    _trading_dates: dict[str, date] = field(default_factory=dict)
+    _open_prices: dict[str, Decimal] = field(default_factory=dict)
+    _intraday_high_prices: dict[str, Decimal] = field(default_factory=dict)
+    _latest_return_from_open_bps: dict[str, Decimal] = field(default_factory=dict)
 
     @classmethod
     def from_settings(
@@ -75,6 +80,9 @@ class StreamingFeatureState:
 
     def record_tick(self, tick: TickData) -> ProcessedFeatures:
         """tick をバッファに追加し、最新の指標値で `ProcessedFeatures` を返す。"""
+        self._reset_symbol_for_new_date(tick)
+        trade_volume_delta = self._trade_volume_delta(tick)
+        momentum_metrics = self._intraday_momentum_metrics(tick)
         buf = self._ticks.setdefault(tick.symbol, deque(maxlen=self.buffer_size))
         buf.append(
             {
@@ -117,6 +125,11 @@ class StreamingFeatureState:
             rsi=_to_decimal(last.get("rsi")),
             vwap=_to_decimal(last.get("vwap")),
             volume_ratio=_to_decimal(last.get("volume_ratio")),
+            cumulative_volume=int(tick.volume),
+            trade_volume_delta=trade_volume_delta,
+            return_from_open_bps=momentum_metrics.return_from_open_bps,
+            intraday_peer_percentile=momentum_metrics.intraday_peer_percentile,
+            intraday_high_price=momentum_metrics.intraday_high_price,
             bollinger_upper=_to_decimal(last.get("bollinger_upper")),
             bollinger_middle=_to_decimal(last.get("bollinger_middle")),
             bollinger_lower=_to_decimal(last.get("bollinger_lower")),
@@ -146,9 +159,82 @@ class StreamingFeatureState:
         if symbol is None:
             self._ticks.clear()
             self._books.clear()
+            self._last_cumulative_volume.clear()
+            self._trading_dates.clear()
+            self._open_prices.clear()
+            self._intraday_high_prices.clear()
+            self._latest_return_from_open_bps.clear()
         else:
             self._ticks.pop(symbol, None)
             self._books.pop(symbol, None)
+            self._last_cumulative_volume.pop(symbol, None)
+            self._trading_dates.pop(symbol, None)
+            self._open_prices.pop(symbol, None)
+            self._intraday_high_prices.pop(symbol, None)
+            self._latest_return_from_open_bps.pop(symbol, None)
+
+    def _reset_symbol_for_new_date(self, tick: TickData) -> None:
+        current_date = tick.timestamp.astimezone(JST).date()
+        previous_date = self._trading_dates.get(tick.symbol)
+        if previous_date == current_date:
+            return
+        self._trading_dates[tick.symbol] = current_date
+        self._ticks.pop(tick.symbol, None)
+        self._last_cumulative_volume.pop(tick.symbol, None)
+        self._open_prices.pop(tick.symbol, None)
+        self._intraday_high_prices.pop(tick.symbol, None)
+        self._latest_return_from_open_bps.pop(tick.symbol, None)
+
+    def _intraday_momentum_metrics(self, tick: TickData) -> _IntradayMomentumMetrics:
+        open_price = self._open_prices.setdefault(tick.symbol, tick.price)
+        high_price = max(self._intraday_high_prices.get(tick.symbol, tick.price), tick.price)
+        self._intraday_high_prices[tick.symbol] = high_price
+
+        if open_price <= 0:
+            return _IntradayMomentumMetrics(intraday_high_price=high_price)
+        return_from_open_bps = ((tick.price - open_price) / open_price) * Decimal("10000")
+        self._latest_return_from_open_bps[tick.symbol] = return_from_open_bps
+        return _IntradayMomentumMetrics(
+            return_from_open_bps=return_from_open_bps,
+            intraday_peer_percentile=self._peer_percentile(
+                symbol=tick.symbol,
+                return_from_open_bps=return_from_open_bps,
+            ),
+            intraday_high_price=high_price,
+        )
+
+    def _peer_percentile(
+        self,
+        *,
+        symbol: str,
+        return_from_open_bps: Decimal,
+    ) -> Decimal | None:
+        values = list(self._latest_return_from_open_bps.items())
+        if len(values) < 2:
+            return None
+        lower = sum(
+            1
+            for other_symbol, other_return in values
+            if other_symbol != symbol and other_return <= return_from_open_bps
+        )
+        return Decimal(lower) / Decimal(len(values) - 1)
+
+    def _trade_volume_delta(self, tick: TickData) -> int | None:
+        """Return delta from kabu's cumulative TradingVolume for this symbol."""
+        previous = self._last_cumulative_volume.get(tick.symbol)
+        current = int(tick.volume)
+        self._last_cumulative_volume[tick.symbol] = current
+        if previous is None:
+            return None
+        if current < previous:
+            logger.warning(
+                "cumulative volume reset: symbol=%s previous=%d current=%d",
+                tick.symbol,
+                previous,
+                current,
+            )
+            return None
+        return current - previous
 
 
 def _to_decimal(value: float | int | None) -> Decimal | None:
@@ -169,6 +255,13 @@ class _BookMetrics:
     bid_depth_5: int | None = None
     ask_depth_5: int | None = None
     book_imbalance_5: Decimal | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _IntradayMomentumMetrics:
+    return_from_open_bps: Decimal | None = None
+    intraday_peer_percentile: Decimal | None = None
+    intraday_high_price: Decimal | None = None
 
 
 @dataclass(frozen=True, slots=True)

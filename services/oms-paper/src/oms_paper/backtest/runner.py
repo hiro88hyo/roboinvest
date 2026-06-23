@@ -18,11 +18,12 @@ from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel
-from trade_contracts.enums import Side, TradingStyle
+from trade_contracts.enums import OrderType, Side, SignalSource, TradeMode, TradingStyle
 from trade_contracts.market import OrderBookSnapshot
 from trade_contracts.order import OrderRequest
 from trade_contracts.tick_size import tse_tick_size
 
+from ..day_monitor import evaluate_day_exit
 from ..fill_simulator import simulate_fill
 from ..models import PaperFillRecord, PaperPosition
 from ..position_updater import apply_fill, build_fill_record
@@ -116,6 +117,14 @@ def run_backtest(
         if kind == "book":
             assert isinstance(payload, OrderBookSnapshot)
             book_cache[payload.symbol] = payload
+            realized_pnl += _run_day_exit_if_needed(
+                book=payload,
+                positions=positions,
+                fills=fills,
+                no_fills=no_fills,
+                closed_trades=closed_trades,
+                execution_quality=execution_quality,
+            )
             continue
 
         assert isinstance(payload, OrderRequest)
@@ -142,6 +151,10 @@ def run_backtest(
             fill=fill,
             existing=existing,
             holding_type=holding_type,
+            stop_loss_price=order.stop_loss_price,
+            target_price=order.target_price,
+            max_hold_days=order.max_hold_days,
+            trailing_stop_pct=order.trailing_stop_pct,
             executed_at=order.created_at,
         )
         if update.error is not None:
@@ -188,6 +201,75 @@ def _to_no_fill(order: OrderRequest, *, reason: str) -> NoFillRecord:
         reason=reason,
         created_at=order.created_at,
     )
+
+
+def _run_day_exit_if_needed(
+    *,
+    book: OrderBookSnapshot,
+    positions: dict[str, PaperPosition],
+    fills: list[PaperFillRecord],
+    no_fills: list[NoFillRecord],
+    closed_trades: list[ClosedTrade],
+    execution_quality: list[ExecutionQualityRecord],
+) -> Decimal:
+    position = positions.get(book.symbol)
+    if position is None or not book.bids:
+        return Decimal("0")
+
+    decision = evaluate_day_exit(
+        position=position, latest_price=book.bids[0].price, now=book.timestamp
+    )
+    if decision.action != "exit":
+        return Decimal("0")
+
+    order = OrderRequest(
+        unified_signal_id=None,
+        symbol=position.symbol,
+        side=Side.SELL,
+        quantity=position.quantity,
+        order_type=OrderType.MARKET,
+        trade_mode=TradeMode.PAPER,
+        signal_source=SignalSource.CONSENSUS,
+        created_at=book.timestamp,
+    )
+    fill = simulate_fill(order=order, book=book)
+    execution_quality.append(
+        _execution_quality_for_order(
+            order=order, book=book, filled_quantity=fill.filled_quantity, reason=fill.reason
+        )
+    )
+    if fill.filled_quantity == 0 or fill.fill_price is None:
+        reason = f"day_exit_{decision.reason or 'exit'}_{fill.reason}"
+        no_fills.append(_to_no_fill(order, reason=reason))
+        return Decimal("0")
+
+    update = apply_fill(
+        order=order,
+        fill=fill,
+        existing=position,
+        holding_type=position.holding_type,
+        executed_at=book.timestamp,
+    )
+    if update.error is not None:
+        no_fills.append(_to_no_fill(order, reason=f"day_exit_{update.error}"))
+        return Decimal("0")
+
+    record = build_fill_record(order=order, fill=fill, executed_at=book.timestamp)
+    if record is None:
+        no_fills.append(_to_no_fill(order, reason="day_exit_no_record"))
+        return Decimal("0")
+
+    fills.append(record)
+    realized_pnl = Decimal("0")
+    closed = _closed_trade_for_fill(record=record, existing=position)
+    if closed is not None:
+        closed_trades.append(closed)
+        realized_pnl = closed.net_pnl_before_tax
+    if update.delete:
+        positions.pop(position.symbol, None)
+    elif update.position is not None:
+        positions[position.symbol] = update.position
+    return realized_pnl
 
 
 def _closed_trade_for_fill(

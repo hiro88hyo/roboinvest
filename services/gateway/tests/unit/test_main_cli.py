@@ -17,6 +17,7 @@ from trade_contracts.signal import UnifiedTradeSignal
 def _signal(
     *,
     symbol: str = "7203",
+    price: Decimal | None = None,
     action: Action = Action.BUY,
     stop_loss_price: Decimal | None = Decimal("950"),
     holding_type: TradingStyle = TradingStyle.DAY,
@@ -24,6 +25,7 @@ def _signal(
     return UnifiedTradeSignal(
         signal_id=uuid4(),
         symbol=symbol,
+        price=price,
         action=action,
         confidence=0.7,
         signal_source=SignalSource.CONSENSUS,
@@ -177,6 +179,79 @@ def test_backtest_happy_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     rejected_lines = [line for line in rejected_path.read_text().splitlines() if line]
     assert len(rejected_lines) == 1
     assert '"reason":"action_hold"' in rejected_lines[0]
+
+
+def test_backtest_uses_signal_price_when_entry_price_omitted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CAPITAL", "1000000")
+    input_path = tmp_path / "unified.jsonl"
+    state_path = tmp_path / "state.json"
+    approved_path = tmp_path / "out" / "orders.jsonl"
+
+    _write_signals(
+        input_path,
+        [_signal(symbol="7203", price=Decimal("2000"), stop_loss_price=Decimal("1900"))],
+    )
+    _write_state(state_path)
+
+    rc = main(
+        [
+            "backtest",
+            "--input",
+            str(input_path),
+            "--state",
+            str(state_path),
+            "--output-approved",
+            str(approved_path),
+        ]
+    )
+    assert rc == 0
+
+    [order] = [
+        OrderRequest.model_validate_json(line)
+        for line in approved_path.read_text().splitlines()
+        if line
+    ]
+    assert order.limit_price == Decimal("2000")
+    assert order.quantity == 200
+
+
+def test_backtest_applies_buy_limit_offset_ticks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CAPITAL", "1000000")
+    input_path = tmp_path / "unified.jsonl"
+    state_path = tmp_path / "state.json"
+    approved_path = tmp_path / "out" / "orders.jsonl"
+
+    _write_signals(
+        input_path,
+        [_signal(symbol="7203", price=Decimal("2000"), stop_loss_price=Decimal("1900"))],
+    )
+    _write_state(state_path)
+
+    rc = main(
+        [
+            "backtest",
+            "--input",
+            str(input_path),
+            "--state",
+            str(state_path),
+            "--output-approved",
+            str(approved_path),
+            "--buy-limit-offset-ticks",
+            "3",
+        ]
+    )
+    assert rc == 0
+
+    [order] = [
+        OrderRequest.model_validate_json(line)
+        for line in approved_path.read_text().splitlines()
+        if line
+    ]
+    assert order.limit_price == Decimal("2003")
 
 
 def test_backtest_without_rejected_output_skips_file(

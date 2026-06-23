@@ -83,6 +83,86 @@ def test_volume_ratio_fills_after_window_reached() -> None:
     assert features.volume_ratio == Decimal("2.0")
 
 
+def test_cumulative_volume_and_delta_are_exposed() -> None:
+    state = StreamingFeatureState.from_settings(_settings())
+    base = datetime(2026, 4, 20, 9, 0, tzinfo=UTC)
+
+    first = state.record_tick(_tick("7203", base, "100", volume=1000))
+    second = state.record_tick(_tick("7203", base + timedelta(seconds=1), "101", volume=1250))
+
+    assert first.cumulative_volume == 1000
+    assert first.trade_volume_delta is None
+    assert second.cumulative_volume == 1250
+    assert second.trade_volume_delta == 250
+
+
+def test_volume_delta_is_isolated_per_symbol() -> None:
+    state = StreamingFeatureState.from_settings(_settings())
+    base = datetime(2026, 4, 20, 9, 0, tzinfo=UTC)
+
+    state.record_tick(_tick("7203", base, "100", volume=1000))
+    state.record_tick(_tick("9984", base, "8000", volume=5000))
+    features = state.record_tick(_tick("7203", base + timedelta(seconds=1), "101", volume=1010))
+
+    assert features.trade_volume_delta == 10
+
+
+def test_volume_delta_resets_with_symbol() -> None:
+    state = StreamingFeatureState.from_settings(_settings())
+    base = datetime(2026, 4, 20, 9, 0, tzinfo=UTC)
+
+    state.record_tick(_tick("7203", base, "100", volume=1000))
+    state.reset("7203")
+    features = state.record_tick(_tick("7203", base + timedelta(seconds=1), "101", volume=1100))
+
+    assert features.cumulative_volume == 1100
+    assert features.trade_volume_delta is None
+
+
+def test_intraday_momentum_fields_are_exposed() -> None:
+    state = StreamingFeatureState.from_settings(_settings())
+    base = datetime(2026, 4, 20, 9, 0, tzinfo=UTC)
+
+    first = state.record_tick(_tick("7203", base, "100"))
+    second_symbol = state.record_tick(_tick("9984", base, "200"))
+    later = state.record_tick(_tick("7203", base + timedelta(seconds=1), "105"))
+
+    assert first.return_from_open_bps == Decimal("0")
+    assert first.intraday_peer_percentile is None
+    assert first.intraday_high_price == Decimal("100")
+    assert second_symbol.intraday_peer_percentile == Decimal("1")
+    assert later.return_from_open_bps == Decimal("500.00")
+    assert later.intraday_peer_percentile == Decimal("1")
+    assert later.intraday_high_price == Decimal("105")
+
+
+def test_intraday_high_preserves_prior_high() -> None:
+    state = StreamingFeatureState.from_settings(_settings())
+    base = datetime(2026, 4, 20, 9, 0, tzinfo=UTC)
+
+    state.record_tick(_tick("7203", base, "100"))
+    state.record_tick(_tick("7203", base + timedelta(seconds=1), "110"))
+    features = state.record_tick(_tick("7203", base + timedelta(seconds=2), "105"))
+
+    assert features.return_from_open_bps == Decimal("500.00")
+    assert features.intraday_high_price == Decimal("110")
+
+
+def test_intraday_momentum_resets_on_new_trading_date() -> None:
+    state = StreamingFeatureState.from_settings(_settings())
+    first_day = datetime(2026, 4, 20, 9, 0, tzinfo=UTC)
+    next_day = datetime(2026, 4, 21, 9, 0, tzinfo=UTC)
+
+    state.record_tick(_tick("7203", first_day, "100", volume=1000))
+    state.record_tick(_tick("7203", first_day + timedelta(seconds=1), "110", volume=1200))
+    features = state.record_tick(_tick("7203", next_day, "200", volume=5000))
+
+    assert features.return_from_open_bps == Decimal("0")
+    assert features.intraday_high_price == Decimal("200")
+    assert features.trade_volume_delta is None
+    assert state.buffer_length("7203") == 1
+
+
 def test_buffer_rolls_after_exceeding_size() -> None:
     state = StreamingFeatureState.from_settings(_settings(), buffer_size=3)
     base = datetime(2026, 4, 20, 9, 0, tzinfo=UTC)

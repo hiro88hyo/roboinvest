@@ -56,8 +56,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--entry-price",
         dest="entry_price",
         type=Decimal,
-        required=True,
-        help="全シグナル共通のフラットなエントリー価格 (Phase 2 簡易モデル)。",
+        default=None,
+        help="全シグナル共通のフラットなエントリー価格。省略時は signal.price を使う。",
+    )
+    bt.add_argument(
+        "--buy-limit-offset-ticks",
+        dest="buy_limit_offset_ticks",
+        type=int,
+        default=0,
+        help="BUY LIMIT を entry price から何 tick 上に置くか。",
     )
     bt.add_argument(
         "--output-approved",
@@ -124,6 +131,7 @@ def _run_backtest_cmd(
     output_rejected: Path | None,
     positions_path: Path | None,
     capital: Decimal | None,
+    buy_limit_offset_ticks: int,
 ) -> int:
     settings = GatewaySettings()
     configure_logging(service="gateway", level=settings.log_level)
@@ -156,6 +164,7 @@ def _run_backtest_cmd(
         state=state,
         risk_config=risk_config,
         entry_price=entry_price,
+        buy_limit_offset_ticks=buy_limit_offset_ticks,
         positions=positions,
     )
 
@@ -245,6 +254,7 @@ def main(argv: list[str] | None = None) -> int:
             output_rejected=args.output_rejected,
             positions_path=args.positions_path,
             capital=args.capital,
+            buy_limit_offset_ticks=args.buy_limit_offset_ticks,
         )
     if args.command == "stream":
         return asyncio.run(_run_stream_cmd(iterations=args.iterations))

@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -61,29 +61,42 @@ def run_backtest(
     *,
     state: KillSwitchState,
     risk_config: RiskConfig,
-    entry_price: Decimal,
+    entry_price: Decimal | None = None,
+    buy_limit_offset_ticks: int = 0,
     positions: dict[str, int] | None = None,
     now: datetime | None = None,
 ) -> BacktestSummary:
     """1 パスで全シグナルを検証し、approved / rejected に振り分ける。
 
     * ``state`` と ``positions`` は不変。pnl や建玉変化のシミュレートはしない。
-    * ``entry_price`` は全シグナル共通のフラット値。
-    * ``now`` を指定すると全 approved OrderRequest の ``created_at`` が固定され、
-      再現可能な出力になる。未指定時は実行時刻。
+    * ``entry_price`` 指定時は全シグナル共通のフラット値。
+      未指定時は ``UnifiedTradeSignal.price`` を BUY の entry price として使う。
+    * ``buy_limit_offset_ticks`` は BUY LIMIT を entry price から何 tick 上に置くか。
+    * ``now`` を指定すると全 approved OrderRequest の ``created_at`` が固定される。
+      未指定時は ``UnifiedTradeSignal.created_at`` を使う。
     """
     positions_map = positions or {}
-    stamp = now or datetime.now(UTC)
-
     approved: list[OrderRequest] = []
     rejected: list[RejectionRecord] = []
 
     for signal in signals:
+        resolved_entry_price = entry_price if entry_price is not None else signal.price
+        if signal.action is Action.BUY and resolved_entry_price is None:
+            rejected.append(
+                RejectionRecord(
+                    unified_signal_id=signal.signal_id,
+                    symbol=signal.symbol,
+                    action=signal.action,
+                    reason="missing_entry_price",
+                    created_at=signal.created_at,
+                )
+            )
+            continue
         check = validate(
             signal=signal,
             state=state,
             risk_config=risk_config,
-            entry_price=entry_price,
+            entry_price=resolved_entry_price or Decimal("0"),
             existing_long_quantity=positions_map.get(signal.symbol),
         )
         if check.passed and check.adjusted_quantity is not None and check.adjusted_quantity > 0:
@@ -92,10 +105,10 @@ def run_backtest(
                     signal=signal,
                     quantity=check.adjusted_quantity,
                     trade_mode=state.trade_mode,
-                    entry_price=entry_price if signal.action is Action.BUY else None,
-                    buy_limit_offset_ticks=0,
+                    entry_price=resolved_entry_price if signal.action is Action.BUY else None,
+                    buy_limit_offset_ticks=buy_limit_offset_ticks,
                     default_stop_loss_spread_pct=risk_config.default_stop_loss_spread_pct,
-                    created_at=stamp,
+                    created_at=now or signal.created_at,
                 )
             )
         else:

@@ -57,6 +57,22 @@ class StrategyRuleSettings(BaseSettings):
     entry_max_price: Decimal | None = None
     buy_target_pct: Decimal | None = None
     buy_trailing_stop_pct: Decimal | None = None
+    orb_range_minutes: int = 15
+    orb_entry_minute: int = 15
+    orb_min_minutes_to_close: int = 45
+    orb_max_stop_risk_bps: Decimal | None = Decimal("300")
+    orb_cooldown_seconds: int = 900
+    orb_require_vwap: bool = True
+    orb_target_r_multiple: Decimal | None = Decimal("1.5")
+    orb_min_breakout_volume_delta: int | None = None
+    orb_min_opening_range_volume: int | None = None
+    relative_momentum_min_return_from_open_bps: Decimal = Decimal("300")
+    relative_momentum_min_peer_percentile: Decimal = Decimal("0.9")
+    relative_momentum_min_vwap_distance_bps: Decimal = Decimal("30")
+    relative_momentum_min_minutes_from_open: int = 15
+    relative_momentum_min_minutes_to_close: int = 45
+    relative_momentum_max_stop_risk_bps: Decimal | None = Decimal("200")
+    relative_momentum_target_r_multiple: Decimal | None = Decimal("1.5")
 
     backtest_output_dir: Path = Path("./out/strategy-rule")
 
@@ -79,6 +95,12 @@ class StrategyRuleSettings(BaseSettings):
         "entry_max_price",
         "buy_target_pct",
         "buy_trailing_stop_pct",
+        "orb_max_stop_risk_bps",
+        "orb_target_r_multiple",
+        "orb_min_breakout_volume_delta",
+        "orb_min_opening_range_volume",
+        "relative_momentum_max_stop_risk_bps",
+        "relative_momentum_target_r_multiple",
         mode="before",
     )
     @classmethod

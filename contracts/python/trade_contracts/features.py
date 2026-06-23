@@ -18,6 +18,11 @@ class ProcessedFeatures(BaseModel):
     rsi: Decimal | None = None
     vwap: Decimal | None = None
     volume_ratio: Decimal | None = None
+    cumulative_volume: int | None = None
+    trade_volume_delta: int | None = None
+    return_from_open_bps: Decimal | None = None
+    intraday_peer_percentile: Decimal | None = None
+    intraday_high_price: Decimal | None = None
     bollinger_upper: Decimal | None = None
     bollinger_middle: Decimal | None = None
     bollinger_lower: Decimal | None = None

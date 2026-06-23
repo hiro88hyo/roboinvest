@@ -77,6 +77,20 @@
    - 次作業は [2026-06-23 Strategy Reset Decision](handoff/2026-06-23-strategy-reset.md)
      を起点に、opening range breakout / VWAP / relative momentum などから
      新しい仮説を明文化して設計する。
+   - 2026-06-23 に ORB plugin と end-to-end replay 経路を追加して検証したが、
+     現行条件では 2026-06-18 / 2026-06-22 とも net PnL / PF が不合格。
+     ORB は primary 候補から外し、次は VWAP continuation または relative momentum を優先する。
+   - VWAP continuation 初期診断は execution filter 後に 15/30m forward return が悪化。
+     Relative momentum は watchlist 内 peer percentile 代理で 30m forward return が比較的良好。
+     `return_from_open_bps` / `intraday_peer_percentile` / `intraday_high_price` と
+     `relative_momentum` plugin は追加済み。次の feature archive で end-to-end replay する。
+   - 既存 archive を enrichment して strict relative momentum を replay したところ、
+     `150 bps` 条件は 2026-06-18 / 2026-06-22 では net positive だったが、
+     2026-06-23 当日 archive で net `-57,611.636` となり失格。
+   - `300 bps` 条件は 2026-06-18 net `+19,676.9899758`,
+     2026-06-22 net `+5,739.25714235`, 2026-06-23 net `0`。
+     ただし 3 日合計 closed trade は 5 件、6/22 / 6/23 no-fill が高いため
+     live-ready ではない。次は paper observation candidate として扱う。
    - 明示的な再評価なしに、現行 RULE BUY / judge BUY を live entry 根拠にしない。
 
 0. **2026-06-17 paper hardening / stop monitor は production 反映済み**
