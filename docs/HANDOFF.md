@@ -1,6 +1,6 @@
 # Handoff Memo (for coding AIs)
 
-最終更新: 2026-06-17 / HEAD: `main` (`1b541a6`)
+最終更新: 2026-06-23 / HEAD: `main` (`a662f82`)
 
 このファイルは、次の coding AI が最初に読むための短い索引です。日次の長い運用ログはここに積まず、必要な詳細だけリンク先で確認してください。
 
@@ -19,10 +19,19 @@
 
 ## 2. Current State
 
-2026-06-17 時点の要点:
+2026-06-23 時点の要点:
 
 - 全 9 サービス + Dashboard は実装済み。
 - production compose / Cloud Supabase / managed Pub/Sub / Vercel Dashboard は一通り稼働済み。
+- 2026-06-23 の paper 結果と直近日次成績を受け、既存 intraday
+  RULE/AI judge stack は live 候補から降格。小手先の gate 追加ではなく
+  strategy reset としてゼロから作り直す判断。
+- 2026-06-23 paper は BUY 21 / SELL 21、closed 21、勝ち/負け/同値
+  `4/16/1`、実現 paper PnL `-12,500円`。source 別は RULE `-11,500円`,
+  CONSENSUS `-1,000円`。
+- 直近 paper 観測 4 日分の FIFO PnL は `2026-06-16 -12,200円`,
+  `2026-06-19 -10,100円`, `2026-06-22 -6,500円`,
+  `2026-06-23 -12,500円`、合計 `-41,300円`。
 - Live trading は 2026-05-21 から 2026-05-29 まで運用実績あり。
 - 5月 live 成績は合計 `+46,766円`、ただし 2026-05-29 は `-45,540円` の大きな負け。
 - Paper trading は 2026-05-19 から 2026-05-21 まで確認済みで、合計 `+68,100円`。
@@ -38,6 +47,7 @@
 - [docs/handoff/2026-05-operations-log.md](handoff/2026-05-operations-log.md)
 - [docs/handoff/2026-06-operations-log.md](handoff/2026-06-operations-log.md)
 - [docs/handoff/2026-06-17-paper-hardening-handoff.md](handoff/2026-06-17-paper-hardening-handoff.md)
+- [docs/handoff/2026-06-23-strategy-reset.md](handoff/2026-06-23-strategy-reset.md)
 
 5月成績レビュー:
 
@@ -56,6 +66,18 @@
 ## 4. Active Follow-ups
 
 優先度が高い順:
+
+0. **2026-06-23 strategy reset: 既存 intraday strategy は live 候補から外す**
+   - 2026-06-23 paper は BUY 21 / SELL 21、closed 21、勝ち/負け/同値
+     `4/16/1`、realized paper PnL `-12,500円`。
+   - source 別では RULE `-11,500円`、CONSENSUS `-1,000円`。
+   - 直近 paper 観測 4 日分は合計 `-41,300円`。これは日次の偶然ではなく、
+     既存 RULE entry / judge stack が構造的に負けている可能性が高い。
+   - 既存 strategy に小さな gate を追加して live に近づける作業は停止。
+   - 次作業は [2026-06-23 Strategy Reset Decision](handoff/2026-06-23-strategy-reset.md)
+     を起点に、opening range breakout / VWAP / relative momentum などから
+     新しい仮説を明文化して設計する。
+   - 明示的な再評価なしに、現行 RULE BUY / judge BUY を live entry 根拠にしない。
 
 0. **2026-06-17 paper hardening / stop monitor は production 反映済み**
    - OMS Paper は `oms-paper-raw-books` を読み、day position の stop/target/trailing を `PAPER_DAY_STOP_MONITOR_ENABLED=true` で評価する。

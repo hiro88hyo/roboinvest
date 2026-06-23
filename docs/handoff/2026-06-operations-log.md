@@ -1,5 +1,47 @@
 # June 2026 Operations Log
 
+## 2026-06-23 paper session close and strategy reset decision
+
+Production stayed in `TRADE_MODE=paper`; live trading remained flat.
+
+Operational state:
+
+- production compose services were up.
+- watchlist had 30 rows for `valid_date=2026-06-23`.
+- live trades: `0`.
+- live open positions: `0`.
+- live realized daily PnL: `0`.
+
+Paper outcome from `trades_paper`, using long-only FIFO pairing:
+
+- BUY fills: `21`.
+- SELL fills: `21`.
+- closed pairs: `21`.
+- open paper positions: `0`.
+- winners / losers / flat: `4 / 16 / 1`.
+- realized paper PnL: `-12,500円`.
+- source PnL: RULE `-11,500円`, CONSENSUS `-1,000円`.
+
+Recent paper sessions are persistently negative:
+
+- 2026-06-16: `-12,200円`
+- 2026-06-19: `-10,100円`
+- 2026-06-22: `-6,500円`
+- 2026-06-23: `-12,500円`
+- total: `-41,300円`
+
+Decision:
+
+- Treat the existing intraday RULE/AI judge stack as no longer live-candidate
+  quality.
+- Stop framing the next work as small gate/threshold hardening.
+- Rebuild the strategy from a fresh hypothesis.
+- Keep current strategy in paper/observation only unless explicitly requalified.
+
+Detailed decision record:
+
+- [2026-06-23 Strategy Reset Decision](2026-06-23-strategy-reset.md)
+
 ## 2026-06-22 paper session close review and OMS Paper fixes
 
 Production was intentionally kept in `TRADE_MODE=paper`; live trading stayed flat.
