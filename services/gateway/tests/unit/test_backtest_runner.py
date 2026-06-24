@@ -256,3 +256,30 @@ def test_trade_mode_follows_state(  # type: ignore[no-untyped-def]
     )
     [order] = summary.approved
     assert order.trade_mode is TradeMode.PAPER
+
+
+def test_backtest_respects_max_notional_per_order_pct(  # type: ignore[no-untyped-def]
+    unified_signal_factory, kill_switch_state_factory
+) -> None:
+    signal = unified_signal_factory(
+        action=Action.BUY,
+        price=Decimal("1000"),
+        stop_loss_price=Decimal("998"),
+    )
+    cfg = RiskConfig(
+        capital=Decimal("1000000"),
+        max_risk_per_trade_pct=Decimal("0.02"),
+        swing_risk_scale=Decimal("0.5"),
+        default_stop_loss_spread_pct=Decimal("0.02"),
+        min_lot_size=100,
+        max_notional_per_order_pct=Decimal("0.20"),
+    )
+    summary = run_backtest(
+        [signal],
+        state=kill_switch_state_factory(),
+        risk_config=cfg,
+        entry_price=None,
+    )
+
+    [order] = summary.approved
+    assert order.quantity == 200

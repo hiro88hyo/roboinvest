@@ -120,12 +120,13 @@ async def test_run_stream_cmd_returns_2_when_pubsub_unconfigured(
     assert rc == 2
 
 
-async def test_run_stream_cmd_returns_2_when_no_strategies_enabled(
+async def test_run_stream_cmd_allows_no_strategies_enabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("STRATEGIES_ENABLED", "")
     monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
     monkeypatch.setenv("SUPABASE_SECRET_KEY", "k")
     monkeypatch.setenv("PUBSUB_PROJECT_ID", "trade-ai-dev")
-    rc = await _run_stream_cmd(iterations=1)
-    assert rc == 2
+    monkeypatch.setenv("PUBSUB_EMULATOR_HOST", "localhost:8085")
+    rc = await _run_stream_cmd(iterations=0)
+    assert rc == 0

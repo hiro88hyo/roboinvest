@@ -44,6 +44,7 @@ class GatewaySettings(BaseSettings):
     max_risk_per_trade_pct: Decimal = Decimal("0.02")
     swing_risk_scale: Decimal = Decimal("0.5")
     default_stop_loss_spread_pct: Decimal = Decimal("0.02")
+    max_notional_per_order_pct: Decimal | None = None
     paper_buy_limit_offset_ticks: int = 0
     min_lot_size: int = 100
     oms_live_max_qty_per_order: int | None = Field(
@@ -88,6 +89,7 @@ class GatewaySettings(BaseSettings):
         "scanner_gate_max_risk_penalty",
         "scanner_gate_max_volume_surge",
         "scanner_gate_max_momentum",
+        "max_notional_per_order_pct",
         mode="before",
     )
     @classmethod
@@ -106,6 +108,7 @@ class RiskConfig:
     swing_risk_scale: Decimal = Decimal("0.5")
     default_stop_loss_spread_pct: Decimal = Decimal("0.02")
     min_lot_size: int = 100
+    max_notional_per_order_pct: Decimal | None = None
 
     @classmethod
     def from_settings(cls, settings: GatewaySettings) -> RiskConfig:
@@ -115,4 +118,5 @@ class RiskConfig:
             swing_risk_scale=settings.swing_risk_scale,
             default_stop_loss_spread_pct=settings.default_stop_loss_spread_pct,
             min_lot_size=settings.min_lot_size,
+            max_notional_per_order_pct=settings.max_notional_per_order_pct,
         )

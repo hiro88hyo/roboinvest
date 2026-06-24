@@ -94,6 +94,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="資金額。省略時は CAPITAL 環境変数の値を使用。",
     )
+    bt.add_argument(
+        "--max-notional-per-order-pct",
+        dest="max_notional_per_order_pct",
+        type=Decimal,
+        default=None,
+        help="BUY 1注文あたりの最大建玉金額比率。例: 0.20 で capital の20%。",
+    )
 
     st = subparsers.add_parser(
         "stream",
@@ -131,6 +138,7 @@ def _run_backtest_cmd(
     output_rejected: Path | None,
     positions_path: Path | None,
     capital: Decimal | None,
+    max_notional_per_order_pct: Decimal | None,
     buy_limit_offset_ticks: int,
 ) -> int:
     settings = GatewaySettings()
@@ -157,6 +165,16 @@ def _run_backtest_cmd(
             swing_risk_scale=risk_config.swing_risk_scale,
             default_stop_loss_spread_pct=risk_config.default_stop_loss_spread_pct,
             min_lot_size=risk_config.min_lot_size,
+            max_notional_per_order_pct=risk_config.max_notional_per_order_pct,
+        )
+    if max_notional_per_order_pct is not None:
+        risk_config = RiskConfig(
+            capital=risk_config.capital,
+            max_risk_per_trade_pct=risk_config.max_risk_per_trade_pct,
+            swing_risk_scale=risk_config.swing_risk_scale,
+            default_stop_loss_spread_pct=risk_config.default_stop_loss_spread_pct,
+            min_lot_size=risk_config.min_lot_size,
+            max_notional_per_order_pct=max_notional_per_order_pct,
         )
 
     summary = run_backtest(
@@ -254,6 +272,7 @@ def main(argv: list[str] | None = None) -> int:
             output_rejected=args.output_rejected,
             positions_path=args.positions_path,
             capital=args.capital,
+            max_notional_per_order_pct=args.max_notional_per_order_pct,
             buy_limit_offset_ticks=args.buy_limit_offset_ticks,
         )
     if args.command == "stream":

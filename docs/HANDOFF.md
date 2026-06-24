@@ -1,6 +1,6 @@
 # Handoff Memo (for coding AIs)
 
-最終更新: 2026-06-23 / HEAD: `main` (`a662f82`)
+最終更新: 2026-06-24 / branch: `main`
 
 このファイルは、次の coding AI が最初に読むための短い索引です。日次の長い運用ログはここに積まず、必要な詳細だけリンク先で確認してください。
 
@@ -48,6 +48,8 @@
 - [docs/handoff/2026-06-operations-log.md](handoff/2026-06-operations-log.md)
 - [docs/handoff/2026-06-17-paper-hardening-handoff.md](handoff/2026-06-17-paper-hardening-handoff.md)
 - [docs/handoff/2026-06-23-strategy-reset.md](handoff/2026-06-23-strategy-reset.md)
+- [docs/handoff/2026-06-24-relative-momentum-failure.md](handoff/2026-06-24-relative-momentum-failure.md)
+- [docs/adr/0003-strategy-layer-rebuild.md](adr/0003-strategy-layer-rebuild.md)
 
 5月成績レビュー:
 
@@ -68,6 +70,11 @@
 優先度が高い順:
 
 0. **2026-06-23 strategy reset: 既存 intraday strategy は live 候補から外す**
+   - 2026-06-24 に方針転換を ADR 化:
+     [ADR-0003 Strategy Layer Rebuild](adr/0003-strategy-layer-rebuild.md)。
+     現行 intraday BUY stack は閾値調整ではなく戦略層の作り直し対象。
+     次候補は小幅 intraday reversal/momentum ではなく、より値幅のある
+     daily OHLCV / swing 系から検証する。
    - 2026-06-23 paper は BUY 21 / SELL 21、closed 21、勝ち/負け/同値
      `4/16/1`、realized paper PnL `-12,500円`。
    - source 別では RULE `-11,500円`、CONSENSUS `-1,000円`。
@@ -91,6 +98,54 @@
      2026-06-22 net `+5,739.25714235`, 2026-06-23 net `0`。
      ただし 3 日合計 closed trade は 5 件、6/22 / 6/23 no-fill が高いため
      live-ready ではない。次は paper observation candidate として扱う。
+   - 2026-06-24 paper / archive OOS で relative momentum は失格。
+     strict `300 bps` は 6/24 feature 診断で candidates `5`、avg 30m return
+     `-95.399 bps`、positive 30m `0.0%`。実注文 replay も net
+     `-5,713.332`、PF `0`、gate `FAIL`。
+   - production は `STRATEGIES_ENABLED=` に変更し、`strategy-rule` は no-op
+     stream として稼働中。preopen check は `OK 130 / WARN 0 / NG 0 / SKIP 0`。
+   - 2026-06-24 に `vwap_reclaim` と `oversold_reclaim` を一時的な
+     non-default plugin として検証。`oversold_reclaim` は feature-level
+     forward return は momentum 系より良いが、OMS Paper + コスト後は不合格。
+     cleanup 後、失格 plugin code は production strategy registry から削除済み。
+   - Gateway backtest に `--max-notional-per-order-pct` を追加し、tight stop による
+     過大ロットを抑制できるようにした。
+   - `oversold_reclaim` の 30分固定退出診断は target/stop より改善したが、
+     4日合計 net `-802.346` で不合格。主因は no-fill 率の高さ。
+   - 2026-06-24 に `liquid_trend_pullback` 診断と feature-rule grid を追加。
+     6752 型の liquid trend pullback は 6/24 で 3186/8233 など悪い候補を拾い、
+     6752 の実注文も 9:16 高値追いから 9:22 stop で損切りしていた。
+     Scanner は主因ではなく、場中 entry/exit/execution の edge が薄い。
+   - `rsi_vwap_recovery` を一時的な non-default plugin として検証。
+     feature-level 60分 forward return は一見 `+13.64 bps` だったが、
+     OMS Paper + コスト後は 4日合計 net `-3,660.758` で不合格。
+     `+1 tick` BUY crossing も 6/18 / 6/24 で悪化した。
+   - random-entry baseline を追加。Gateway 通過可能な同一 execution/exit 条件で
+     seed 1-3 を回した結果、4日合計 net は `-7,515.128`,
+     `-6,357.903`, `-6,458.052`。`rsi_vwap_recovery` は random より
+     負け幅が小さいが、絶対値でマイナスのため採用不可。
+   - RSI oversold + MACD golden cross 診断を追加。production features には
+     MACD は未追加で、archive から1分足 MACD を計算する研究用。
+     target/stop は4日合計 `-2,084.363` で不合格。15分固定 exit は
+     `+757.574` と初のプラスだが、closed 6件・no-fill 高率で、
+     `+1 tick` BUY crossing では `-1,110.322` に悪化。研究継続可だが
+     paper/live 有効化不可。
+   - 複合指標 grid を追加し、RSI / MACD / VWAP / Bollinger /
+     return-from-open / peer percentile を特徴量レベルで探索。追加 feature day
+     (6/16, 6/17, 6/19) を含めると上位は `RSI<=30` + `15m lookback`
+     + `MACD histogram positive/rising` + `near/above VWAP`。
+     ただし OMS replay では、15分固定 exit passive BUY が5日合計
+     `-896.602`、BUY `+1 tick` が `-3,919.316` で不合格。
+     約定率を上げても PnL が悪化するため、主因は scanner ではなく
+     intraday entry/exit signal の edge 不足。
+   - `scripts/check-replay-report-set.py` を追加し、複数日合計 PnL /
+     closed trade 数 / 勝ち日数 / weighted no-fill / stress replay を
+     明示 gate 化。上記 RSI+MACD histogram 候補は base net `-896.602`,
+     closed `7 < 20`, positive days `2/5 < 3`, weighted no-fill `0.65 > 0.30`,
+     stress net `-3919.316` で `FAIL`。単日 gate CLI も
+     `--max-no-fill-rate` と tick spread 閾値を渡せるよう修正済み。
+   - 明示的な新戦略レビューなしに `relative_momentum` / 旧 RULE BUY を
+     paper/live route に戻さない。
    - 明示的な再評価なしに、現行 RULE BUY / judge BUY を live entry 根拠にしない。
 
 0. **2026-06-17 paper hardening / stop monitor は production 反映済み**

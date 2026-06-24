@@ -28,8 +28,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-drawdown", type=_decimal, default=None)
     parser.add_argument("--min-average-fill-ratio", type=_decimal, default=Decimal("0.95"))
     parser.add_argument("--max-partial-fill-rate", type=_decimal, default=Decimal("0.05"))
+    parser.add_argument("--max-no-fill-rate", type=_decimal, default=Decimal("0.05"))
     parser.add_argument("--max-average-spread-bps", type=_decimal, default=Decimal("30"))
     parser.add_argument("--max-spread-bps", type=_decimal, default=Decimal("100"))
+    parser.add_argument("--max-average-spread-ticks", type=_decimal, default=Decimal("2"))
+    parser.add_argument("--max-spread-ticks", type=_decimal, default=Decimal("5"))
     return parser
 
 
@@ -47,8 +50,11 @@ def main() -> int:
         max_drawdown=args.max_drawdown,
         min_average_fill_ratio=args.min_average_fill_ratio,
         max_partial_fill_rate=args.max_partial_fill_rate,
+        max_no_fill_rate=args.max_no_fill_rate,
         max_average_spread_bps=args.max_average_spread_bps,
         max_spread_bps=args.max_spread_bps,
+        max_average_spread_ticks=args.max_average_spread_ticks,
+        max_spread_ticks=args.max_spread_ticks,
     )
     result = check_backtest_report(payload, config=config, report_path=str(args.report))
     if args.output is not None:

@@ -75,6 +75,13 @@ def calculate(
     # Decimal を int に落とす際は truncate(ROUND_DOWN 相当、保守側)。
     floored_shares = int(raw_qty)
     adjusted = (floored_shares // config.min_lot_size) * config.min_lot_size
+    if config.max_notional_per_order_pct is not None:
+        max_notional = config.capital * config.max_notional_per_order_pct
+        if max_notional <= 0:
+            return RiskCheck(passed=False, reason="invalid_risk_config")
+        notional_cap_shares = int(max_notional / entry_price)
+        notional_cap_adjusted = (notional_cap_shares // config.min_lot_size) * config.min_lot_size
+        adjusted = min(adjusted, notional_cap_adjusted)
     if adjusted < config.min_lot_size:
         return RiskCheck(passed=False, reason="below_min_lot")
 

@@ -169,3 +169,27 @@ def test_custom_min_lot_size(unified_signal_factory) -> None:  # type: ignore[no
     )
     assert result.passed is False
     assert result.reason == "below_min_lot"
+
+
+def test_buy_caps_quantity_by_max_notional_pct(unified_signal_factory) -> None:  # type: ignore[no-untyped-def]
+    signal = unified_signal_factory(action=Action.BUY, stop_loss_price=Decimal("998"))
+    # Risk sizing alone would be 10,000 shares. Notional cap is
+    # 1,000,000 * 0.20 = 200,000, so at 1,000 yen it caps to 200 shares.
+    result = lot_calculator.calculate(
+        signal=signal,
+        entry_price=Decimal("1000"),
+        config=_cfg(max_notional_per_order_pct=Decimal("0.20")),
+    )
+    assert result.passed is True
+    assert result.adjusted_quantity == 200
+
+
+def test_buy_notional_cap_below_one_lot_rejects(unified_signal_factory) -> None:  # type: ignore[no-untyped-def]
+    signal = unified_signal_factory(action=Action.BUY, stop_loss_price=Decimal("998"))
+    result = lot_calculator.calculate(
+        signal=signal,
+        entry_price=Decimal("1000"),
+        config=_cfg(max_notional_per_order_pct=Decimal("0.05")),
+    )
+    assert result.passed is False
+    assert result.reason == "below_min_lot"

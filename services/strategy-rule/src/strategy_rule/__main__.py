@@ -100,12 +100,12 @@ async def _run_stream_cmd(*, iterations: int | None) -> int:
     register_builtin()
     strategies = build_strategies(settings)
     if not strategies:
-        logger.error(
-            "no strategies enabled: strategies_enabled=%s registered=%s",
+        logger.warning(
+            "no strategies enabled; running stream in no-op mode: "
+            "strategies_enabled=%s registered=%s",
             settings.strategies_enabled,
             registered_names(),
         )
-        return 2
 
     if not settings.supabase_url or not settings.supabase_secret_key:
         logger.error("SUPABASE_URL / SUPABASE_SECRET_KEY が未設定です")

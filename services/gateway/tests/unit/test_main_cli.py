@@ -356,6 +356,48 @@ def test_backtest_capital_cli_overrides_env(
     assert order.quantity == 400
 
 
+def test_backtest_max_notional_per_order_cli_caps_quantity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CAPITAL", "1000000")
+    input_path = tmp_path / "unified.jsonl"
+    state_path = tmp_path / "state.json"
+    approved_path = tmp_path / "orders.jsonl"
+
+    _write_signals(
+        input_path,
+        [
+            _signal(
+                symbol="7203",
+                price=Decimal("1000"),
+                stop_loss_price=Decimal("998"),
+            )
+        ],
+    )
+    _write_state(state_path)
+
+    rc = main(
+        [
+            "backtest",
+            "--input",
+            str(input_path),
+            "--state",
+            str(state_path),
+            "--output-approved",
+            str(approved_path),
+            "--max-notional-per-order-pct",
+            "0.20",
+        ]
+    )
+    assert rc == 0
+    [order] = [
+        OrderRequest.model_validate_json(line)
+        for line in approved_path.read_text().splitlines()
+        if line
+    ]
+    assert order.quantity == 200
+
+
 def test_backtest_positions_file_must_be_object(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
