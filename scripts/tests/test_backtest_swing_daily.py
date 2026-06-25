@@ -311,6 +311,87 @@ def test_breakout_entry_signal_rejects_stale_high_and_weak_turnover() -> None:
     assert not swing.is_entry_signal(weak_turnover, params)
 
 
+def test_volatility_contraction_candidate_preregisters_new_entry_family() -> None:
+    params = swing.params_for_candidate(
+        "daily_volatility_contraction_v0",
+        1_000_000.0,
+        200_000_000.0,
+    )
+
+    assert params.entry_mode == "volatility_contraction"
+    assert params.exit_mode == "target_stop_max_hold"
+    assert params.min_return_20d == 0.02
+    assert params.max_return_20d == 0.18
+    assert params.min_return_60d == 0.05
+    assert params.max_prior_range_20d_pct == 0.16
+    assert params.min_prior_range_20d_position == 0.70
+    assert params.min_atr_pct == 0.012
+    assert params.max_atr_pct == 0.045
+    assert params.min_entry_gap_pct == -0.01
+    assert params.max_entry_gap_pct == 0.02
+    assert params.max_new_positions_per_day == 1
+    assert swing.deterministic_selections_for_candidate("daily_volatility_contraction_v0") == (
+        "ranked",
+    )
+
+
+def test_volatility_contraction_entry_signal_accepts_preregistered_setup() -> None:
+    params = swing.params_for_candidate(
+        "daily_volatility_contraction_v0",
+        1_000_000.0,
+        200_000_000.0,
+    )
+    bar = _bar(
+        close=1050.0,
+        sma_short=1000.0,
+        sma_long=940.0,
+        sma_long_past=910.0,
+        atr=30.0,
+        avg_turnover=800_000_000.0,
+        return_20d=0.08,
+        return_60d=0.12,
+        prior_range_20d_pct=0.12,
+        prior_range_20d_position=0.78,
+    )
+
+    assert swing.is_entry_signal(bar, params)
+
+
+def test_volatility_contraction_entry_signal_rejects_wide_or_low_range_position() -> None:
+    params = swing.params_for_candidate(
+        "daily_volatility_contraction_v0",
+        1_000_000.0,
+        200_000_000.0,
+    )
+    wide_range = _bar(
+        close=1050.0,
+        sma_short=1000.0,
+        sma_long=940.0,
+        sma_long_past=910.0,
+        atr=30.0,
+        avg_turnover=800_000_000.0,
+        return_20d=0.08,
+        return_60d=0.12,
+        prior_range_20d_pct=0.20,
+        prior_range_20d_position=0.78,
+    )
+    low_position = _bar(
+        close=1020.0,
+        sma_short=1000.0,
+        sma_long=940.0,
+        sma_long_past=910.0,
+        atr=30.0,
+        avg_turnover=800_000_000.0,
+        return_20d=0.08,
+        return_60d=0.12,
+        prior_range_20d_pct=0.12,
+        prior_range_20d_position=0.55,
+    )
+
+    assert not swing.is_entry_signal(wide_range, params)
+    assert not swing.is_entry_signal(low_position, params)
+
+
 def test_parse_candidate_list_defaults_to_all_research_candidates() -> None:
     assert swing.parse_candidate_list("") == swing.RESEARCH_CANDIDATES
 

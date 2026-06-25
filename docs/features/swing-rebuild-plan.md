@@ -750,6 +750,125 @@ entry alpha の支持材料ではない。
 この候補から v6 / paper / live に進めない。`breakout_continuation_v0` の
 パラメータ探索はここで停止し、継続する場合は別 entry family として事前登録する。
 
+## Pre-registered Entry Family: `daily_volatility_contraction_v0`
+
+`daily_trend_pullback_fixed10_hash_v1_operational` は selector / basket alpha が不足し、
+`daily_breakout_continuation_v0` は entry alpha が負だった。次の候補は、両者の
+微修正ではなく、上昇トレンド内の低ボラ収縮を翌営業日寄りで買う別 entry family
+として事前登録する。
+
+仮説:
+
+```text
+高流動性で中期上昇トレンドにある銘柄が、過去20営業日の値幅を狭く保ちながら
+レンジ上部で引けた場合、明確な新高値 breakout よりも adverse gap / stop が小さく、
+3-10営業日の上方 continuation を持つ可能性がある。
+```
+
+これは押し目接触でも新高値 breakout でもない。signal day 時点で観測済みの
+過去20営業日レンジ、ATR、20d/60d return、SMA trend のみを使う。
+
+事前登録内容:
+
+| Parameter | Value |
+|---|---:|
+| Candidate ID | `daily_volatility_contraction_v0` |
+| Entry family | `volatility_contraction` |
+| SMA short / long | `20 / 60` |
+| SMA long slope lookback | `20` |
+| Min avg turnover | `200,000,000 JPY` |
+| Price range | `300-5,000 JPY` |
+| Min 20d return | `+2%` |
+| Max 20d return | `< +18%` |
+| Min 60d return | `+5%` |
+| Max prior 20d range | `16%` of signal close |
+| Min prior 20d range position | `70%` |
+| Max distance above SMA20 | `10%` |
+| ATR pct range | `1.2%-4.5%` |
+| Entry | next day open |
+| Entry gap | `-1% <= gap < 2%` |
+| Stop / target / max hold | `1.5 ATR / 2.0R / 10 trading days` |
+| Max new positions per day | `1` |
+| Deterministic selector | `ranked` only |
+
+Score は事前固定する。20d/60d return、20dレンジ内の位置、流動性を加点し、
+20dレンジ幅、ATR pct、SMA20 からの乖離を減点する。`score_middle` や
+stable hash はこの candidate の採用判定に使わない。
+
+合格条件:
+
+- v0〜v5 と同じ true walk-forward harness / gate / cost / slippage / OOS block。
+- random baseline は `signal_set_random`, `universe_date_matched_random`,
+  `symbol_matched_random_date` の3種類。
+- `conservative_no_reuse` を主判定とし、stress 条件でも劣化を確認する。
+- train / OOS の両方で安定し、best random OOS を上回るまで paper/live candidate にしない。
+
+この candidate も research-only とする。結果を見てからパラメータを都合よく
+修正した場合は、別 candidate として事前登録し直す。
+
+### `daily_volatility_contraction_v0` Result
+
+`2021-06-25`〜`2026-06-24` の extended walk-forward で、candidate 単独を
+`conservative_no_reuse`、OOS block `60`、random baseline `100 seeds x 3種類`
+として評価した。
+
+| Metric | Value |
+|---|---:|
+| selected OOS trades | `574` |
+| selected OOS net PnL | `-1,483.280` |
+| selected OOS PF | `0.9989` |
+| selected OOS max DD | `194,854.136` |
+| selected train pass | `0/16` |
+| selected OOS pass | `3/16` |
+| random count | `300` |
+| random rank | `125/301` |
+| random percentile | `0.585` |
+| best random OOS net PnL | `+404,143.553` |
+| research gate | `FAIL` |
+| low-frequency block gate | `FAIL` |
+
+Random baseline breakdown:
+
+| Baseline | Selected percentile | Best random net PnL |
+|---|---:|---:|
+| `signal_set_random` | `0.634` | `+370,573.800` |
+| `universe_date_matched_random` | `0.772` | `+372,487.159` |
+| `symbol_matched_random_date` | `0.337` | `+404,143.553` |
+
+Alpha diagnostics:
+
+| Diagnostic | Value |
+|---|---:|
+| candidate count | `32,194` |
+| entry excess 2d vs tradable universe | `+0.1305%` |
+| entry excess 5d vs tradable universe | `+0.2981%` |
+| entry excess 10d vs tradable universe | `+0.5391%` |
+| score fold avg rank IC 5d | `+0.0072` |
+| selected 5d forward avg return | `+0.1237%` |
+| unselected 5d forward avg return | `+0.3089%` |
+| selected 5d excess avg return | `+0.0226%` |
+
+Exit comparison:
+
+| Exit | Net PnL | PF | Max DD |
+|---|---:|---:|---:|
+| `fixed_2d` | `-350,399.500` | `0.7233` | `413,182.232` |
+| `fixed_5d` | `-326,315.439` | `0.8224` | `407,875.094` |
+| `fixed_10d` | `-84,975.572` | `0.9644` | `379,117.846` |
+| `target_stop_max_hold` | `-184,198.224` | `0.9043` | `303,510.957` |
+
+結論:
+
+- Entry set の forward excess は小さくプラスだが、score の rank IC は不安定で
+  selector alpha は弱い。
+- `ranked` selector は unselected pool より 5d forward return が低く、事前登録した
+  score が良い銘柄を選べていない。
+- どの exit 比較でも net PnL / PF / DD が paper/live 水準に届かない。
+- best random に大きく負け、block stability も FAIL したため、
+  `daily_volatility_contraction_v0` は research-only rejected candidate とする。
+- この candidate から v6 / paper / live に進めない。続ける場合は、結果後の
+  パラメータ調整ではなく、別の selector / exit 仮説を事前登録してから評価する。
+
 ## Initial Implementation Scope
 
 最初の PR では production route は変更しない。

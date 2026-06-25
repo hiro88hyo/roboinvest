@@ -28,7 +28,7 @@ SelectionMode = Literal[
     "rank_2_3_first",
     "stable_hash",
 ]
-EntryMode = Literal["trend_pullback", "breakout_continuation"]
+EntryMode = Literal["trend_pullback", "breakout_continuation", "volatility_contraction"]
 ExitMode = Literal["target_stop_max_hold", "fixed_hold"]
 
 CandidateName = Literal[
@@ -42,6 +42,7 @@ CandidateName = Literal[
     "daily_trend_pullback_fixed10_hash_v0",
     "daily_trend_pullback_fixed10_hash_v1_operational",
     "daily_breakout_continuation_v0",
+    "daily_volatility_contraction_v0",
 ]
 BaselineKind = Literal[
     "strategy",
@@ -67,6 +68,7 @@ RESEARCH_CANDIDATES: tuple[CandidateName, ...] = (
     "daily_trend_pullback_fixed10_hash_v0",
     "daily_trend_pullback_fixed10_hash_v1_operational",
     "daily_breakout_continuation_v0",
+    "daily_volatility_contraction_v0",
 )
 DETERMINISTIC_SELECTIONS: tuple[SelectionMode, ...] = (
     "ranked",
@@ -142,6 +144,7 @@ class SwingParams:
     breakout_buffer_pct: float = 0.0
     min_turnover_multiple: float | None = None
     max_prior_range_20d_pct: float | None = None
+    min_prior_range_20d_position: float | None = None
     min_entry_gap_pct: float | None = None
     max_entry_gap_pct: float | None = None
     blocked_market_positive_return_20d_min: float | None = None
@@ -214,6 +217,7 @@ class PreparedBar:
     touched_sma_short_recently: bool
     prior_high_breakout: float | None = None
     prior_range_20d_pct: float | None = None
+    prior_range_20d_position: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -807,6 +811,23 @@ def params_for_candidate(
             max_entry_gap_pct=0.03,
             max_new_positions_per_day=1,
         )
+    if candidate == "daily_volatility_contraction_v0":
+        return SwingParams(
+            entry_mode="volatility_contraction",
+            starting_capital=capital,
+            min_avg_turnover=min_avg_turnover,
+            min_return_20d=0.02,
+            max_return_20d=0.18,
+            min_return_60d=0.05,
+            max_distance_above_sma_short=0.10,
+            max_prior_range_20d_pct=0.16,
+            min_prior_range_20d_position=0.70,
+            min_atr_pct=0.012,
+            max_atr_pct=0.045,
+            min_entry_gap_pct=-0.01,
+            max_entry_gap_pct=0.02,
+            max_new_positions_per_day=1,
+        )
     raise ValueError(f"unknown candidate: {candidate}")
 
 
@@ -820,6 +841,8 @@ def deterministic_selections_for_candidate(
         return HASH_BASKET_SELECTIONS
     if candidate == "daily_trend_pullback_exit_fixed10_v0":
         return FIXED_EXIT_SELECTIONS
+    if candidate == "daily_volatility_contraction_v0":
+        return ("ranked",)
     return DETERMINISTIC_SELECTIONS
 
 
@@ -876,6 +899,7 @@ def prepare_bars(rows: list[OhlcvRow], params: SwingParams) -> dict[str, list[Pr
             return_60d = _return(closes, idx, 60)
             prior_high_breakout = _prior_high(highs, idx, params.breakout_lookback)
             prior_range_20d_pct = _prior_range_pct(highs, lows, closes, idx, 20)
+            prior_range_20d_position = _prior_range_position(highs, lows, row.close, idx, 20)
             touched = _touched_sma_recently(
                 lows=lows,
                 closes=closes,
@@ -905,6 +929,7 @@ def prepare_bars(rows: list[OhlcvRow], params: SwingParams) -> dict[str, list[Pr
                     touched_sma_short_recently=touched,
                     prior_high_breakout=prior_high_breakout,
                     prior_range_20d_pct=prior_range_20d_pct,
+                    prior_range_20d_position=prior_range_20d_position,
                 )
             )
         prepared[symbol] = bars
@@ -1735,6 +1760,8 @@ def _stable_hash_key(candidate: EntryCandidate) -> str:
 def is_entry_signal(bar: PreparedBar, params: SwingParams) -> bool:
     if params.entry_mode == "breakout_continuation":
         return is_breakout_continuation_entry_signal(bar, params)
+    if params.entry_mode == "volatility_contraction":
+        return is_volatility_contraction_entry_signal(bar, params)
     return is_trend_pullback_entry_signal(bar, params)
 
 
@@ -1822,6 +1849,56 @@ def is_breakout_continuation_entry_signal(bar: PreparedBar, params: SwingParams)
         and (
             params.max_prior_range_20d_pct is None
             or bar.prior_range_20d_pct <= params.max_prior_range_20d_pct
+        )
+    )
+
+
+def is_volatility_contraction_entry_signal(bar: PreparedBar, params: SwingParams) -> bool:
+    required = (
+        bar.sma_short,
+        bar.sma_long,
+        bar.sma_long_past,
+        bar.atr,
+        bar.avg_turnover,
+        bar.return_20d,
+        bar.return_60d,
+        bar.prior_range_20d_pct,
+        bar.prior_range_20d_position,
+    )
+    if any(value is None for value in required):
+        return False
+    assert bar.sma_short is not None
+    assert bar.sma_long is not None
+    assert bar.sma_long_past is not None
+    assert bar.atr is not None
+    assert bar.avg_turnover is not None
+    assert bar.return_20d is not None
+    assert bar.return_60d is not None
+    assert bar.prior_range_20d_pct is not None
+    assert bar.prior_range_20d_position is not None
+
+    atr_pct = bar.atr / bar.close
+    distance_above_sma = (bar.close / bar.sma_short) - 1.0
+    return (
+        params.min_price <= bar.close <= params.max_price
+        and bar.avg_turnover >= params.min_avg_turnover
+        and (params.max_avg_turnover is None or bar.avg_turnover < params.max_avg_turnover)
+        and bar.sma_short > bar.sma_long
+        and bar.close > bar.sma_short
+        and bar.close > bar.sma_long
+        and bar.sma_long > bar.sma_long_past
+        and bar.return_20d >= params.min_return_20d
+        and (params.max_return_20d is None or bar.return_20d < params.max_return_20d)
+        and (params.min_return_60d is None or bar.return_60d >= params.min_return_60d)
+        and distance_above_sma <= params.max_distance_above_sma_short
+        and params.min_atr_pct <= atr_pct <= params.max_atr_pct
+        and (
+            params.max_prior_range_20d_pct is None
+            or bar.prior_range_20d_pct <= params.max_prior_range_20d_pct
+        )
+        and (
+            params.min_prior_range_20d_position is None
+            or bar.prior_range_20d_position >= params.min_prior_range_20d_position
         )
     )
 
@@ -3768,6 +3845,8 @@ def _position_size(
 def _entry_score(bar: PreparedBar, params: SwingParams | None = None) -> float:
     if params is not None and params.entry_mode == "breakout_continuation":
         return _breakout_entry_score(bar)
+    if params is not None and params.entry_mode == "volatility_contraction":
+        return _volatility_contraction_entry_score(bar)
     return _trend_pullback_entry_score(bar)
 
 
@@ -3798,6 +3877,28 @@ def _breakout_entry_score(bar: PreparedBar) -> float:
         + bar.return_60d * 0.2
         + min(turnover_multiple, 3.0) * 0.03
         - max(atr_pct - 0.05, 0.0)
+    )
+
+
+def _volatility_contraction_entry_score(bar: PreparedBar) -> float:
+    assert bar.return_20d is not None
+    assert bar.return_60d is not None
+    assert bar.sma_short is not None
+    assert bar.atr is not None
+    assert bar.avg_turnover is not None
+    assert bar.prior_range_20d_pct is not None
+    assert bar.prior_range_20d_position is not None
+    distance_above_sma = max((bar.close / bar.sma_short) - 1.0, 0.0)
+    atr_pct = bar.atr / bar.close
+    turnover_score = min(bar.avg_turnover / 1e9, 2.0)
+    return (
+        bar.return_20d * 0.40
+        + bar.return_60d * 0.20
+        + bar.prior_range_20d_position * 0.10
+        + turnover_score * 0.03
+        - bar.prior_range_20d_pct * 0.60
+        - atr_pct * 0.80
+        - distance_above_sma * 0.50
     )
 
 
@@ -3889,6 +3990,23 @@ def _prior_range_pct(
     if idx < period or closes[idx] <= 0:
         return None
     return (max(highs[idx - period : idx]) - min(lows[idx - period : idx])) / closes[idx]
+
+
+def _prior_range_position(
+    highs: list[float],
+    lows: list[float],
+    close: float,
+    idx: int,
+    period: int,
+) -> float | None:
+    if idx < period:
+        return None
+    prior_high = max(highs[idx - period : idx])
+    prior_low = min(lows[idx - period : idx])
+    prior_range = prior_high - prior_low
+    if prior_range <= 0:
+        return None
+    return (close - prior_low) / prior_range
 
 
 def _touched_sma_recently(
