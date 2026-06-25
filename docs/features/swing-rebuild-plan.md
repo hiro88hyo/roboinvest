@@ -592,6 +592,42 @@ Interpretation:
 - `open_exit_then_entry` でも research gate は FAIL のままなので、
   `daily_trend_pullback_fixed10_hash_v1_operational` は paper/live candidate ではない。
 
+Additional random300 / block length sensitivity:
+
+`open_exit_then_entry`, random seeds `1..300`, random baseline 3種類
+(`900` random runs per block length) で再評価した。
+
+| OOS block | Trades | Net PnL | PF | Max DD | Random rank | Random percentile | Best random net | Research gate | Block stability gate |
+|---:|---:|---:|---:|---:|---:|---:|---:|---|---|
+| `40` | `296` | `+174,718.368` | `1.4046` | `53,095.617` | `50/901` | `0.945` | `+471,816.447` | `FAIL` | `FAIL` |
+| `60` | `324` | `+257,750.440` | `1.5589` | `67,697.220` | `24/901` | `0.973` | `+401,983.858` | `FAIL` | `PASS` |
+| `80` | `342` | `+219,511.597` | `1.4437` | `58,666.535` | `84/901` | `0.907` | `+507,768.493` | `FAIL` | `PASS` |
+| `120` | `362` | `+262,104.272` | `1.5087` | `64,077.569` | `31/901` | `0.966` | `+500,415.676` | `FAIL` | `PASS` |
+
+Result files:
+
+- `out/swing-daily/walk-forward-research-20210625-20260624-fixed10-hash-v1-operational-open-exit-random300.json`
+- `out/swing-daily/walk-forward-research-20210625-20260624-fixed10-hash-v1-operational-open-exit-40d-random300.json`
+- `out/swing-daily/walk-forward-research-20210625-20260624-fixed10-hash-v1-operational-open-exit-80d-random300.json`
+- `out/swing-daily/walk-forward-research-20210625-20260624-fixed10-hash-v1-operational-open-exit-120d-random300.json`
+
+Interpretation:
+
+- 300 seeds でも selected は random 分布の上位に残るが、全 block length で
+  best random net を下回った。
+- `40` trading day block では low-frequency block stability gate も FAIL した。
+- `80` trading day block では selected percentile が `0.907` まで低下し、
+  block 設計に対する感度が大きい。
+- best random は主に `universe_date_matched_random` から出ており、date / universe
+  exposure だけでも selected を上回る basket が多数存在する。
+- したがって `daily_trend_pullback_fixed10_hash_v1_operational` は
+  research-continuation candidate のままだが、paper/live candidate へは昇格しない。
+- `daily_trend_pullback_fixed10_hash_v1_operational` の追加パラメータ探索は一旦停止する。
+  理由は `300 seeds x 3 baseline` と OOS block `40/60/80/120` のすべてで
+  best random net を下回り、selector / basket alpha が不十分だったため。
+- 次に進むなら、この family の微修正ではなく、entry / selector alpha を
+  新しい独立仮説として事前登録してから検証する。
+
 Required gates before any paper route:
 
 1. 数値 gate:
