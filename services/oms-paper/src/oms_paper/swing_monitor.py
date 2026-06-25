@@ -27,6 +27,7 @@ Trailing は **単調増加** のみ (既存 stop を下げない)。
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
 
@@ -36,6 +37,26 @@ from .models import PaperPosition, SwingDecision
 
 _PRICE_QUANT = Decimal("1")
 _HOLD = SwingDecision(action="hold")
+
+
+def find_max_hold_due_swing_positions(
+    *,
+    positions: Iterable[PaperPosition],
+    now: datetime,
+) -> list[PaperPosition]:
+    """Return swing positions whose ``max_hold_days`` has elapsed.
+
+    This is intentionally independent from market data so a future opening
+    exit batch can determine due exits before processing new BUY entries.
+    """
+
+    return [
+        position
+        for position in positions
+        if position.holding_type is TradingStyle.SWING
+        and position.max_hold_days is not None
+        and _is_max_hold_elapsed(position=position, now=now)
+    ]
 
 
 def evaluate_swing_exit(
@@ -59,10 +80,8 @@ def evaluate_swing_exit(
     if position.target_price is not None and latest_price >= position.target_price:
         return SwingDecision(action="exit", reason="target")
 
-    if position.max_hold_days is not None:
-        elapsed_days = (now.date() - position.opened_at.date()).days
-        if elapsed_days >= position.max_hold_days:
-            return SwingDecision(action="exit", reason="max_hold_days")
+    if _is_max_hold_elapsed(position=position, now=now):
+        return SwingDecision(action="exit", reason="max_hold_days")
 
     if position.trailing_stop_pct is not None:
         candidate = (latest_price * (Decimal(1) - position.trailing_stop_pct)).quantize(
@@ -73,3 +92,10 @@ def evaluate_swing_exit(
             return SwingDecision(action="trail", new_stop_loss_price=candidate)
 
     return _HOLD
+
+
+def _is_max_hold_elapsed(*, position: PaperPosition, now: datetime) -> bool:
+    if position.max_hold_days is None:
+        return False
+    elapsed_days = (now.date() - position.opened_at.date()).days
+    return elapsed_days >= position.max_hold_days

@@ -126,6 +126,18 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="14:50 closeout スケジューラを起動しない (テスト・手動 closeout 時)。",
     )
+
+    opening = subparsers.add_parser(
+        "opening-swing-exits",
+        help="paper-only: raw-market-data で板を温め、期限到達 swing を寄り exit する",
+    )
+    opening.add_argument(
+        "--book-warmup-batches",
+        dest="book_warmup_batches",
+        type=int,
+        default=1,
+        help="raw-market-data を pull して板 cache を温める batch 数。0 なら温めない。",
+    )
     return p
 
 
@@ -240,6 +252,64 @@ async def _run_stream_cmd(*, iterations: int | None, no_closeout: bool) -> int:
     return 0
 
 
+async def _run_opening_swing_exits_cmd(*, book_warmup_batches: int) -> int:
+    settings = OmsPaperSettings()
+    configure_logging(service="oms-paper", level=settings.log_level)
+    if book_warmup_batches < 0:
+        logger.error("--book-warmup-batches must be >= 0")
+        return 2
+    if book_warmup_batches > 0 and not settings.pubsub_project_id:
+        logger.error("PUBSUB_PROJECT_ID must be set when book warmup is enabled")
+        return 2
+    if not settings.supabase_url or not settings.supabase_secret_key:
+        logger.error("SUPABASE_URL and SUPABASE_SECRET_KEY must be set")
+        return 2
+
+    run_settings = settings.model_copy(
+        update={"raw_book_drain_max_batches": max(1, book_warmup_batches)}
+    )
+    async with (
+        PubSubSubscriber(
+            project_id=run_settings.pubsub_project_id or "unused",
+            emulator_host=run_settings.pubsub_emulator_host,
+        ) as subscriber,
+        SupabaseClient(
+            url=run_settings.supabase_url,
+            secret_key=run_settings.supabase_secret_key,
+        ) as supabase,
+    ):
+        runner = StreamRunner(
+            subscriber=subscriber,
+            supabase=supabase,
+            settings=run_settings,
+        )
+        if book_warmup_batches > 0:
+            (
+                books_pulled,
+                books_applied,
+                books_acked,
+                updated_symbols,
+            ) = await runner.warm_book_cache()
+            logger.info(
+                "opening swing exits: book warmup pulled=%d applied=%d acked=%d symbols=%d",
+                books_pulled,
+                books_applied,
+                books_acked,
+                len(updated_symbols),
+            )
+        stats = await runner.run_opening_swing_max_hold_exits()
+
+    logger.info(
+        "opening swing exits: positions_seen=%d due=%d closed=%d no_fills=%d write_errors=%d",
+        stats.positions_seen,
+        stats.due_positions,
+        stats.closed,
+        stats.no_fills,
+        stats.write_errors,
+    )
+    return 1 if stats.write_errors else 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "backtest":
@@ -256,6 +326,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "stream":
         return asyncio.run(
             _run_stream_cmd(iterations=args.iterations, no_closeout=args.no_closeout)
+        )
+    if args.command == "opening-swing-exits":
+        return asyncio.run(
+            _run_opening_swing_exits_cmd(book_warmup_batches=args.book_warmup_batches)
         )
     raise SystemExit(f"unknown command: {args.command}")
 

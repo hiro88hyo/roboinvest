@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from oms_paper._testing import make_paper_position
-from oms_paper.swing_monitor import evaluate_swing_exit
+from oms_paper.swing_monitor import evaluate_swing_exit, find_max_hold_due_swing_positions
 from trade_contracts.enums import TradingStyle
 
 
@@ -124,6 +124,41 @@ def test_max_hold_days_not_yet_expired_holds() -> None:
         now=opened + timedelta(days=4),
     )
     assert decision.action == "hold"
+
+
+def test_find_max_hold_due_swing_positions_only_returns_due_swing_positions() -> None:
+    opened = datetime(2026, 4, 25, 9, 0, tzinfo=UTC)
+    due = make_paper_position(
+        symbol="7203",
+        holding_type=TradingStyle.SWING,
+        max_hold_days=5,
+        opened_at=opened,
+    )
+    not_due = make_paper_position(
+        symbol="6758",
+        holding_type=TradingStyle.SWING,
+        max_hold_days=6,
+        opened_at=opened,
+    )
+    no_max_hold = make_paper_position(
+        symbol="9984",
+        holding_type=TradingStyle.SWING,
+        max_hold_days=None,
+        opened_at=opened,
+    )
+    due_day_position = make_paper_position(
+        symbol="8306",
+        holding_type=TradingStyle.DAY,
+        max_hold_days=5,
+        opened_at=opened,
+    )
+
+    due_positions = find_max_hold_due_swing_positions(
+        positions=[not_due, due, no_max_hold, due_day_position],
+        now=opened + timedelta(days=5),
+    )
+
+    assert [position.symbol for position in due_positions] == ["7203"]
 
 
 def test_max_hold_days_only_priority_after_stop_and_target() -> None:

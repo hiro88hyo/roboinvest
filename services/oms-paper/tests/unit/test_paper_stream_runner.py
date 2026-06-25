@@ -949,6 +949,149 @@ async def test_swing_target_hit_triggers_exit() -> None:
     assert stats.swing_exits == 1
 
 
+async def test_swing_max_hold_exit_is_written_before_same_cycle_buy_entry() -> None:
+    exit_book = make_order_book(symbol="7203", bids=(("1005", 500),))
+    entry_book = make_order_book(symbol="6758", asks=(("2000", 500),))
+    buy_order = make_order_request(
+        symbol="6758",
+        side=Side.BUY,
+        quantity=100,
+        stop_loss_price=Decimal("1900"),
+        target_price=Decimal("2200"),
+        max_hold_days=10,
+        created_at=DEFAULT_TS,
+    )
+    stale_swing = _swing_position_row(
+        symbol="7203",
+        quantity=100,
+        entry_price="1000",
+        max_hold_days=10,
+        opened_at="2026-04-10T09:00:00+00:00",
+    )
+    pubsub = _PubSubRouter(
+        book_batches=[
+            _pull_response(
+                [
+                    ("bk-exit", exit_book.model_dump_json().encode("utf-8")),
+                    ("bk-entry", entry_book.model_dump_json().encode("utf-8")),
+                ]
+            )
+        ],
+        order_batches=[_pull_response([("ord-buy", buy_order.model_dump_json().encode("utf-8"))])],
+    )
+    supabase = _SupabaseRouter(
+        list_position_rows=[[stale_swing]],
+        paper_position_rows=[
+            [stale_swing],  # current row for swing exit
+            [],  # no existing 6758 paper position for BUY
+        ],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+
+    assert stats.swing_exits == 1
+    assert stats.filled == 1
+    assert stats.no_fills == 0
+    assert stats.write_errors == 0
+
+    delete_exit_idx = next(
+        idx
+        for idx, request in enumerate(supabase.requests)
+        if request.method == "DELETE"
+        and request.url.path == "/rest/v1/positions"
+        and request.url.params.get("symbol") == "eq.7203"
+    )
+    buy_position_insert_idx = next(
+        idx
+        for idx, request in enumerate(supabase.requests)
+        if request.method == "POST"
+        and request.url.path == "/rest/v1/positions"
+        and json.loads(request.content.decode())[0]["symbol"] == "6758"
+    )
+    assert delete_exit_idx < buy_position_insert_idx
+
+
+async def test_opening_swing_max_hold_exit_batch_closes_due_positions() -> None:
+    due = _swing_position_row(
+        symbol="7203",
+        quantity=100,
+        entry_price="1000",
+        max_hold_days=10,
+        opened_at="2026-04-10T09:00:00+00:00",
+    )
+    not_due = _swing_position_row(
+        symbol="6758",
+        quantity=100,
+        entry_price="2000",
+        max_hold_days=20,
+        opened_at="2026-04-10T09:00:00+00:00",
+    )
+    pubsub = _PubSubRouter()
+    supabase = _SupabaseRouter(
+        list_position_rows=[[not_due, due]],
+        paper_position_rows=[[due]],
+    )
+    book_cache = {
+        "7203": make_order_book(symbol="7203", bids=(("1005", 500),)),
+        "6758": make_order_book(symbol="6758", bids=(("2005", 500),)),
+    }
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_opening_swing_max_hold_exits()
+
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        book_cache=book_cache,
+        run_body=_body,
+    )
+
+    assert stats.positions_seen == 2
+    assert stats.due_positions == 1
+    assert stats.closed == 1
+    assert stats.no_fills == 0
+    assert stats.write_errors == 0
+
+    writes = [request for request in supabase.requests if request.method in {"POST", "DELETE"}]
+    assert [request.url.path for request in writes] == [
+        "/rest/v1/trades_paper",
+        "/rest/v1/positions",
+    ]
+    trade_body = json.loads(writes[0].content.decode())[0]
+    assert trade_body["symbol"] == "7203"
+    assert trade_body["side"] == "SELL"
+    assert trade_body["price"] == "1005"
+    assert writes[1].url.params.get("symbol") == "eq.7203"
+
+
+async def test_opening_swing_max_hold_exit_batch_no_fill_without_cached_bid() -> None:
+    due = _swing_position_row(
+        symbol="7203",
+        quantity=100,
+        entry_price="1000",
+        max_hold_days=10,
+        opened_at="2026-04-10T09:00:00+00:00",
+    )
+    pubsub = _PubSubRouter()
+    supabase = _SupabaseRouter(list_position_rows=[[due]])
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_opening_swing_max_hold_exits()
+
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+
+    assert stats.positions_seen == 1
+    assert stats.due_positions == 1
+    assert stats.closed == 0
+    assert stats.no_fills == 1
+    assert stats.write_errors == 0
+    writes = [request for request in supabase.requests if request.method in {"POST", "DELETE"}]
+    assert writes == []
+
+
 async def test_swing_trail_only_patches_stop_loss() -> None:
     """stop も target も触れない / max_hold 未経過、trail 候補が既存 stop を更新。"""
     book = make_order_book(symbol="7203", bids=(("1100", 500),))

@@ -101,6 +101,514 @@ Position sizing:
 - random entry baseline を同じ保有日数・資金制約で上回る。
 - パラメータ変更後は、変更後のパラメータを事前登録し直してから OOS 評価する。
 
+## Research Freeze Before v6
+
+2026-06-25 時点で `daily_trend_pullback_v0`〜`v5` は paper/live candidate
+ではなく、research-only frozen baseline として扱う。validation slice 上で良く見えた
+selection や filter を、v6 としてそのまま昇格しない。
+
+v6 filter を追加する前に必須の診断:
+
+1. `daily_ohlcv` のローカル履歴を J-Quants の利用可能範囲で最大化する。
+   現行 v2 契約では API 応答上 `2021-06-25` 以降が利用可能。2018〜2021前半は
+   この契約では取得できない。
+2. 同じ gate / cost / slippage / OOS block 設計で、true walk-forward harness を
+   v0〜v5 へ再適用する。
+3. random baseline を `signal_set_random`, `universe_date_matched_random`,
+   `symbol_matched_random_date` の3種類に分ける。
+4. entry alpha / selector alpha / exit alpha を分解する。
+   - 全候補 forward return
+   - selector の selected / unselected 比較
+   - fixed 2d / 5d / 10d exit
+   - target / stop / max_hold exit
+5. `_entry_score` は fold 内 rank IC と tail loss で診断する。
+   validation で見つけた `score_middle` をそのまま採用しない。
+6. market regime を事前定義し、regime 別成績を出す。
+   - `broad_uptrend`
+   - `narrow_leadership`
+   - `transition_chop`
+   - `broad_downtrend`
+7. 約定モデル stress を追加する。
+   - `exit_before_entry_at_open`
+   - `limit_down_unfillable`
+   - `gap_stop_additional_slippage`
+8. v6 は、上記診断で train / OOS の両方に安定して出た仮説だけを
+   事前登録してから実装する。
+
+### 2026-06-25 Extended Walk-forward Result
+
+J-Quants 現行 v2 契約で取得可能な最大範囲として、
+`2021-06-25`〜`2026-06-24` のローカル CSV
+`data/reference/daily_ohlcv_20210625_20260624_bydate.csv` を作成した。
+行数は `5,064,172`、営業日は `1,221`、銘柄数は `4,989`。OHLCV 欠損は 0。
+
+`v0`〜`v5` に true walk-forward research harness を再適用した結果:
+
+| Metric | Value |
+|---|---:|
+| OOS blocks | `16` |
+| selected train pass | `0/16` |
+| selected OOS pass | `1/16` |
+| selected OOS trades | `473` |
+| selected OOS net PnL | `+63,944.906` |
+| selected OOS PF | `1.0367` |
+| selected OOS max DD | `180,086.501` |
+| selected OOS positive month ratio | `0.5208` |
+| best random OOS net PnL | `+189,308.685` |
+| research gate | `FAIL` |
+
+主な gate failure:
+
+- selected OOS PF が `1.2` 未満。
+- selected OOS max DD が資本の 10% を超過。
+- selected train pass が `0/16`。
+- selected OOS pass が `1/16`。
+- selected OOS net PnL が best random OOS を下回った。
+
+Regime 別の selected OOS:
+
+| Regime | Trades | Net PnL | Win rate |
+|---|---:|---:|---:|
+| broad uptrend | `74` | `+54,574.292` | `0.4730` |
+| transition_chop | `293` | `+83,963.528` | `0.4403` |
+| broad downtrend | `76` | `-41,450.995` | `0.3553` |
+| narrow_leadership | `30` | `-33,141.920` | `0.3333` |
+
+Regime 別成績は合計値だけでは安定仮説にならない。block ごとの符号は以下。
+
+| Regime | Blocks with trades | Positive blocks | Negative blocks |
+|---|---:|---:|---:|
+| broad uptrend | `10` | `4` | `6` |
+| transition_chop | `16` | `8` | `8` |
+| broad downtrend | `9` | `4` | `5` |
+| narrow_leadership | `9` | `3` | `6` |
+
+したがって regime filter 単体も v6 へ事前登録しない。
+
+Alpha decomposition:
+
+- 全候補 forward return は平均では小さくプラスだが、selector の上乗せは安定しない。
+- `_entry_score` の fold 内 rank IC は概ね 0 近辺:
+  - `v0`: `-0.0025`
+  - `v1`: `-0.0101`
+  - `v2`: `+0.0066`
+  - `v3`: `+0.0066`
+  - `v4`: `+0.0038`
+  - `v5`: `-0.0041`
+- fixed 10d exit は多くの candidate / selection で target/stop/max_hold より良く見えるが、
+  これは exit 仮説であり、entry/selector alpha の合格根拠ではない。
+- `score_middle` は validation slice 由来の候補として扱い、v6 へそのまま採用しない。
+
+結論: `v0`〜`v5` は research-only frozen baseline のまま維持する。
+この結果から v6 に事前登録できる安定仮説はまだない。特に
+`_entry_score` 由来の selector filter は採用しない。
+
+All-stress execution model でも extended walk-forward を実行した。条件は
+`exit_before_entry_at_open=true`, `limit_down_unfillable=true`,
+`gap_stop_additional_slippage_rate=0.01`。
+
+| Metric | No stress | All stress |
+|---|---:|---:|
+| selected OOS trades | `473` | `563` |
+| selected OOS net PnL | `+63,944.906` | `+10,023.210` |
+| selected OOS PF | `1.0367` | `1.0044` |
+| selected OOS max DD | `180,086.501` | `213,231.772` |
+| selected OOS worst month | `-60,008.305` | `-129,207.396` |
+| selected OOS pass | `1/16` | `3/16` |
+| best random OOS net PnL | `+189,308.685` | `+130,908.680` |
+| research gate | `FAIL` | `FAIL` |
+
+Stress 後も selected OOS は best random OOS を下回り、PF / DD / worst month の
+各 gate を満たさない。約定モデルを厳しくすると edge はほぼ消えるため、
+`v0`〜`v5` から paper/live candidate を復活させない。
+
+## Pre-registered Exit Hypothesis: `daily_trend_pullback_exit_fixed10_v0`
+
+`v0`〜`v5` の alpha decomposition では、entry / selector alpha は不安定だった一方、
+fixed 10d exit は複数 candidate / selection で configured
+target/stop/max_hold より良く見えた。ただしこれは entry filter 仮説ではない。
+そのため v6 filter ではなく、exit 仮説だけを分離した新 candidate として反証する。
+
+事前登録内容:
+
+- Entry family は `daily_trend_pullback_v3` 相当。
+  - `min_entry_gap_pct=0.0`
+  - `max_entry_gap_pct=0.01`
+  - `max_new_positions_per_day=1`
+- Exit は stop / target を使わず、entry から 10 営業日後の終値で固定決済する。
+- Selection は `ranked` と `rank_2_3_first` のみ。
+  `score_middle` は validation 由来の発見として採用しない。
+- 同じ true walk-forward harness / cost / slippage / random baseline / OOS block /
+  execution stress で評価する。
+- 合格条件は v0〜v5 と同じ。best random OOS を上回れない場合は棄却する。
+
+この candidate は paper/live candidate ではない。`v0`〜`v5` で見えた exit
+仮説を独立に falsify するための research-only candidate とする。
+
+### `daily_trend_pullback_exit_fixed10_v0` Result
+
+`2021-06-25`〜`2026-06-24` の extended walk-forward で評価した。
+
+| Metric | No stress | All stress |
+|---|---:|---:|
+| selected OOS trades | `388` | `434` |
+| selected OOS net PnL | `+176,057.509` | `+315,160.166` |
+| selected OOS PF | `1.1151` | `1.1747` |
+| selected OOS max DD | `195,021.993` | `288,351.343` |
+| selected OOS worst month | `-84,679.473` | `-77,735.590` |
+| selected train pass | `0/16` | `0/16` |
+| selected OOS pass | `1/16` | `1/16` |
+| best random OOS net PnL | `+674,082.935` | `+596,534.688` |
+| research gate | `FAIL` | `FAIL` |
+
+Interpretation:
+
+- fixed 10d exit は configured target/stop/max_hold より selected OOS net を改善した。
+- しかし同じ fixed 10d exit を使う random baseline が selected を大きく上回った。
+- stress 後も PF / DD / monthly loss / train pass / random comparison を満たさない。
+- よって、fixed 10d は「exit tailwind」としては残るが、
+  現 entry / selector には採用可能な alpha がない。
+
+追加で、entry forward return を同日 tradable universe 平均に対する excess return として
+分解した。No-stress extended walk-forward の主な結果:
+
+| Candidate | Entry avg 5d | Entry excess 5d | Entry excess 10d |
+|---|---:|---:|---:|
+| `v0` | `+0.2764%` | `+0.2293%` | `+0.4126%` |
+| `v1` | `+0.3222%` | `+0.2727%` | `+0.4631%` |
+| `v2` | `+0.3956%` | `+0.3250%` | `+0.4485%` |
+| `v3` | `+0.3956%` | `+0.3250%` | `+0.4485%` |
+| `v4` | `+0.2845%` | `+0.2223%` | `+0.2604%` |
+| `v5` | `+0.1182%` | `+0.1225%` | `+0.2675%` |
+| `fixed10_v0` | `+0.3956%` | `+0.3250%` | `+0.4485%` |
+
+Selector excess 5d は candidate によって符号が割れる。
+
+| Candidate | Selection | Selected excess 5d | Unselected excess 5d | Delta |
+|---|---|---:|---:|---:|
+| `v0` | `ranked` | `+0.1950%` | `+0.2455%` | `-0.0505%` |
+| `v1` | `ranked` | `+0.1753%` | `+0.3306%` | `-0.1553%` |
+| `v3` | `ranked` | `+0.5181%` | `+0.2927%` | `+0.2254%` |
+| `v3` | `rank_2_3_first` | `+0.3941%` | `+0.3134%` | `+0.0807%` |
+| `v5` | `rank_2_3_first` | `+0.2778%` | `+0.0500%` | `+0.2278%` |
+| `fixed10_v0` | `ranked` | `+0.5181%` | `+0.2927%` | `+0.2254%` |
+| `fixed10_v0` | `rank_2_3_first` | `+0.3941%` | `+0.3134%` | `+0.0807%` |
+
+Entry candidate pool には小さい正の同日 universe excess がある。しかし、
+OOS の selected strategy は best random OOS を大きく下回り、selector excess も
+v0/v1 ではマイナス、v3/fixed10 でも fold / random comparison を通らない。
+したがって、この excess は paper/live に使える selection alpha として扱わない。
+
+追加で `fixed10_v0` の `signal_set_random` を seed `1`〜`20` へ拡張して確認した。
+candidate subset は `daily_trend_pullback_exit_fixed10_v0` のみ、random baseline kind は
+`signal_set_random` のみ。
+
+| Metric | Value |
+|---|---:|
+| random seeds | `20` |
+| net PnL min / median / mean / max | `+40,129.505 / +260,804.272 / +303,499.867 / +674,082.935` |
+| PF min / median / mean / max | `1.0257 / 1.1867 / 1.2253 / 1.5432` |
+| max DD min / median / mean / max | `93,107.794 / 213,511.940 / 213,071.684 / 366,359.312` |
+| worst month min / median / mean / max | `-119,345.705 / -84,621.440 / -82,733.914 / -45,824.817` |
+| gate-like random passes | `0/20` |
+
+この結果は、fixed10 の signal set に平均的な追い風がある可能性を示すが、
+DD と月次損失が大きく、seed 間ばらつきも大きい。特に seed を選べば良く見えるため、
+特定 seed を採用することはしない。次に扱うなら、random selection ではなく
+事前登録した deterministic basket / risk-scaled basket 仮説として反証する。
+
+結論: `daily_trend_pullback_exit_fixed10_v0` も research-only rejected candidate とする。
+次に進むなら、exit ではなく entry family 自体を変える。
+
+## Pre-registered Basket Hypothesis: `daily_trend_pullback_fixed10_hash_v0`
+
+`fixed10_v0` の seed `1`〜`20` 診断では、signal set random の平均損益はプラスだった。
+一方で、特定 seed の採用は後付けになるため禁止する。また DD と worst month は
+gate を大きく超えている。
+
+そこで、random seed を選ばず、銘柄・signal date の固定 hash で候補順を決める
+deterministic basket を research-only candidate として反証する。これは selector alpha
+仮説ではなく、「signal set 平均 edge が risk scaling 後に gate 内へ収まるか」の仮説。
+
+事前登録内容:
+
+| Parameter | Value |
+|---|---:|
+| Entry family | `daily_trend_pullback_v3` 相当 |
+| Exit | fixed 10 trading days close |
+| Selection | `stable_hash` |
+| Hash salt | `fixed10_hash_v0` |
+| Risk per trade | `0.35%` of equity |
+| Max notional per position | `8%` of equity |
+| Max new positions per day | `1` |
+| Max concurrent positions | `5` |
+
+合格条件は v0〜v5 と同じ。特に、同じ risk-scaled signal set random baseline を
+上回れない場合は棄却する。
+
+低頻度戦略用の補助 gate も、既存 `research_gate` とは別に事前登録する。
+これは project kill switch や既存 research gate を置き換えない。
+1 block あたりの trade count が 30 未満になりやすい候補で、block stability を
+分解して見るための research-only gate とする。
+
+`low_frequency_research_gate`:
+
+| Requirement | Value |
+|---|---:|
+| Aggregate OOS gate | `PASS` |
+| Train full-gate pass count | `>= 1/2` of blocks |
+| Positive OOS block ratio | `>= 2/3` |
+| Median OOS block trades | `>= 15` |
+| Worst OOS block net PnL | `>= -50,000` |
+| Random baseline count | `>= 30` |
+| Selected net percentile vs random | `>= 0.75` |
+
+この補助 gate を通っても paper/live candidate にはしない。次に必要なのは、
+同じ事前登録条件で別 stress / 別 OOS 設計に耐えるかの確認。
+
+### `daily_trend_pullback_fixed10_hash_v0` Result
+
+`2021-06-25`〜`2026-06-24` の extended walk-forward で、candidate subset を
+`daily_trend_pullback_fixed10_hash_v0` のみにして評価した。
+
+| Metric | No stress | All stress |
+|---|---:|---:|
+| selected OOS trades | `293` | `324` |
+| selected OOS net PnL | `+109,938.707` | `+257,750.440` |
+| selected OOS PF | `1.2264` | `1.5589` |
+| selected OOS max DD | `98,959.395` | `67,697.220` |
+| selected OOS positive month ratio | `0.5319` | `0.6170` |
+| selected OOS worst month | `-39,709.841` | `-31,447.945` |
+| selected train pass | `8/16` | `10/16` |
+| selected OOS pass | `0/16` | `0/16` |
+| selected positive OOS blocks | `9/16` | `11/16` |
+| selected positive OOS block ratio | `0.562` | `0.688` |
+| selected OOS min block trades | `10` | `13` |
+| selected OOS median block trades | `19.0` | `21.5` |
+| selected OOS worst block net PnL | `-44,779.993` | `-48,757.261` |
+| random baselines | `60` | `60` |
+| selected rank by net vs random | `24/61` | `6/61` |
+| selected net percentile vs random | `0.607` | `0.902` |
+| random gate-like pass count | `19/60` | `30/60` |
+| best random OOS net PnL | `+258,284.201` | `+374,166.996` |
+| research gate | `FAIL` | `FAIL` |
+| low-frequency research gate | `FAIL` | `PASS` |
+
+No-stress は PF / DD / worst month は改善したが、positive month ratio と
+random comparison を満たさない。All-stress は aggregate OOS では PF / DD /
+positive month / worst month を満たし、random20 分布でも net 上位 `6/61` まで
+改善した。しかし best random OOS は `+374,166.996` で、selected の
+`+257,750.440` を上回った。それでも research gate は
+`selected_train_pass_count`、`selected_oos_pass_count`、random comparison で FAIL。
+
+事前登録した `low_frequency_research_gate` では、No-stress は
+`positive_month_ratio`, `positive_block_ratio`, `selected_net_percentile` で FAIL。
+All-stress は PASS。ただしこれは既存 `research_gate` を置き換えるものではなく、
+低頻度候補を次段階の研究対象に残すための補助 gate である。
+
+Execution stress sensitivity:
+
+- `fixed_hold` exit では gap stop / limit-down stress は実質的に効かない。
+- All-stress の改善は `exit_before_entry_at_open=true` による同日入れ替え許可で説明できる。
+- `exit_before_entry_at_open` 単独と all-stress の結果は一致した。
+- したがって all-stress PASS は「厳しい約定 stress に耐えた」という意味ではなく、
+  「同日入れ替えを許す運用仮定では補助 gate を通る」という意味に限定する。
+
+Trade-level delta between no-stress and `exit_before_entry_at_open=true`:
+
+| Metric | Value |
+|---|---:|
+| Common OOS trades | `181` |
+| Added OOS trades | `143` |
+| Removed OOS trades | `112` |
+| Common net PnL | `+122,228.708` |
+| Added net PnL | `+135,521.732` |
+| Removed net PnL | `-12,290.001` |
+| Added PF | `1.7308` |
+| Removed PF | `0.9415` |
+
+改善は単なる trade count 増加ではなく、同日 exit で枠・資金が空くことにより、
+候補選択が入れ替わる効果が大きい。このため、この candidate の次段階評価では
+`exit_before_entry_at_open=true` を運用可能な前提として別途検証する必要がある。
+
+Operational feasibility check:
+
+- `oms-paper` / `oms-live` の streaming runner は、1 `run_once` 内では
+  raw market data を先に取り込み、stop / target / `max_hold_days` exit を評価してから
+  `paper-orders` / `live-orders` を処理する。この局所順序だけを見ると exit 優先に近い。
+  `oms-paper` については、swing `max_hold_days` exit の position delete が同じ cycle の
+  BUY position insert より先に書かれることを unit test で固定した。
+- `oms-paper.swing_monitor.find_max_hold_due_swing_positions` を追加し、market data なしで
+  寄り時点の fixed-hold 期限到達 swing position を抽出できるようにした。
+- `oms-paper` に paper-only の `run_opening_swing_max_hold_exits()` を追加した。
+  これは CLI / scheduler へは未接続で、cached bid がある期限到達 swing position だけを
+  明示的に SELL し、trade insert と position delete を返す検証用 entry point である。
+- 手動 CLI `oms-paper opening-swing-exits` を追加した。デフォルトでは
+  raw-market-data を 1 batch pull して book cache を温めてから
+  `run_opening_swing_max_hold_exits()` を実行する。`--book-warmup-batches 0` なら
+  Pub/Sub warmup なしで実行する。
+- ただし exit 判定は板更新が届いた symbol のみで発火する。日足 fixed 10d exit を
+  寄り前または寄り直後に全対象へ自動発火する scheduler は現時点ではない。
+- Gateway の同日再エントリ禁止は `holding_type=day` の BUY のみで、swing BUY には
+  直接かからない。一方、資金枠は `positions` 由来の capital-in-use を読むため、
+  SELL 約定と position delete が BUY 判定より先に確定している必要がある。
+- よって `exit_before_entry_at_open=true` は現行 stack が保証する自然な挙動ではない。
+  paper-only で検証するには、寄り exit バッチ、SELL 約定確認、positions 更新、
+  その後の BUY signal 発行という順序を明示的に実装・観測する必要がある。
+- この運用仮定が paper で再現できない場合、All-stress の改善は採用根拠から外し、
+  no-stress 側の `low_frequency_research_gate=FAIL` を主判定にする。
+
+OOS block length sensitivity:
+
+`exit_before_entry_at_open=true`、candidate subset は
+`daily_trend_pullback_fixed10_hash_v0`、random baseline は各 block length で
+`10 seeds * 3 kinds` とした。60営業日 block だけは random20 診断も別途実行済み。
+
+| OOS block days | Blocks | Net PnL | PF | Max DD | Positive blocks | Median block trades | Selected rank vs random | Low-frequency gate | Research gate |
+|---:|---:|---:|---:|---:|---:|---:|---:|---|---|
+| `40` | `24` | `+174,718.368` | `1.4046` | `53,095.617` | `14/24` | `13.0` | `2/31` | `FAIL` | `FAIL` |
+| `60` | `16` | `+257,750.440` | `1.5589` | `67,697.220` | `11/16` | `21.5` | `6/61` | `PASS` | `FAIL` |
+| `80` | `12` | `+219,511.597` | `1.4437` | `58,666.535` | `10/12` | `28.5` | `6/31` | `PASS` | `FAIL` |
+| `120` | `8` | `+262,104.272` | `1.5087` | `64,077.569` | `7/8` | `46.5` | `1/31` | `PASS` | `FAIL` |
+
+40営業日 block は aggregate は悪くないが、block が短すぎて median trades が `15`
+未満、positive block ratio も `2/3` 未満になった。60/80/120営業日では
+low-frequency gate を通る。ただし全て既存 research gate は FAIL。
+
+重要な評価基準上の発見:
+
+- 現在の `selected_oos_pass_count` は各 60営業日 block に `check_gate` をそのまま
+  適用している。
+- `check_gate` は `trade_count >= 30` を要求するため、この candidate のように
+  1 block あたり概ね `10`〜`22` trades の低頻度 strategy では、block OOS pass が
+  構造的に 0 になりやすい。
+- これは project kill switch の `OOS PF > 1.2` / `max DD < 10% capital` を
+  弱める話ではない。block stability の測り方として、full gate pass count ではなく
+  positive block ratio、block drawdown、aggregate OOS gate を分けて評価する必要がある。
+
+結論: `daily_trend_pullback_fixed10_hash_v0` はまだ paper/live candidate ではない。
+ただし、ここまでの research-only 候補の中では初めて all-stress aggregate OOS が
+PF / DD / positive month / worst month を満たし、random20 分布の上位に入った。
+次の作業はパラメータ探索ではなく、
+評価 harness の block stability gate を妥当な低頻度用指標へ分解したうえで、
+この candidate を再評価すること。
+
+Required gates before any paper route:
+
+1. 数値 gate:
+   - `exit_before_entry_at_open=true` だけでなく、no-stress / block length 40/60/80/120 /
+     random baseline 3種類で結果を再確認する。
+   - `low_frequency_research_gate` は補助 gate のまま扱い、既存 `research_gate` の FAIL を
+     隠さない。
+2. 運用 gate:
+   - paper-only で寄り exit バッチを作り、SELL 約定確認と `positions` 更新完了後にのみ
+     BUY signal を通す。
+   - 同一営業日の sequence をログで観測し、BUY 時点の `capital_in_use` から exit 済み
+     position が除外されていることを確認する。
+   - この gate が通るまで、All-stress の `low_frequency_research_gate=PASS` は
+     paper/live 採用理由に使わない。
+3. Project kill switch gate:
+   - 最終判定は OOS aggregate の `profit_factor > 1.2` と
+     `max_drawdown < capital * 0.10` を維持する。
+   - 低頻度用の block stability 指標は、この条件を弱める例外ではなく、
+     追加の研究診断として扱う。
+
+## Pre-registered Entry Family: `daily_breakout_continuation_v0`
+
+`v0`〜`v5` と `fixed10_v0` は、いずれも trend pullback family から採用可能な
+paper/live candidate を出せなかった。次は filter 追加ではなく、別の entry family を
+事前登録して同じ harness で反証する。
+
+仮説:
+
+```text
+高流動性で中期上昇トレンドにある銘柄が、過去60日高値を終値で更新し、
+かつ出来高代金の増加を伴う場合、その後 3-10 営業日の continuation を持つ
+可能性がある。
+```
+
+これは押し目回復ではない。新高値 breakout を翌営業日寄りで買う momentum
+continuation 仮説として扱う。
+
+事前登録内容:
+
+| Parameter | Value |
+|---|---:|
+| Entry family | `breakout_continuation` |
+| SMA short / long | `20 / 60` |
+| SMA long slope lookback | `20` |
+| Min avg turnover | `200,000,000 JPY` |
+| Price range | `300-5,000 JPY` |
+| Min 20d return | `+8%` |
+| Max 20d return | `+35%` |
+| Min 60d return | `+10%` |
+| Breakout | close >= prior 60d high |
+| Min turnover multiple | current turnover >= `1.20 * 20d avg turnover` |
+| Max prior 20d range | `28%` of signal close |
+| Max distance above SMA20 | `18%` |
+| ATR pct range | `1.5%-8.0%` |
+| Entry | next day open |
+| Entry gap | `0% <= gap < 3%` |
+| Stop / target / max hold | `1.5 ATR / 2.0R / 10 trading days` |
+| Max new positions per day | `1` |
+
+合格条件:
+
+- v0〜v5 と同じ true walk-forward harness / gate / cost / slippage / OOS block。
+- random baseline は `signal_set_random`, `universe_date_matched_random`,
+  `symbol_matched_random_date` の3種類。
+- stress 条件も同じ。
+- train / OOS の両方で安定し、best random OOS を上回るまで paper/live candidate にしない。
+
+この candidate も research-only とする。結果を見てからパラメータを都合よく
+修正した場合は、別 candidate として事前登録し直す。
+
+### `daily_breakout_continuation_v0` Result
+
+`2021-06-25`〜`2026-06-24` の extended walk-forward に追加した。
+全体の selected strategy は前回と同じく `fixed10_v0` / `v1` / `v3` だけを選び、
+`daily_breakout_continuation_v0` は train selection で一度も選ばれなかった。
+
+全体 selected OOS は変わらず FAIL:
+
+| Metric | Value |
+|---|---:|
+| selected OOS trades | `388` |
+| selected OOS net PnL | `+176,057.509` |
+| selected OOS PF | `1.1151` |
+| selected OOS max DD | `195,021.993` |
+| selected train pass | `0/16` |
+| selected OOS pass | `1/16` |
+| best random OOS net PnL | `+674,082.935` |
+| research gate | `FAIL` |
+
+Breakout の alpha diagnostics:
+
+| Metric | Value |
+|---|---:|
+| candidate count | `2,576` |
+| entry avg 5d return | `-0.2033%` |
+| entry avg 10d return | `-0.2130%` |
+| entry excess 5d vs tradable universe | `-0.1310%` |
+| entry excess 10d vs tradable universe | `-0.0361%` |
+| score fold avg rank IC 5d | `-0.0383` |
+
+Selector / configured exit も全てマイナス:
+
+| Selection | Selected excess 5d | Configured net PnL | PF | Max DD |
+|---|---:|---:|---:|---:|
+| `ranked` | `-0.2517%` | `-281,843.163` | `0.8201` | `390,197.913` |
+| `score_ascending` | `-0.3940%` | `-266,998.372` | `0.8098` | `378,580.245` |
+| `score_middle` | `-0.4665%` | `-289,349.113` | `0.7874` | `414,348.216` |
+| `rank_2_3_first` | `-0.2792%` | `-311,667.548` | `0.7968` | `403,344.349` |
+
+Breakout random baseline では `symbol_matched_random_date` が一部プラスだったが、
+これは breakout entry set 自体より同一銘柄の別日 random のほうが良いという結果であり、
+entry alpha の支持材料ではない。
+
+結論: `daily_breakout_continuation_v0` は research-only rejected candidate とする。
+この候補から v6 / paper / live に進めない。
+
 ## Initial Implementation Scope
 
 最初の PR では production route は変更しない。

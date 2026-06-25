@@ -71,6 +71,29 @@ def _trade(**overrides):
     return swing.Trade(**defaults)
 
 
+def _candidate(**overrides):
+    defaults = {
+        "symbol": "7203",
+        "signal_date": date(2026, 1, 30),
+        "signal_close": 1000.0,
+        "signal_sma_short": 980.0,
+        "signal_atr_pct": 0.03,
+        "signal_return_20d": 0.08,
+        "signal_avg_turnover": 900_000_000.0,
+        "entry_gap_pct": 0.0,
+        "entry_date": date(2026, 1, 31),
+        "entry_price": 1010.0,
+        "stop_price": 965.0,
+        "target_price": 1100.0,
+        "quantity": 100,
+        "score": 0.12,
+        "ranked_position": 1,
+        "candidate_count": 3,
+    }
+    defaults.update(overrides)
+    return swing.EntryCandidate(**defaults)
+
+
 def test_entry_signal_accepts_preregistered_trend_pullback() -> None:
     assert swing.is_entry_signal(_bar(), swing.SwingParams())
 
@@ -147,6 +170,297 @@ def test_v5_candidate_adds_market_return_guard_to_v4() -> None:
     assert v5.blocked_market_positive_return_20d_max == 0.55
 
 
+def test_fixed10_candidate_preregisters_exit_only_hypothesis() -> None:
+    v3 = swing.params_for_candidate("daily_trend_pullback_v3", 1_000_000.0, 200_000_000.0)
+    fixed10 = swing.params_for_candidate(
+        "daily_trend_pullback_exit_fixed10_v0",
+        1_000_000.0,
+        200_000_000.0,
+    )
+
+    assert fixed10.min_entry_gap_pct == v3.min_entry_gap_pct
+    assert fixed10.max_entry_gap_pct == v3.max_entry_gap_pct
+    assert fixed10.max_new_positions_per_day == v3.max_new_positions_per_day
+    assert fixed10.max_hold_days == 10
+    assert fixed10.exit_mode == "fixed_hold"
+    assert swing.deterministic_selections_for_candidate("daily_trend_pullback_exit_fixed10_v0") == (
+        "ranked",
+        "rank_2_3_first",
+    )
+
+
+def test_fixed10_hash_candidate_preregisters_risk_scaled_basket() -> None:
+    fixed10 = swing.params_for_candidate(
+        "daily_trend_pullback_exit_fixed10_v0",
+        1_000_000.0,
+        200_000_000.0,
+    )
+    hashed = swing.params_for_candidate(
+        "daily_trend_pullback_fixed10_hash_v0",
+        1_000_000.0,
+        200_000_000.0,
+    )
+
+    assert hashed.min_entry_gap_pct == fixed10.min_entry_gap_pct
+    assert hashed.max_entry_gap_pct == fixed10.max_entry_gap_pct
+    assert hashed.exit_mode == "fixed_hold"
+    assert hashed.risk_per_trade_pct == 0.0035
+    assert hashed.max_notional_per_position_pct == 0.08
+    assert swing.deterministic_selections_for_candidate("daily_trend_pullback_fixed10_hash_v0") == (
+        "stable_hash",
+    )
+
+
+def test_stable_hash_selection_is_deterministic_and_not_score_ordered() -> None:
+    candidates = [
+        _candidate(symbol="7203", score=0.99),
+        _candidate(symbol="6758", score=0.01),
+        _candidate(symbol="9984", score=0.50),
+    ]
+
+    first = swing.order_candidates(candidates, selection="stable_hash", rng=swing.random.Random(1))
+    second = swing.order_candidates(
+        list(reversed(candidates)),
+        selection="stable_hash",
+        rng=swing.random.Random(99),
+    )
+
+    assert [candidate.symbol for candidate in first] == [candidate.symbol for candidate in second]
+    assert [candidate.symbol for candidate in first] != ["7203", "9984", "6758"]
+
+
+def test_breakout_candidate_preregisters_new_entry_family() -> None:
+    params = swing.params_for_candidate(
+        "daily_breakout_continuation_v0",
+        1_000_000.0,
+        200_000_000.0,
+    )
+
+    assert params.entry_mode == "breakout_continuation"
+    assert params.exit_mode == "target_stop_max_hold"
+    assert params.min_return_20d == 0.08
+    assert params.max_return_20d == 0.35
+    assert params.min_return_60d == 0.10
+    assert params.breakout_lookback == 60
+    assert params.min_turnover_multiple == 1.20
+    assert params.max_prior_range_20d_pct == 0.28
+    assert params.min_entry_gap_pct == 0.0
+    assert params.max_entry_gap_pct == 0.03
+    assert params.max_new_positions_per_day == 1
+
+
+def test_breakout_entry_signal_accepts_preregistered_continuation() -> None:
+    params = swing.params_for_candidate(
+        "daily_breakout_continuation_v0",
+        1_000_000.0,
+        200_000_000.0,
+    )
+    bar = _bar(
+        close=1100.0,
+        high=1110.0,
+        sma_short=1000.0,
+        sma_long=900.0,
+        sma_long_past=850.0,
+        atr=35.0,
+        avg_turnover=800_000_000.0,
+        turnover=1_200_000_000.0,
+        return_20d=0.12,
+        return_60d=0.20,
+        touched_sma_short_recently=False,
+        prior_high_breakout=1090.0,
+        prior_range_20d_pct=0.18,
+    )
+
+    assert swing.is_entry_signal(bar, params)
+
+
+def test_breakout_entry_signal_rejects_stale_high_and_weak_turnover() -> None:
+    params = swing.params_for_candidate(
+        "daily_breakout_continuation_v0",
+        1_000_000.0,
+        200_000_000.0,
+    )
+    stale_high = _bar(
+        close=1080.0,
+        sma_short=1000.0,
+        sma_long=900.0,
+        sma_long_past=850.0,
+        atr=35.0,
+        avg_turnover=800_000_000.0,
+        turnover=1_200_000_000.0,
+        return_20d=0.12,
+        return_60d=0.20,
+        prior_high_breakout=1090.0,
+        prior_range_20d_pct=0.18,
+    )
+    weak_turnover = _bar(
+        close=1100.0,
+        sma_short=1000.0,
+        sma_long=900.0,
+        sma_long_past=850.0,
+        atr=35.0,
+        avg_turnover=800_000_000.0,
+        turnover=850_000_000.0,
+        return_20d=0.12,
+        return_60d=0.20,
+        prior_high_breakout=1090.0,
+        prior_range_20d_pct=0.18,
+    )
+
+    assert not swing.is_entry_signal(stale_high, params)
+    assert not swing.is_entry_signal(weak_turnover, params)
+
+
+def test_parse_candidate_list_defaults_to_all_research_candidates() -> None:
+    assert swing.parse_candidate_list("") == swing.RESEARCH_CANDIDATES
+
+
+def test_parse_candidate_list_accepts_subset() -> None:
+    assert swing.parse_candidate_list(
+        "daily_trend_pullback_exit_fixed10_v0,daily_breakout_continuation_v0"
+    ) == (
+        "daily_trend_pullback_exit_fixed10_v0",
+        "daily_breakout_continuation_v0",
+    )
+
+
+def test_parse_candidate_list_rejects_unknown_candidate() -> None:
+    try:
+        swing.parse_candidate_list("daily_unknown_v0")
+    except ValueError as exc:
+        assert "unknown research candidate" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+
+def test_oos_block_stability_separates_positive_blocks_from_full_gate() -> None:
+    blocks = [
+        {
+            "block": 1,
+            "oos_start": "2026-01-01",
+            "oos_end": "2026-03-31",
+            "selected_oos": {
+                "trade_count": 10,
+                "total_net_pnl": 1000.0,
+                "profit_factor": 1.5,
+                "max_drawdown": 200.0,
+            },
+        },
+        {
+            "block": 2,
+            "oos_start": "2026-04-01",
+            "oos_end": "2026-06-30",
+            "selected_oos": {
+                "trade_count": 12,
+                "total_net_pnl": -500.0,
+                "profit_factor": 0.8,
+                "max_drawdown": 700.0,
+            },
+        },
+    ]
+
+    stability = swing.build_oos_block_stability(blocks)
+
+    assert stability["positive_block_count"] == 1
+    assert stability["positive_block_ratio"] == 0.5
+    assert stability["min_trade_count"] == 10
+    assert stability["median_trade_count"] == 11.0
+    assert stability["worst_block"]["block"] == 2
+
+
+def test_random_comparison_diagnostics_rank_and_gate_like_count() -> None:
+    diagnostics = swing.build_random_comparison_diagnostics(
+        selected_oos_metrics=swing.Metrics(
+            trade_count=40,
+            total_net_pnl=1000.0,
+            win_rate=0.55,
+            profit_factor=1.3,
+            max_drawdown=50_000.0,
+            expectancy=25.0,
+            positive_month_ratio=0.6,
+            worst_month_net_pnl=-10_000.0,
+        ),
+        random_oos_summaries=[
+            {
+                "label": "worse",
+                "oos": {
+                    "trade_count": 40,
+                    "total_net_pnl": 500.0,
+                    "profit_factor": 1.25,
+                    "max_drawdown": 80_000.0,
+                    "positive_month_ratio": 0.6,
+                    "worst_month_net_pnl": -20_000.0,
+                },
+            },
+            {
+                "label": "better_but_risky",
+                "oos": {
+                    "trade_count": 40,
+                    "total_net_pnl": 1500.0,
+                    "profit_factor": 1.4,
+                    "max_drawdown": 120_000.0,
+                    "positive_month_ratio": 0.7,
+                    "worst_month_net_pnl": -20_000.0,
+                },
+            },
+        ],
+        params=swing.SwingParams(starting_capital=1_000_000.0),
+    )
+
+    assert diagnostics["selected_rank_by_net"] == 2
+    assert diagnostics["best_random"]["label"] == "better_but_risky"
+    assert diagnostics["random_gate_like_pass_count"] == 1
+
+
+def test_low_frequency_research_gate_passes_preregistered_supplemental_criteria() -> None:
+    gate = swing.build_low_frequency_research_gate(
+        selected_oos_gate={"status": "PASS", "failures": []},
+        selected_oos_block_stability={
+            "positive_block_ratio": 0.688,
+            "median_trade_count": 21.5,
+            "min_net_pnl": -48_000.0,
+        },
+        random_comparison={
+            "random_count": 60,
+            "selected_net_percentile": 0.902,
+        },
+        selected_train_pass_count=10,
+        block_count=16,
+        params=swing.SwingParams(starting_capital=1_000_000.0),
+    )
+
+    assert gate == {"status": "PASS", "failures": []}
+
+
+def test_low_frequency_research_gate_keeps_aggregate_and_random_failures() -> None:
+    gate = swing.build_low_frequency_research_gate(
+        selected_oos_gate={"status": "FAIL", "failures": ["selected_oos_profit_factor 1 <= 1.2"]},
+        selected_oos_block_stability={
+            "positive_block_ratio": 0.5,
+            "median_trade_count": 12.0,
+            "min_net_pnl": -60_000.0,
+        },
+        random_comparison={
+            "random_count": 20,
+            "selected_net_percentile": 0.6,
+        },
+        selected_train_pass_count=3,
+        block_count=16,
+        params=swing.SwingParams(starting_capital=1_000_000.0),
+    )
+
+    assert gate["status"] == "FAIL"
+    assert gate["failures"] == [
+        "aggregate_selected_oos_profit_factor 1 <= 1.2",
+        "selected_train_pass_count 3 < 8",
+        "positive_block_ratio 0.5 < 0.6667",
+        "median_trade_count 12.0 < 15",
+        "min_block_net_pnl -60000.0 < -50000.000",
+        "random_count 20 < 30",
+        "selected_net_percentile 0.6 < 0.75",
+    ]
+
+
 def test_market_context_guard_blocks_middle_positive_return_breadth() -> None:
     params = swing.params_for_candidate("daily_trend_pullback_v5", 1_000_000.0, 200_000_000.0)
 
@@ -221,6 +535,47 @@ def test_exit_on_bar_uses_stop_before_target_collision() -> None:
     assert trade is not None
     assert trade.exit_reason == "stop"
     assert trade.exit_price == 95.0
+
+
+def test_fixed_hold_exit_ignores_intrahold_stop_and_target() -> None:
+    params = swing.SwingParams(exit_mode="fixed_hold")
+    position = swing.Position(
+        symbol="7203",
+        signal_date=date(2026, 1, 30),
+        signal_close=100.0,
+        signal_sma_short=98.0,
+        signal_atr_pct=0.03,
+        signal_return_20d=0.08,
+        signal_avg_turnover=900_000_000.0,
+        entry_gap_pct=0.0,
+        entry_date=date(2026, 1, 31),
+        entry_price=100.0,
+        stop_price=95.0,
+        target_price=110.0,
+        quantity=100,
+        max_exit_date=date(2026, 2, 10),
+        entry_score=0.12,
+        ranked_position=1,
+        candidate_count=3,
+    )
+
+    assert (
+        swing._exit_on_bar(
+            position,
+            _bar(date=date(2026, 2, 9), high=120.0, low=80.0),
+            params,
+        )
+        is None
+    )
+    trade = swing._exit_on_bar(
+        position,
+        _bar(date=date(2026, 2, 10), high=120.0, low=80.0, close=104.0),
+        params,
+    )
+
+    assert trade is not None
+    assert trade.exit_reason == "fixed_hold"
+    assert trade.exit_price == 104.0
 
 
 def test_gate_rejects_tiny_profitable_sample() -> None:
@@ -446,10 +801,121 @@ def test_parse_date_list() -> None:
     ]
 
 
+def test_parse_baseline_kind_list() -> None:
+    assert swing.parse_baseline_kind_list("signal_set_random, symbol_matched_random_date") == [
+        "signal_set_random",
+        "symbol_matched_random_date",
+    ]
+
+
+def test_classify_market_regime_uses_preregistered_buckets() -> None:
+    assert (
+        swing.classify_market_regime(
+            swing.MarketContext(
+                date=date(2026, 1, 1),
+                close_above_sma20_ratio=0.7,
+                trend_breadth_ratio=0.6,
+                positive_return_5d_ratio=0.6,
+                avg_return_5d=0.01,
+                positive_return_20d_ratio=0.65,
+                avg_return_20d=0.03,
+                positive_return_60d_ratio=0.65,
+                avg_return_60d=0.05,
+            )
+        )
+        == "broad_uptrend"
+    )
+    assert (
+        swing.classify_market_regime(
+            swing.MarketContext(
+                date=date(2026, 1, 1),
+                close_above_sma20_ratio=0.3,
+                trend_breadth_ratio=0.3,
+                positive_return_5d_ratio=0.3,
+                avg_return_5d=-0.01,
+                positive_return_20d_ratio=0.4,
+                avg_return_20d=-0.03,
+                positive_return_60d_ratio=0.35,
+                avg_return_60d=-0.05,
+            )
+        )
+        == "broad_downtrend"
+    )
+    assert (
+        swing.classify_market_regime(
+            swing.MarketContext(
+                date=date(2026, 1, 1),
+                close_above_sma20_ratio=0.5,
+                trend_breadth_ratio=0.4,
+                positive_return_5d_ratio=0.55,
+                avg_return_5d=0.01,
+                positive_return_20d_ratio=0.55,
+                avg_return_20d=0.02,
+                positive_return_60d_ratio=0.5,
+                avg_return_60d=0.03,
+            )
+        )
+        == "narrow_leadership"
+    )
+
+
+def test_gap_stop_stress_adds_slippage_and_limit_down_fill() -> None:
+    params = swing.SwingParams()
+    position = swing.Position(
+        symbol="7203",
+        signal_date=date(2026, 1, 30),
+        signal_close=100.0,
+        signal_sma_short=98.0,
+        signal_atr_pct=0.03,
+        signal_return_20d=0.08,
+        signal_avg_turnover=900_000_000.0,
+        entry_gap_pct=0.0,
+        entry_date=date(2026, 1, 31),
+        entry_price=100.0,
+        stop_price=95.0,
+        target_price=110.0,
+        quantity=100,
+        max_exit_date=date(2026, 2, 10),
+        entry_score=0.12,
+        ranked_position=1,
+        candidate_count=3,
+    )
+
+    slipped = swing._exit_on_bar(
+        position,
+        _bar(open=94.0, high=96.0, low=90.0, close=93.0),
+        params,
+        execution_stress=swing.ExecutionStress(gap_stop_additional_slippage_rate=0.01),
+    )
+    limit_down = swing._exit_on_bar(
+        position,
+        _bar(open=80.0, high=82.0, low=80.0, close=78.0),
+        params,
+        execution_stress=swing.ExecutionStress(limit_down_unfillable=True),
+    )
+
+    assert slipped is not None
+    assert slipped.exit_reason == "gap_stop"
+    assert slipped.exit_price == 93.06
+    assert limit_down is not None
+    assert limit_down.exit_reason == "limit_down_unfillable_gap_stop"
+    assert limit_down.exit_price == 78.0
+
+
 def test_build_selection_comparison_reports_all_selectors() -> None:
     original_simulate = swing.simulate
 
-    def fake_simulate(_prepared, _params, *, selection="ranked", random_seed=1):
+    def fake_simulate(
+        _prepared,
+        _params,
+        *,
+        selection="ranked",
+        random_seed=1,
+        baseline_kind="strategy",
+        execution_stress=None,
+        simulation_context=None,
+        candidate_pools=None,
+    ):
         if selection == "score_middle":
             return [
                 _trade(exit_date=date(2026, 1, 10), net_pnl=-1_000.0),
@@ -503,11 +969,15 @@ def test_build_selection_comparison_reports_all_selectors() -> None:
 
     assert [row["label"] for row in result["selections"]] == [
         "score_middle",
-        "random_seed_2",
+        "signal_set_random:seed_2",
+        "universe_date_matched_random:seed_2",
+        "symbol_matched_random_date:seed_2",
         "ranked",
         "score_ascending",
         "rank_2_3_first",
-        "random_seed_1",
+        "signal_set_random:seed_1",
+        "universe_date_matched_random:seed_1",
+        "symbol_matched_random_date:seed_1",
     ]
     assert result["selections"][0]["gate"]["status"] == "FAIL"
     assert any(
@@ -519,7 +989,17 @@ def test_build_selection_comparison_reports_all_selectors() -> None:
 def test_build_multi_split_selection_comparison_summarizes_splits() -> None:
     original_simulate = swing.simulate
 
-    def fake_simulate(_prepared, _params, *, selection="ranked", random_seed=1):
+    def fake_simulate(
+        _prepared,
+        _params,
+        *,
+        selection="ranked",
+        random_seed=1,
+        baseline_kind="strategy",
+        execution_stress=None,
+        simulation_context=None,
+        candidate_pools=None,
+    ):
         if selection == "score_middle":
             return [
                 _trade(exit_date=date(2025, 12, 10), net_pnl=50_000.0),

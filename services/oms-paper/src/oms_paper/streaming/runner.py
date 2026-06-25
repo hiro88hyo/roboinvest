@@ -45,7 +45,7 @@ from ..day_monitor import evaluate_day_exit
 from ..fill_simulator import simulate_fill
 from ..models import PaperPosition
 from ..position_updater import apply_fill, build_fill_record
-from ..swing_monitor import evaluate_swing_exit
+from ..swing_monitor import evaluate_swing_exit, find_max_hold_due_swing_positions
 
 logger = logging.getLogger(__name__)
 JST = ZoneInfo("Asia/Tokyo")
@@ -81,6 +81,15 @@ class CloseoutStats:
     triggered: bool
     skipped_reason: str | None
     positions_seen: int
+    closed: int
+    no_fills: int
+    write_errors: int
+
+
+@dataclass(frozen=True, slots=True)
+class OpeningSwingExitStats:
+    positions_seen: int
+    due_positions: int
     closed: int
     no_fills: int
     write_errors: int
@@ -221,6 +230,11 @@ class StreamRunner:
         self._record_summary(stats)
         return stats
 
+    async def warm_book_cache(self) -> tuple[int, int, int, set[str]]:
+        """Pull raw-market-data only and update the local book cache."""
+
+        return await self._pull_and_consume_books()
+
     async def _pull_and_consume_books(self) -> tuple[int, int, int, set[str]]:
         """Drain raw book batches before order processing so cache freshness catches up."""
         max_batches = max(1, self.settings.raw_book_drain_max_batches)
@@ -351,6 +365,67 @@ class StreamRunner:
             triggered=True,
             skipped_reason=None,
             positions_seen=len(positions),
+            closed=closed,
+            no_fills=no_fills,
+            write_errors=write_errors,
+        )
+
+    async def run_opening_swing_max_hold_exits(self) -> OpeningSwingExitStats:
+        """Paper-only opening batch for fixed-hold swing exits.
+
+        This method is intentionally not wired to the CLI/scheduler yet. It is
+        the explicit operational gate for the backtest assumption that
+        max-hold swing exits can be written before same-day BUY entries.
+        """
+
+        try:
+            positions = await self.supabase.list_paper_positions()
+        except SupabaseError:
+            logger.exception("opening swing max-hold exit: list positions failed")
+            return OpeningSwingExitStats(
+                positions_seen=0,
+                due_positions=0,
+                closed=0,
+                no_fills=0,
+                write_errors=1,
+            )
+
+        now = self.wall_clock()
+        due_positions = find_max_hold_due_swing_positions(positions=positions, now=now)
+        closed = 0
+        no_fills = 0
+        write_errors = 0
+        for position in due_positions:
+            book = self.book_cache.get(position.symbol)
+            if book is None or not book.bids:
+                logger.warning(
+                    "opening swing max-hold exit no_fill: no bids symbol=%s",
+                    position.symbol,
+                )
+                no_fills += 1
+                continue
+            try:
+                outcome = await self._run_swing_exit(
+                    position=position,
+                    book=book,
+                    reason="opening_max_hold_days",
+                    now=now,
+                )
+            except SupabaseError:
+                logger.exception(
+                    "opening swing max-hold exit write failed: symbol=%s",
+                    position.symbol,
+                )
+                write_errors += 1
+                continue
+            if outcome == "exit":
+                closed += 1
+            else:
+                no_fills += 1
+
+        return OpeningSwingExitStats(
+            positions_seen=len(positions),
+            due_positions=len(due_positions),
             closed=closed,
             no_fills=no_fills,
             write_errors=write_errors,
