@@ -3,7 +3,7 @@
 `positions.holding_type=swing` の paper ポジションに対して、最新価格と現在時刻
 だけを入力に取り、以下のいずれかの処置を返す:
 
-* 成行 SELL で決済 (``stop_loss`` / ``target`` / ``max_hold_days``)
+* 成行 SELL で決済 (``stop_loss`` / ``target`` / ``scheduled_exit_date``)
 * トレーリングストップで ``stop_loss_price`` を切り上げ
 * 何もしない
 
@@ -15,7 +15,7 @@ I/O・時刻取得・板アクセス・Supabase 書込はここでは行わな�
 
 1. ``stop_loss_price`` を下回る → ``exit reason='stop_loss'``
 2. ``target_price`` 以上 → ``exit reason='target'``
-3. ``max_hold_days`` 経過 → ``exit reason='max_hold_days'``
+3. ``scheduled_exit_date`` 到達 → ``exit reason='max_hold_days'``
 4. ``trailing_stop_pct`` 設定下で stop が切り上げ可能 → ``trail``
 5. 上記のいずれにも該当しない → ``hold``
 
@@ -44,7 +44,7 @@ def find_max_hold_due_swing_positions(
     positions: Iterable[PaperPosition],
     now: datetime,
 ) -> list[PaperPosition]:
-    """Return swing positions whose ``max_hold_days`` has elapsed.
+    """Return swing positions whose scheduled max-hold exit date has arrived.
 
     This is intentionally independent from market data so a future opening
     exit batch can determine due exits before processing new BUY entries.
@@ -54,7 +54,6 @@ def find_max_hold_due_swing_positions(
         position
         for position in positions
         if position.holding_type is TradingStyle.SWING
-        and position.max_hold_days is not None
         and _is_max_hold_elapsed(position=position, now=now)
     ]
 
@@ -95,7 +94,6 @@ def evaluate_swing_exit(
 
 
 def _is_max_hold_elapsed(*, position: PaperPosition, now: datetime) -> bool:
-    if position.max_hold_days is None:
+    if position.scheduled_exit_date is None:
         return False
-    elapsed_days = (now.date() - position.opened_at.date()).days
-    return elapsed_days >= position.max_hold_days
+    return now.date() >= position.scheduled_exit_date

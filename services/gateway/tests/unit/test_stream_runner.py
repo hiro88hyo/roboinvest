@@ -991,6 +991,115 @@ async def test_paper_mode_publishes_to_paper_orders(tmp_path: Path) -> None:
     assert archived.symbol == "7203"
 
 
+async def test_paper_swing_buy_rebudgets_after_opening_exit_removed_positions(
+    caplog: Any,
+) -> None:
+    caplog.set_level(logging.INFO)
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response(
+                [
+                    (
+                        "a1",
+                        _unified_payload(
+                            action=Action.BUY,
+                            holding_type=TradingStyle.SWING,
+                            price="2500",
+                            stop_loss_price="2400",
+                        ),
+                    )
+                ]
+            )
+        ]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trade_mode="paper")],
+        positions_quantity_rows=[[]],  # no duplicate symbol after opening exit sequence
+        positions_price_rows=[[]],  # capital_in_use after opening exit: no open paper positions
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        settings=_settings(liquidity_sizing_enabled=False),
+        run_body=_body,
+    )
+
+    assert stats.approved == 1
+    assert stats.rejected == 0
+    body = json.loads(pubsub.published[0].content.decode())
+    order = json.loads(base64.b64decode(body["messages"][0]["data"]).decode("utf-8"))
+    assert order["trade_mode"] == "paper"
+    assert order["quantity"] == 100
+
+    position_reads = [
+        request
+        for request in supabase.requests
+        if request.method == "GET" and request.url.path == "/rest/v1/positions"
+    ]
+    assert [request.url.params.get("select") for request in position_reads] == [
+        "quantity,side",
+        "quantity,current_price,entry_price",
+    ]
+    assert position_reads[1].url.params.get("trade_type") == "eq.paper"
+    sequence_stages = [
+        getattr(record, "stage", None)
+        for record in caplog.records
+        if getattr(record, "event", None) == "opening_swing_exit_sequence"
+    ]
+    assert sequence_stages == ["capital_in_use_recalculated", "buy_order_published"]
+
+
+async def test_paper_swing_buy_rejects_when_opening_exit_position_still_uses_budget(
+    caplog: Any,
+) -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response(
+                [
+                    (
+                        "a1",
+                        _unified_payload(
+                            action=Action.BUY,
+                            holding_type=TradingStyle.SWING,
+                            price="2500",
+                            stop_loss_price="2400",
+                        ),
+                    )
+                ]
+            )
+        ]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trade_mode="paper")],
+        positions_quantity_rows=[[]],
+        positions_price_rows=[[{"quantity": 380, "current_price": "2500", "entry_price": "2500"}]],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    caplog.set_level(logging.INFO, logger="gateway.streaming.runner")
+
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        settings=_settings(liquidity_sizing_enabled=False),
+        run_body=_body,
+    )
+
+    assert stats.approved == 0
+    assert stats.rejected == 1
+    assert pubsub.published == []
+    rejected = [
+        record for record in caplog.records if getattr(record, "event", None) == "signal_rejected"
+    ]
+    assert [record.reason for record in rejected] == ["insufficient_live_budget"]
+
+
 async def test_paper_buy_limit_offset_ticks_applies_to_paper_order(tmp_path: Path) -> None:
     pubsub = _PubSubRouter(
         pull_batches=[

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from oms_paper._testing import make_paper_position
@@ -97,31 +97,30 @@ def test_max_hold_days_exit() -> None:
     pos = make_paper_position(
         holding_type=TradingStyle.SWING,
         max_hold_days=5,
+        scheduled_exit_date=date(2026, 5, 1),
         opened_at=opened,
     )
-    # 5 日後 (== max_hold_days) で経過扱い
     decision = evaluate_swing_exit(
         position=pos,
         latest_price=Decimal("1000"),
-        now=opened + timedelta(days=5),
+        now=datetime(2026, 5, 1, 9, 0, tzinfo=UTC),
     )
     assert decision.action == "exit"
     assert decision.reason == "max_hold_days"
 
 
 def test_max_hold_days_not_yet_expired_holds() -> None:
-    """``.date()`` 同士の差分なので、暦日が境界を越えるかどうかで判定される。"""
     opened = datetime(2026, 4, 25, 9, 0, tzinfo=UTC)
     pos = make_paper_position(
         holding_type=TradingStyle.SWING,
         max_hold_days=5,
+        scheduled_exit_date=date(2026, 5, 1),
         opened_at=opened,
     )
-    # 4 暦日経過 (4-25 → 4-29) は max_hold_days=5 未満
     decision = evaluate_swing_exit(
         position=pos,
         latest_price=Decimal("1000"),
-        now=opened + timedelta(days=4),
+        now=datetime(2026, 4, 30, 15, 0, tzinfo=UTC),
     )
     assert decision.action == "hold"
 
@@ -132,12 +131,14 @@ def test_find_max_hold_due_swing_positions_only_returns_due_swing_positions() ->
         symbol="7203",
         holding_type=TradingStyle.SWING,
         max_hold_days=5,
+        scheduled_exit_date=date(2026, 4, 30),
         opened_at=opened,
     )
     not_due = make_paper_position(
         symbol="6758",
         holding_type=TradingStyle.SWING,
         max_hold_days=6,
+        scheduled_exit_date=date(2026, 5, 1),
         opened_at=opened,
     )
     no_max_hold = make_paper_position(
@@ -150,12 +151,13 @@ def test_find_max_hold_due_swing_positions_only_returns_due_swing_positions() ->
         symbol="8306",
         holding_type=TradingStyle.DAY,
         max_hold_days=5,
+        scheduled_exit_date=date(2026, 4, 30),
         opened_at=opened,
     )
 
     due_positions = find_max_hold_due_swing_positions(
         positions=[not_due, due, no_max_hold, due_day_position],
-        now=opened + timedelta(days=5),
+        now=datetime(2026, 4, 30, 9, 0, tzinfo=UTC),
     )
 
     assert [position.symbol for position in due_positions] == ["7203"]
@@ -167,15 +169,15 @@ def test_max_hold_days_only_priority_after_stop_and_target() -> None:
     pos = make_paper_position(
         holding_type=TradingStyle.SWING,
         max_hold_days=3,
+        scheduled_exit_date=date(2026, 4, 30),
         opened_at=opened,
         stop_loss_price=Decimal("900"),
         target_price=Decimal("1100"),
     )
-    # stop も target も触れない価格、max_hold_days 経過
     decision = evaluate_swing_exit(
         position=pos,
         latest_price=Decimal("1000"),
-        now=opened + timedelta(days=3),
+        now=datetime(2026, 4, 30, 9, 0, tzinfo=UTC),
     )
     assert decision.action == "exit"
     assert decision.reason == "max_hold_days"

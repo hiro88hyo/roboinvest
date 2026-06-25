@@ -383,6 +383,7 @@ def test_random_comparison_diagnostics_rank_and_gate_like_count() -> None:
         random_oos_summaries=[
             {
                 "label": "worse",
+                "baseline_kind": "signal_set_random",
                 "oos": {
                     "trade_count": 40,
                     "total_net_pnl": 500.0,
@@ -394,6 +395,7 @@ def test_random_comparison_diagnostics_rank_and_gate_like_count() -> None:
             },
             {
                 "label": "better_but_risky",
+                "baseline_kind": "signal_set_random",
                 "oos": {
                     "trade_count": 40,
                     "total_net_pnl": 1500.0,
@@ -409,10 +411,11 @@ def test_random_comparison_diagnostics_rank_and_gate_like_count() -> None:
 
     assert diagnostics["selected_rank_by_net"] == 2
     assert diagnostics["best_random"]["label"] == "better_but_risky"
+    assert diagnostics["by_baseline_kind"]["signal_set_random"]["selected_rank_by_net"] == 2
     assert diagnostics["random_gate_like_pass_count"] == 1
 
 
-def test_low_frequency_research_gate_passes_preregistered_supplemental_criteria() -> None:
+def test_low_frequency_research_gate_passes_formal_block_stability_criteria() -> None:
     gate = swing.build_low_frequency_research_gate(
         selected_oos_gate={"status": "PASS", "failures": []},
         selected_oos_block_stability={
@@ -421,7 +424,7 @@ def test_low_frequency_research_gate_passes_preregistered_supplemental_criteria(
             "min_net_pnl": -48_000.0,
         },
         random_comparison={
-            "random_count": 60,
+            "random_count": 100,
             "selected_net_percentile": 0.902,
         },
         selected_train_pass_count=10,
@@ -429,7 +432,12 @@ def test_low_frequency_research_gate_passes_preregistered_supplemental_criteria(
         params=swing.SwingParams(starting_capital=1_000_000.0),
     )
 
-    assert gate == {"status": "PASS", "failures": []}
+    assert gate == {
+        "gate_type": "low_frequency_block_stability",
+        "uses_per_block_full_check_gate": False,
+        "status": "PASS",
+        "failures": [],
+    }
 
 
 def test_low_frequency_research_gate_keeps_aggregate_and_random_failures() -> None:
@@ -456,7 +464,7 @@ def test_low_frequency_research_gate_keeps_aggregate_and_random_failures() -> No
         "positive_block_ratio 0.5 < 0.6667",
         "median_trade_count 12.0 < 15",
         "min_block_net_pnl -60000.0 < -50000.000",
-        "random_count 20 < 30",
+        "random_count 20 < 100",
         "selected_net_percentile 0.6 < 0.75",
     ]
 

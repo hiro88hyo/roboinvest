@@ -730,8 +730,25 @@ class StreamRunner:
             return "no_fill"
 
         await self.supabase.insert_trade_paper(record)
+        logger.info(
+            "opening swing exit sequence: sell fill written symbol=%s qty=%d price=%s reason=%s",
+            record.symbol,
+            record.quantity,
+            record.price,
+            reason,
+            extra=event_extra(
+                "opening_swing_exit_sequence",
+                stage="sell_fill",
+                symbol=record.symbol,
+                quantity=record.quantity,
+                price=str(record.price),
+                reason=reason,
+                executed_at=record.executed_at.isoformat(),
+            ),
+        )
         if update.delete:
             await self.supabase.delete_paper_position(symbol=position.symbol)
+            sequence_stage = "position_delete"
         elif update.position is not None:
             # 部分約定 (paper では稀): 残量を PATCH
             await self.supabase.update_paper_position_quantity(
@@ -739,6 +756,23 @@ class StreamRunner:
                 quantity=update.position.quantity,
                 entry_price=str(update.position.entry_price),
             )
+            sequence_stage = "position_update"
+        else:
+            sequence_stage = "position_unchanged"
+        logger.info(
+            "opening swing exit sequence: position write committed symbol=%s stage=%s reason=%s",
+            position.symbol,
+            sequence_stage,
+            reason,
+            extra=event_extra(
+                "opening_swing_exit_sequence",
+                stage=sequence_stage,
+                symbol=position.symbol,
+                reason=reason,
+                remaining_quantity=None if update.position is None else update.position.quantity,
+                executed_at=now.isoformat(),
+            ),
+        )
         self._sync_position_caches(
             symbol=position.symbol,
             position=update.position,
@@ -1034,6 +1068,7 @@ class StreamRunner:
             stop_loss_price=order.stop_loss_price,
             target_price=order.target_price,
             max_hold_days=order.max_hold_days,
+            scheduled_exit_date=order.scheduled_exit_date,
             trailing_stop_pct=order.trailing_stop_pct,
             executed_at=order.created_at,
         )

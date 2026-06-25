@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Coroutine
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import uuid4
 
@@ -209,6 +209,7 @@ async def test_insert_paper_position_posts_full_row() -> None:
         stop_loss_price=Decimal("950"),
         holding_type=TradingStyle.SWING,
         max_hold_days=5,
+        scheduled_exit_date=date(2026, 5, 1),
         trailing_stop_pct=Decimal("0.03"),
     )
 
@@ -233,6 +234,7 @@ async def test_insert_paper_position_posts_full_row() -> None:
     assert row["target_price"] == "1200"
     assert row["stop_loss_price"] == "950"
     assert row["max_hold_days"] == 5
+    assert row["scheduled_exit_date"] == "2026-05-01"
     assert row["trailing_stop_pct"] == "0.03"
     assert req.headers.get("Prefer") == "return=minimal"
 
@@ -248,7 +250,13 @@ async def test_insert_paper_position_omits_optional_fields() -> None:
     async with _build_client(_handler) as client:
         await client.insert_paper_position(pos)
     row = json.loads(captured[0].content.decode())[0]
-    for key in ("target_price", "stop_loss_price", "max_hold_days", "trailing_stop_pct"):
+    for key in (
+        "target_price",
+        "stop_loss_price",
+        "max_hold_days",
+        "scheduled_exit_date",
+        "trailing_stop_pct",
+    ):
         assert key not in row
 
 

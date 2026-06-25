@@ -13,7 +13,7 @@ contracts に上げず本サービス内に閉じている理由:
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 from uuid import UUID, uuid4
@@ -32,6 +32,7 @@ class PaperPosition(BaseModel):
     target_price: Decimal | None = None
     stop_loss_price: Decimal | None = None
     max_hold_days: int | None = Field(default=None, ge=1)
+    scheduled_exit_date: date | None = None
     trailing_stop_pct: Decimal | None = None
     opened_at: datetime
 

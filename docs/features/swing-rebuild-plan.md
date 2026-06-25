@@ -203,11 +203,12 @@ Alpha decomposition:
 この結果から v6 に事前登録できる安定仮説はまだない。特に
 `_entry_score` 由来の selector filter は採用しない。
 
-All-stress execution model でも extended walk-forward を実行した。条件は
+旧 combined stress execution model でも extended walk-forward を実行した。条件は
 `exit_before_entry_at_open=true`, `limit_down_unfillable=true`,
-`gap_stop_additional_slippage_rate=0.01`。
+`gap_stop_additional_slippage_rate=0.01`。今後この結果名は `all-stress` ではなく、
+`open_exit_then_entry+limit_down_unfillable+gap_stop_additional_slippage` として扱う。
 
-| Metric | No stress | All stress |
+| Metric | conservative_no_reuse | combined execution model |
 |---|---:|---:|
 | selected OOS trades | `473` | `563` |
 | selected OOS net PnL | `+63,944.906` | `+10,023.210` |
@@ -346,12 +347,14 @@ deterministic basket を research-only candidate として反証する。これ�
 合格条件は v0〜v5 と同じ。特に、同じ risk-scaled signal set random baseline を
 上回れない場合は棄却する。
 
-低頻度戦略用の補助 gate も、既存 `research_gate` とは別に事前登録する。
-これは project kill switch や既存 research gate を置き換えない。
+低頻度戦略用の `block_stability_gate` も、既存 `research_gate` とは別に事前登録する。
+これは project kill switch や aggregate OOS gate を置き換えない。
 1 block あたりの trade count が 30 未満になりやすい候補で、block stability を
-分解して見るための research-only gate とする。
+分解して見るための research-only gate とする。block ごとの full `check_gate` は
+低頻度 strategy では trade count 条件で構造的に FAIL しやすいため、正式な
+block stability 判定には使わない。
 
-`low_frequency_research_gate`:
+`low_frequency_research_gate` / `block_stability_gate`:
 
 | Requirement | Value |
 |---|---:|
@@ -360,7 +363,7 @@ deterministic basket を research-only candidate として反証する。これ�
 | Positive OOS block ratio | `>= 2/3` |
 | Median OOS block trades | `>= 15` |
 | Worst OOS block net PnL | `>= -50,000` |
-| Random baseline count | `>= 30` |
+| Random baseline count | `>= 100` |
 | Selected net percentile vs random | `>= 0.75` |
 
 この補助 gate を通っても paper/live candidate にはしない。次に必要なのは、
@@ -371,7 +374,7 @@ deterministic basket を research-only candidate として反証する。これ�
 `2021-06-25`〜`2026-06-24` の extended walk-forward で、candidate subset を
 `daily_trend_pullback_fixed10_hash_v0` のみにして評価した。
 
-| Metric | No stress | All stress |
+| Metric | conservative_no_reuse | open_exit_then_entry |
 |---|---:|---:|
 | selected OOS trades | `293` | `324` |
 | selected OOS net PnL | `+109,938.707` | `+257,750.440` |
@@ -394,8 +397,8 @@ deterministic basket を research-only candidate として反証する。これ�
 | research gate | `FAIL` | `FAIL` |
 | low-frequency research gate | `FAIL` | `PASS` |
 
-No-stress は PF / DD / worst month は改善したが、positive month ratio と
-random comparison を満たさない。All-stress は aggregate OOS では PF / DD /
+`conservative_no_reuse` は PF / DD / worst month は改善したが、positive month ratio と
+random comparison を満たさない。`open_exit_then_entry` は aggregate OOS では PF / DD /
 positive month / worst month を満たし、random20 分布でも net 上位 `6/61` まで
 改善した。しかし best random OOS は `+374,166.996` で、selected の
 `+257,750.440` を上回った。それでも research gate は
@@ -403,16 +406,21 @@ positive month / worst month を満たし、random20 分布でも net 上位 `6/
 
 事前登録した `low_frequency_research_gate` では、No-stress は
 `positive_month_ratio`, `positive_block_ratio`, `selected_net_percentile` で FAIL。
-All-stress は PASS。ただしこれは既存 `research_gate` を置き換えるものではなく、
+`open_exit_then_entry` は当時の暫定 random60 gate では PASS。ただしこれは既存
+`research_gate` を置き換えるものではなく、
 低頻度候補を次段階の研究対象に残すための補助 gate である。
 
 Execution stress sensitivity:
 
 - `fixed_hold` exit では gap stop / limit-down stress は実質的に効かない。
-- All-stress の改善は `exit_before_entry_at_open=true` による同日入れ替え許可で説明できる。
-- `exit_before_entry_at_open` 単独と all-stress の結果は一致した。
-- したがって all-stress PASS は「厳しい約定 stress に耐えた」という意味ではなく、
+- 過去に `All-stress` と呼んだ改善は、`exit_before_entry_at_open=true` による
+  同日入れ替え許可で説明できる。
+- `open_exit_then_entry` 単独と旧 `all-stress` の結果は一致した。
+- したがって旧 `all-stress` PASS は「厳しい約定 stress に耐えた」という意味ではなく、
   「同日入れ替えを許す運用仮定では補助 gate を通る」という意味に限定する。
+- 今後の結果名は以下に分解する:
+  `conservative_no_reuse`, `open_exit_then_entry`, `limit_down_unfillable`,
+  `gap_stop_additional_slippage`。
 
 Trade-level delta between no-stress and `exit_before_entry_at_open=true`:
 
@@ -455,7 +463,7 @@ Operational feasibility check:
 - よって `exit_before_entry_at_open=true` は現行 stack が保証する自然な挙動ではない。
   paper-only で検証するには、寄り exit バッチ、SELL 約定確認、positions 更新、
   その後の BUY signal 発行という順序を明示的に実装・観測する必要がある。
-- この運用仮定が paper で再現できない場合、All-stress の改善は採用根拠から外し、
+- この運用仮定が paper で再現できない場合、`open_exit_then_entry` の改善は採用根拠から外し、
   no-stress 側の `low_frequency_research_gate=FAIL` を主判定にする。
 
 OOS block length sensitivity:
@@ -486,26 +494,122 @@ low-frequency gate を通る。ただし全て既存 research gate は FAIL。
   弱める話ではない。block stability の測り方として、full gate pass count ではなく
   positive block ratio、block drawdown、aggregate OOS gate を分けて評価する必要がある。
 
-結論: `daily_trend_pullback_fixed10_hash_v0` はまだ paper/live candidate ではない。
-ただし、ここまでの research-only 候補の中では初めて all-stress aggregate OOS が
-PF / DD / positive month / worst month を満たし、random20 分布の上位に入った。
+結論: `daily_trend_pullback_fixed10_hash_v0` は paper/live rejected のまま固定する。
+ただし、ここまでの research-only 候補の中では初めて `open_exit_then_entry`
+aggregate OOS が PF / DD / positive month / worst month を満たし、random20 分布の
+上位に入った。
 次の作業はパラメータ探索ではなく、
 評価 harness の block stability gate を妥当な低頻度用指標へ分解したうえで、
-この candidate を再評価すること。
+operational-consistent な continuation candidate として再評価すること。
+
+### Research-continuation Candidate: `daily_trend_pullback_fixed10_hash_v1_operational`
+
+`daily_trend_pullback_fixed10_hash_v1_operational` を research-continuation candidate
+として再登録する。paper/live candidate ではない。
+
+| Parameter | Value |
+|---|---:|
+| Based on | `daily_trend_pullback_fixed10_hash_v0` |
+| Stable hash salt | `fixed10_hash_v0` unchanged |
+| Risk params | unchanged initially |
+| Exit | fixed 10 TSE business sessions |
+| Scheduled exit | `scheduled_exit_date = entry_date + 10 TSE business sessions` |
+| `open_exit_then_entry` exit price | open/bid/slippage |
+| `close_exit` capital rule | same-day BUY cannot reuse capital from same-day close exits |
+
+この v1 は、旧 `all-stress` の良化を「厳しい stress 耐性」として扱わず、
+`open_exit_then_entry` が paper で観測可能な運用順序かどうかを分離して検証するための
+継続研究対象である。
+
+### `daily_trend_pullback_fixed10_hash_v1_operational` Result
+
+`open_exit_then_entry`, OOS block 60 trading sessions, random seeds `1..100`,
+random baseline 3種類で再評価した。結果ファイル:
+`out/swing-daily/walk-forward-research-20210625-20260624-fixed10-hash-v1-operational-open-exit-random100-capital-sensitivity.json`。
+
+| Metric | Value |
+|---|---:|
+| selected OOS trades | `324` |
+| selected OOS net PnL | `+257,750.440` |
+| selected OOS PF | `1.5589` |
+| selected OOS max DD | `67,697.220` |
+| selected OOS positive month ratio | `0.6170` |
+| selected OOS worst month | `-31,447.945` |
+| selected train pass | `10/16` |
+| selected OOS pass | `0/16` |
+| random baselines | `300` |
+| selected rank by net vs random | `13/301` |
+| selected net percentile vs random | `0.957` |
+| research gate | `FAIL` |
+| low-frequency block stability gate | `PASS` |
+
+Random baseline kind breakdown:
+
+| Baseline kind | Runs | Selected rank | Percentile | Best random net | Gate-like random passes |
+|---|---:|---:|---:|---:|---:|
+| `signal_set_random` | `100` | `8/101` | `0.921` | `+312,989.756` | `67` |
+| `universe_date_matched_random` | `100` | `3/101` | `0.970` | `+374,166.996` | `19` |
+| `symbol_matched_random_date` | `100` | `4/101` | `0.960` | `+303,738.959` | `44` |
+
+Capital sensitivity:
+
+| Capital | Trades | Net PnL | PF | Max DD | Random percentile | Block stability gate |
+|---:|---:|---:|---:|---:|---:|---|
+| `1,000,000` | `324` | `+257,750.440` | `1.5589` | `67,697.220` | `0.957` | `PASS` |
+| `2,000,000` | `377` | `+518,048.033` | `1.4876` | `210,660.526` | `0.963` | `FAIL` |
+| `5,000,000` | `394` | `+754,284.021` | `1.2770` | `427,441.676` | `0.831` | `FAIL` |
+
+Execution model decomposition:
+
+| Execution model | Trades | Net PnL | PF | Max DD | Positive month | Worst month | Random rank | Random percentile | Research gate | Block stability gate |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---|
+| `conservative_no_reuse` | `293` | `+109,938.707` | `1.2264` | `98,959.395` | `0.5319` | `-39,709.841` | `110/301` | `0.635` | `FAIL` | `FAIL` |
+| `limit_down_unfillable` | `293` | `+109,938.707` | `1.2264` | `98,959.395` | `0.5319` | `-39,709.841` | `110/301` | `0.635` | `FAIL` | `FAIL` |
+| `gap_stop_additional_slippage` | `293` | `+109,938.707` | `1.2264` | `98,959.395` | `0.5319` | `-39,709.841` | `110/301` | `0.635` | `FAIL` | `FAIL` |
+| `open_exit_then_entry` | `324` | `+257,750.440` | `1.5589` | `67,697.220` | `0.6170` | `-31,447.945` | `13/301` | `0.957` | `FAIL` | `PASS` |
+
+Result files:
+
+- `out/swing-daily/walk-forward-research-20210625-20260624-fixed10-hash-v1-operational-conservative-random100.json`
+- `out/swing-daily/walk-forward-research-20210625-20260624-fixed10-hash-v1-operational-limit-down-random100.json`
+- `out/swing-daily/walk-forward-research-20210625-20260624-fixed10-hash-v1-operational-gap-stop-slippage-random100.json`
+- `out/swing-daily/walk-forward-research-20210625-20260624-fixed10-hash-v1-operational-open-exit-random100-capital-sensitivity.json`
+
+Interpretation:
+
+- 1M では formal low-frequency block stability gate を通ったが、既存 `research_gate` は
+  train pass / per-block OOS pass / best random comparison で FAIL のまま。
+- 2M / 5M は 100株単元と max_notional cap の影響で trade count と PnL は増えるが、
+  drawdown と worst block が悪化し、block stability gate を通らない。
+- `universe_date_matched_random` の best random が selected を上回るため、
+  selector / basket alpha はまだ paper/live 根拠として不十分。
+- `limit_down_unfillable` と `gap_stop_additional_slippage` は fixed-hold exit では
+  結果を悪化させていないが、これは stop/target に依存しない exit 設計のためであり、
+  厳しい約定 stress への一般的な耐性とは解釈しない。
+- 数字の大きな改善は `open_exit_then_entry` の資金再利用順序に集中している。
+  したがって paper-only sequence log で SELL fill / position delete-update /
+  capital recalculation / BUY publish の順序を観測できることが前提になる。
+- `open_exit_then_entry` でも research gate は FAIL のままなので、
+  `daily_trend_pullback_fixed10_hash_v1_operational` は paper/live candidate ではない。
 
 Required gates before any paper route:
 
 1. 数値 gate:
    - `exit_before_entry_at_open=true` だけでなく、no-stress / block length 40/60/80/120 /
      random baseline 3種類で結果を再確認する。
-   - `low_frequency_research_gate` は補助 gate のまま扱い、既存 `research_gate` の FAIL を
-     隠さない。
+   - random baseline は `signal_set_random`, `universe_date_matched_random`,
+     `symbol_matched_random_date` の各 100〜300 seeds へ増やし、percentile を出す。
+   - `low_frequency_research_gate` は formal block stability gate として扱うが、
+     aggregate OOS gate と既存 `research_gate` の FAIL を隠さない。
+   - 1M / 2M / 5M capital sensitivity を出し、100株単元と max_notional cap の影響を確認する。
 2. 運用 gate:
    - paper-only で寄り exit バッチを作り、SELL 約定確認と `positions` 更新完了後にのみ
      BUY signal を通す。
    - 同一営業日の sequence をログで観測し、BUY 時点の `capital_in_use` から exit 済み
      position が除外されていることを確認する。
-   - この gate が通るまで、All-stress の `low_frequency_research_gate=PASS` は
+   - 手順は [`swing-paper-opening-exit-gate`](../runbook/swing-paper-opening-exit-gate.md)
+     に固定する。
+   - この gate が通るまで、`open_exit_then_entry` の `low_frequency_research_gate=PASS` は
      paper/live 採用理由に使わない。
 3. Project kill switch gate:
    - 最終判定は OOS aggregate の `profit_factor > 1.2` と
@@ -607,7 +711,8 @@ Breakout random baseline では `symbol_matched_random_date` が一部プラス�
 entry alpha の支持材料ではない。
 
 結論: `daily_breakout_continuation_v0` は research-only rejected candidate とする。
-この候補から v6 / paper / live に進めない。
+この候補から v6 / paper / live に進めない。`breakout_continuation_v0` の
+パラメータ探索はここで停止し、継続する場合は別 entry family として事前登録する。
 
 ## Initial Implementation Scope
 

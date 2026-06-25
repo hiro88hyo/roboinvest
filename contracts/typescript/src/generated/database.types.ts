@@ -176,6 +176,7 @@ export type Database = {
           max_hold_days: number | null
           opened_at: string
           quantity: number
+          scheduled_exit_date: string | null
           side: string
           stop_loss_price: number | null
           symbol: string
@@ -191,6 +192,7 @@ export type Database = {
           max_hold_days?: number | null
           opened_at?: string
           quantity: number
+          scheduled_exit_date?: string | null
           side: string
           stop_loss_price?: number | null
           symbol: string
@@ -206,6 +208,7 @@ export type Database = {
           max_hold_days?: number | null
           opened_at?: string
           quantity?: number
+          scheduled_exit_date?: string | null
           side?: string
           stop_loss_price?: number | null
           symbol?: string
@@ -538,4 +541,3 @@ export const Constants = {
     Enums: {},
   },
 } as const
-

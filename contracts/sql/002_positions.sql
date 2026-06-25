@@ -11,6 +11,7 @@ create table if not exists positions (
     target_price numeric,
     stop_loss_price numeric,
     max_hold_days int,
+    scheduled_exit_date date,
     trailing_stop_pct numeric,
     opened_at timestamptz not null default now(),
     primary key (symbol, trade_type)

@@ -157,6 +157,7 @@ def _position_row(**overrides: Any) -> dict[str, Any]:
         "target_price": None,
         "stop_loss_price": None,
         "max_hold_days": None,
+        "scheduled_exit_date": None,
         "trailing_stop_pct": None,
         "opened_at": "2026-04-25T09:00:00+00:00",
     }
@@ -260,6 +261,7 @@ async def test_book_pulled_first_then_order_fills() -> None:
     assert pos_body["target_price"] == "1100"
     assert pos_body["trailing_stop_pct"] == "0.02"
     assert pos_body["max_hold_days"] == 5
+    assert pos_body["scheduled_exit_date"] == "2026-05-07"
 
 
 async def test_day_stop_loss_breach_triggers_exit() -> None:
@@ -966,6 +968,7 @@ async def test_swing_max_hold_exit_is_written_before_same_cycle_buy_entry() -> N
         quantity=100,
         entry_price="1000",
         max_hold_days=10,
+        scheduled_exit_date="2026-04-25",
         opened_at="2026-04-10T09:00:00+00:00",
     )
     pubsub = _PubSubRouter(
@@ -1014,12 +1017,14 @@ async def test_swing_max_hold_exit_is_written_before_same_cycle_buy_entry() -> N
     assert delete_exit_idx < buy_position_insert_idx
 
 
-async def test_opening_swing_max_hold_exit_batch_closes_due_positions() -> None:
+async def test_opening_swing_max_hold_exit_batch_closes_due_positions(caplog: Any) -> None:
+    caplog.set_level(logging.INFO)
     due = _swing_position_row(
         symbol="7203",
         quantity=100,
         entry_price="1000",
         max_hold_days=10,
+        scheduled_exit_date="2026-04-25",
         opened_at="2026-04-10T09:00:00+00:00",
     )
     not_due = _swing_position_row(
@@ -1027,6 +1032,7 @@ async def test_opening_swing_max_hold_exit_batch_closes_due_positions() -> None:
         quantity=100,
         entry_price="2000",
         max_hold_days=20,
+        scheduled_exit_date="2026-05-15",
         opened_at="2026-04-10T09:00:00+00:00",
     )
     pubsub = _PubSubRouter()
@@ -1065,6 +1071,12 @@ async def test_opening_swing_max_hold_exit_batch_closes_due_positions() -> None:
     assert trade_body["side"] == "SELL"
     assert trade_body["price"] == "1005"
     assert writes[1].url.params.get("symbol") == "eq.7203"
+    sequence_stages = [
+        getattr(record, "stage", None)
+        for record in caplog.records
+        if getattr(record, "event", None) == "opening_swing_exit_sequence"
+    ]
+    assert sequence_stages == ["sell_fill", "position_delete"]
 
 
 async def test_opening_swing_max_hold_exit_batch_no_fill_without_cached_bid() -> None:
@@ -1073,6 +1085,7 @@ async def test_opening_swing_max_hold_exit_batch_no_fill_without_cached_bid() ->
         quantity=100,
         entry_price="1000",
         max_hold_days=10,
+        scheduled_exit_date="2026-04-25",
         opened_at="2026-04-10T09:00:00+00:00",
     )
     pubsub = _PubSubRouter()

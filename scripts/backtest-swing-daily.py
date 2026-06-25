@@ -40,6 +40,7 @@ CandidateName = Literal[
     "daily_trend_pullback_v5",
     "daily_trend_pullback_exit_fixed10_v0",
     "daily_trend_pullback_fixed10_hash_v0",
+    "daily_trend_pullback_fixed10_hash_v1_operational",
     "daily_breakout_continuation_v0",
 ]
 BaselineKind = Literal[
@@ -64,6 +65,7 @@ RESEARCH_CANDIDATES: tuple[CandidateName, ...] = (
     "daily_trend_pullback_v5",
     "daily_trend_pullback_exit_fixed10_v0",
     "daily_trend_pullback_fixed10_hash_v0",
+    "daily_trend_pullback_fixed10_hash_v1_operational",
     "daily_breakout_continuation_v0",
 )
 DETERMINISTIC_SELECTIONS: tuple[SelectionMode, ...] = (
@@ -164,6 +166,31 @@ class ExecutionStress:
     limit_down_unfillable: bool = False
     limit_down_threshold_pct: float = 0.15
     gap_stop_additional_slippage_rate: float = 0.0
+
+
+def execution_model_name(stress: ExecutionStress) -> str:
+    enabled = [
+        stress.exit_before_entry_at_open,
+        stress.limit_down_unfillable,
+        stress.gap_stop_additional_slippage_rate > 0,
+    ]
+    if not any(enabled):
+        return "conservative_no_reuse"
+    if stress.exit_before_entry_at_open and not any(enabled[1:]):
+        return "open_exit_then_entry"
+    if stress.limit_down_unfillable and not stress.exit_before_entry_at_open and not enabled[2]:
+        return "limit_down_unfillable"
+    if enabled[2] and not stress.exit_before_entry_at_open and not stress.limit_down_unfillable:
+        return "gap_stop_additional_slippage"
+    return "+".join(
+        name
+        for active, name in (
+            (stress.exit_before_entry_at_open, "open_exit_then_entry"),
+            (stress.limit_down_unfillable, "limit_down_unfillable"),
+            (stress.gap_stop_additional_slippage_rate > 0, "gap_stop_additional_slippage"),
+        )
+        if active
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -373,6 +400,26 @@ def main() -> int:
             fold_count=args.walk_forward_folds,
             execution_stress=execution_stress_from_args(args),
         )
+        sensitivity_capitals = parse_float_list(args.capital_sensitivity)
+        if sensitivity_capitals:
+            result["capital_sensitivity"] = [
+                summarize_walk_forward_for_capital(
+                    build_walk_forward_research(
+                        rows=rows,
+                        input_path=args.input,
+                        capital=capital,
+                        min_avg_turnover=args.min_avg_turnover,
+                        min_train_days=args.min_train_days,
+                        oos_block_days=args.oos_block_days,
+                        random_seeds=parse_seed_list(args.random_baseline_seeds),
+                        random_baseline_kinds=parse_baseline_kind_list(args.random_baseline_kinds),
+                        candidates=parse_candidate_list(args.research_candidates),
+                        fold_count=args.walk_forward_folds,
+                        execution_stress=execution_stress_from_args(args),
+                    )
+                )
+                for capital in sensitivity_capitals
+            ]
         if args.output_summary is not None:
             args.output_summary.parent.mkdir(parents=True, exist_ok=True)
             args.output_summary.write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n")
@@ -393,6 +440,16 @@ def main() -> int:
             f"selected_oos_pass={result['selected_oos_pass_count']}/"
             f"{result['block_count']}"
         )
+        for row in result.get("capital_sensitivity", []):
+            print(
+                "capital_sensitivity: "
+                f"capital={row['capital']} "
+                f"net={row['total_net_pnl']} "
+                f"pf={row['profit_factor']} "
+                f"max_dd={row['max_drawdown']} "
+                f"percentile={row['selected_net_percentile']} "
+                f"low_freq_gate={row['low_frequency_research_gate']}"
+            )
         return 0
 
     params = params_for_candidate(args.candidate, args.capital, args.min_avg_turnover)
@@ -447,12 +504,13 @@ def main() -> int:
             )
         return 0
 
+    execution_stress = execution_stress_from_args(args)
     trades = simulate(
         prepared,
         params,
         selection=args.selection,
         random_seed=args.random_seed,
-        execution_stress=execution_stress_from_args(args),
+        execution_stress=execution_stress,
     )
     train_trades = [trade for trade in trades if trade.exit_date < validation_start]
     validation_trades = [trade for trade in trades if trade.exit_date >= validation_start]
@@ -476,6 +534,8 @@ def main() -> int:
         random_baselines=random_baselines,
         fold_count=args.walk_forward_folds,
     )
+    result["execution_model"] = execution_model_name(execution_stress)
+    result["execution_stress"] = asdict(execution_stress)
     result["alpha_diagnostics"] = build_alpha_diagnostics(
         prepared=prepared,
         params=params,
@@ -525,6 +585,7 @@ def build_parser() -> argparse.ArgumentParser:
             "daily_trend_pullback_v5",
             "daily_trend_pullback_exit_fixed10_v0",
             "daily_trend_pullback_fixed10_hash_v0",
+            "daily_trend_pullback_fixed10_hash_v1_operational",
             "daily_breakout_continuation_v0",
         ),
         default="daily_trend_pullback_v0",
@@ -547,6 +608,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="First validation exit date. Defaults to the last 30%% of trading dates.",
     )
     parser.add_argument("--capital", type=float, default=1_000_000.0)
+    parser.add_argument(
+        "--capital-sensitivity",
+        default="",
+        help=(
+            "Comma-separated capital values for walk-forward research sensitivity, "
+            "for example 1000000,2000000,5000000."
+        ),
+    )
     parser.add_argument("--min-avg-turnover", type=float, default=200_000_000.0)
     parser.add_argument(
         "--selection",
@@ -706,7 +775,10 @@ def params_for_candidate(
             max_hold_days=10,
             exit_mode="fixed_hold",
         )
-    if candidate == "daily_trend_pullback_fixed10_hash_v0":
+    if candidate in (
+        "daily_trend_pullback_fixed10_hash_v0",
+        "daily_trend_pullback_fixed10_hash_v1_operational",
+    ):
         return SwingParams(
             starting_capital=capital,
             min_avg_turnover=min_avg_turnover,
@@ -741,7 +813,10 @@ def params_for_candidate(
 def deterministic_selections_for_candidate(
     candidate: CandidateName,
 ) -> tuple[SelectionMode, ...]:
-    if candidate == "daily_trend_pullback_fixed10_hash_v0":
+    if candidate in (
+        "daily_trend_pullback_fixed10_hash_v0",
+        "daily_trend_pullback_fixed10_hash_v1_operational",
+    ):
         return HASH_BASKET_SELECTIONS
     if candidate == "daily_trend_pullback_exit_fixed10_v0":
         return FIXED_EXIT_SELECTIONS
@@ -2298,12 +2373,14 @@ def build_walk_forward_research(
     return {
         "mode": "walk_forward_research",
         "input": str(input_path),
+        "capital": capital,
         "min_train_days": min_train_days,
         "oos_block_days": oos_block_days,
         "candidates": list(candidates),
         "deterministic_selections": list(DETERMINISTIC_SELECTIONS),
         "random_baseline_seeds": random_seeds,
         "random_baseline_kinds": random_baseline_kinds,
+        "execution_model": execution_model_name(stress),
         "execution_stress": asdict(stress),
         "block_count": len(blocks),
         "selected_train_pass_count": selected_train_pass_count,
@@ -2319,6 +2396,28 @@ def build_walk_forward_research(
         "random_oos_summaries": random_oos_summaries,
         "research_alpha_diagnostics": research_alpha_diagnostics,
         "blocks": blocks,
+    }
+
+
+def summarize_walk_forward_for_capital(result: dict[str, Any]) -> dict[str, Any]:
+    selected = result["selected_oos"]
+    random_comparison = result["random_comparison"]
+    block_stability = result["selected_oos_block_stability"]
+    return {
+        "capital": result["capital"],
+        "execution_model": result["execution_model"],
+        "trade_count": selected["trade_count"],
+        "total_net_pnl": selected["total_net_pnl"],
+        "profit_factor": selected["profit_factor"],
+        "max_drawdown": selected["max_drawdown"],
+        "positive_month_ratio": selected["positive_month_ratio"],
+        "worst_month_net_pnl": selected["worst_month_net_pnl"],
+        "selected_net_percentile": random_comparison["selected_net_percentile"],
+        "selected_rank_by_net": random_comparison["selected_rank_by_net"],
+        "research_gate": result["research_gate"]["status"],
+        "low_frequency_research_gate": result["low_frequency_research_gate"]["status"],
+        "positive_block_ratio": block_stability["positive_block_ratio"],
+        "min_block_net_pnl": block_stability["min_net_pnl"],
     }
 
 
@@ -2637,6 +2736,7 @@ def build_random_comparison_diagnostics(
             "selected_rank_by_net": None,
             "selected_net_percentile": None,
             "best_random": None,
+            "by_baseline_kind": {},
             "random_gate_like_pass_count": 0,
         }
     selected_net = selected_oos_metrics.total_net_pnl
@@ -2654,8 +2754,41 @@ def build_random_comparison_diagnostics(
         "selected_rank_by_net": net_rank,
         "selected_net_percentile": _round((random_count - better_net_count) / (random_count + 1)),
         "best_random": best_random,
+        "by_baseline_kind": _random_comparison_by_baseline_kind(
+            selected_net=selected_net,
+            random_oos_summaries=random_oos_summaries,
+            params=params,
+        ),
         "random_gate_like_pass_count": gate_like_pass_count,
     }
+
+
+def _random_comparison_by_baseline_kind(
+    *,
+    selected_net: float,
+    random_oos_summaries: list[dict[str, Any]],
+    params: SwingParams,
+) -> dict[str, dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in random_oos_summaries:
+        grouped[str(row.get("baseline_kind", "unknown"))].append(row)
+
+    result: dict[str, dict[str, Any]] = {}
+    for baseline_kind, rows in sorted(grouped.items()):
+        better_net_count = sum(
+            1 for row in rows if float(row["oos"]["total_net_pnl"]) > selected_net
+        )
+        count = len(rows)
+        result[baseline_kind] = {
+            "random_count": count,
+            "selected_rank_by_net": better_net_count + 1,
+            "selected_net_percentile": _round((count - better_net_count) / (count + 1)),
+            "best_random": max(rows, key=lambda row: float(row["oos"]["total_net_pnl"])),
+            "random_gate_like_pass_count": sum(
+                1 for row in rows if _summary_passes_gate_like(row["oos"], params)
+            ),
+        }
+    return result
 
 
 def build_low_frequency_research_gate(
@@ -2690,14 +2823,19 @@ def build_low_frequency_research_gate(
         failures.append(f"min_block_net_pnl {min_net_pnl} < {min_block_net_pnl:.3f}")
 
     random_count = int(random_comparison.get("random_count") or 0)
-    if random_count < 30:
-        failures.append(f"random_count {random_count} < 30")
+    if random_count < 100:
+        failures.append(f"random_count {random_count} < 100")
 
     selected_net_percentile = random_comparison.get("selected_net_percentile")
     if selected_net_percentile is None or float(selected_net_percentile) < 0.75:
         failures.append(f"selected_net_percentile {selected_net_percentile} < 0.75")
 
-    return {"status": "FAIL" if failures else "PASS", "failures": failures}
+    return {
+        "gate_type": "low_frequency_block_stability",
+        "uses_per_block_full_check_gate": False,
+        "status": "FAIL" if failures else "PASS",
+        "failures": failures,
+    }
 
 
 def _summary_passes_gate_like(summary: dict[str, Any], params: SwingParams) -> bool:
@@ -3281,6 +3419,12 @@ def parse_date_list(raw: str) -> list[date]:
     if not raw.strip():
         return []
     return [date.fromisoformat(item.strip()) for item in raw.split(",") if item.strip()]
+
+
+def parse_float_list(raw: str) -> list[float]:
+    if not raw.strip():
+        return []
+    return [float(item) for item in raw.split(",") if item.strip()]
 
 
 def parse_baseline_kind_list(raw: str) -> list[BaselineKind]:
