@@ -869,6 +869,121 @@ Exit comparison:
 - この candidate から v6 / paper / live に進めない。続ける場合は、結果後の
   パラメータ調整ではなく、別の selector / exit 仮説を事前登録してから評価する。
 
+## Pre-registered Selector/Exit Follow-up: `daily_volatility_contraction_hash_basket_v1`
+
+`daily_volatility_contraction_v0` は paper/live rejected だが、entry set 全体の
+forward excess は小さくプラスだった。一方で、事前登録した `ranked` selector は
+unselected pool を下回り、score の rank IC も不安定だった。
+
+この follow-up は、v0 の entry 条件を変えずに selector / exit / sizing だけを
+別仮説として事前登録する。v0 の結果後に作る candidate なので、paper/live candidate
+ではなく research-continuation candidate として扱う。
+
+仮説:
+
+```text
+volatility contraction の entry set には弱い平均 alpha があるが、単一銘柄を
+score ranking で選ぶほど selector alpha は強くない。score 非依存の deterministic
+hash basket で日次3枠へ分散し、10営業日固定 exit と小さい risk sizing にすると、
+個別 ranking 誤差を減らして entry set の平均 alpha を取りに行ける可能性がある。
+```
+
+事前登録内容:
+
+| Parameter | Value |
+|---|---:|
+| Candidate ID | `daily_volatility_contraction_hash_basket_v1` |
+| Based on | `daily_volatility_contraction_v0` entry rules unchanged |
+| Entry family | `volatility_contraction` |
+| Selector | `volatility_basket_hash` |
+| Hash salt | `volatility_contraction_hash_basket_v1` |
+| Max new positions per day | `3` |
+| Risk per trade | `0.35%` of equity |
+| Max notional per position | `8%` of equity |
+| Exit | fixed hold |
+| Scheduled exit | `10` trading sessions after entry |
+
+固定するもの:
+
+- v0 の entry parameter は変更しない。
+- `score_middle` / `score_ascending` / validation-best selector は使わない。
+- fixed10 hash v0 の salt は変更しない。
+- `conservative_no_reuse` を主判定とし、random baseline 3種類と同じ gate で評価する。
+
+合格条件:
+
+- aggregate OOS gate と research gate を維持する。
+- best random OOS を上回る。
+- low-frequency block stability は補助診断に留め、aggregate FAIL を隠さない。
+- conservative / open-exit / limit-down / gap-stop stress と capital sensitivity まで
+  通るまで paper/live candidate にしない。
+
+### `daily_volatility_contraction_hash_basket_v1` Result
+
+`2021-06-25`〜`2026-06-24` の extended walk-forward で、candidate 単独を
+`conservative_no_reuse`、OOS block `60`、random baseline `100 seeds x 3種類`
+として評価した。
+
+| Metric | Value |
+|---|---:|
+| selected OOS trades | `337` |
+| selected OOS net PnL | `+42,893.315` |
+| selected OOS PF | `1.1104` |
+| selected OOS max DD | `74,475.920` |
+| selected train pass | `0/16` |
+| selected OOS pass | `0/16` |
+| random count | `300` |
+| random rank | `175/301` |
+| random percentile | `0.419` |
+| best random OOS net PnL | `+320,494.352` |
+| research gate | `FAIL` |
+| low-frequency block gate | `FAIL` |
+
+Random baseline breakdown:
+
+| Baseline | Selected percentile | Best random net PnL | Random gate-like pass |
+|---|---:|---:|---:|
+| `signal_set_random` | `0.505` | `+165,225.226` | `9/100` |
+| `universe_date_matched_random` | `0.644` | `+204,212.344` | `9/100` |
+| `symbol_matched_random_date` | `0.099` | `+320,494.352` | `59/100` |
+
+Alpha diagnostics:
+
+| Diagnostic | Value |
+|---|---:|
+| candidate count | `6,253` |
+| entry excess 2d vs tradable universe | `+0.1966%` |
+| entry excess 5d vs tradable universe | `+0.3727%` |
+| entry excess 10d vs tradable universe | `+0.5959%` |
+| score fold avg rank IC 5d | `+0.0105` |
+| selected 5d forward avg return | `+0.1925%` |
+| unselected 5d forward avg return | `+0.4576%` |
+| selected 5d excess avg return | `+0.1454%` |
+| unselected 5d excess avg return | `+0.5421%` |
+
+Exit comparison:
+
+| Exit | Net PnL | PF | Max DD |
+|---|---:|---:|---:|
+| `fixed_2d` | `-83,318.535` | `0.7613` | `90,439.587` |
+| `fixed_5d` | `-36,168.893` | `0.9244` | `104,699.934` |
+| `fixed_10d` | `-6,722.833` | `0.9889` | `127,952.266` |
+
+結論:
+
+- v0 より OOS net / PF / DD は改善したが、PF `1.1104` は project kill switch の
+  `1.2` を下回る。
+- selected OOS pass は `0/16` で、block stability も FAIL。
+- best random に大きく負け、特に `symbol_matched_random_date` では percentile
+  `0.099` と弱い。これは「銘柄集合」より「日付選択 / timing」が不足している
+  可能性を示す。
+- entry set の forward excess は v0 同様に小さくプラスだが、hash basket でも
+  unselected pool を下回り、selector 問題は解決していない。
+- `daily_volatility_contraction_hash_basket_v1` は research-only rejected candidate
+  とする。この candidate から v6 / paper / live に進めない。
+- 次に進むなら、volatility contraction の entry family をさらに調整するのではなく、
+  日付選択 / market timing を事前登録した別仮説として検証する。
+
 ## Initial Implementation Scope
 
 最初の PR では production route は変更しない。

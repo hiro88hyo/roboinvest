@@ -27,6 +27,7 @@ SelectionMode = Literal[
     "score_middle",
     "rank_2_3_first",
     "stable_hash",
+    "volatility_basket_hash",
 ]
 EntryMode = Literal["trend_pullback", "breakout_continuation", "volatility_contraction"]
 ExitMode = Literal["target_stop_max_hold", "fixed_hold"]
@@ -43,6 +44,7 @@ CandidateName = Literal[
     "daily_trend_pullback_fixed10_hash_v1_operational",
     "daily_breakout_continuation_v0",
     "daily_volatility_contraction_v0",
+    "daily_volatility_contraction_hash_basket_v1",
 ]
 BaselineKind = Literal[
     "strategy",
@@ -69,6 +71,7 @@ RESEARCH_CANDIDATES: tuple[CandidateName, ...] = (
     "daily_trend_pullback_fixed10_hash_v1_operational",
     "daily_breakout_continuation_v0",
     "daily_volatility_contraction_v0",
+    "daily_volatility_contraction_hash_basket_v1",
 )
 DETERMINISTIC_SELECTIONS: tuple[SelectionMode, ...] = (
     "ranked",
@@ -828,6 +831,27 @@ def params_for_candidate(
             max_entry_gap_pct=0.02,
             max_new_positions_per_day=1,
         )
+    if candidate == "daily_volatility_contraction_hash_basket_v1":
+        return SwingParams(
+            entry_mode="volatility_contraction",
+            starting_capital=capital,
+            min_avg_turnover=min_avg_turnover,
+            min_return_20d=0.02,
+            max_return_20d=0.18,
+            min_return_60d=0.05,
+            max_distance_above_sma_short=0.10,
+            max_prior_range_20d_pct=0.16,
+            min_prior_range_20d_position=0.70,
+            min_atr_pct=0.012,
+            max_atr_pct=0.045,
+            min_entry_gap_pct=-0.01,
+            max_entry_gap_pct=0.02,
+            max_new_positions_per_day=3,
+            risk_per_trade_pct=0.0035,
+            max_notional_per_position_pct=0.08,
+            max_hold_days=10,
+            exit_mode="fixed_hold",
+        )
     raise ValueError(f"unknown candidate: {candidate}")
 
 
@@ -843,6 +867,8 @@ def deterministic_selections_for_candidate(
         return FIXED_EXIT_SELECTIONS
     if candidate == "daily_volatility_contraction_v0":
         return ("ranked",)
+    if candidate == "daily_volatility_contraction_hash_basket_v1":
+        return ("volatility_basket_hash",)
     return DETERMINISTIC_SELECTIONS
 
 
@@ -1733,6 +1759,8 @@ def order_candidates(
         return sorted(candidates, key=lambda item: (_rank_preference(item), item.symbol))
     if selection == "stable_hash":
         return sorted(candidates, key=lambda item: (_stable_hash_key(item), item.symbol))
+    if selection == "volatility_basket_hash":
+        return sorted(candidates, key=lambda item: (_volatility_basket_hash_key(item), item.symbol))
     if selection == "random":
         shuffled = list(candidates)
         rng.shuffle(shuffled)
@@ -1754,6 +1782,14 @@ def _rank_preference(candidate: EntryCandidate) -> tuple[int, int, float]:
 
 def _stable_hash_key(candidate: EntryCandidate) -> str:
     raw = f"fixed10_hash_v0:{candidate.signal_date.isoformat()}:{candidate.symbol}"
+    return hashlib.sha256(raw.encode("ascii")).hexdigest()
+
+
+def _volatility_basket_hash_key(candidate: EntryCandidate) -> str:
+    raw = (
+        "volatility_contraction_hash_basket_v1:"
+        f"{candidate.signal_date.isoformat()}:{candidate.symbol}"
+    )
     return hashlib.sha256(raw.encode("ascii")).hexdigest()
 
 

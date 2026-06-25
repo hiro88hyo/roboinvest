@@ -216,6 +216,7 @@ def test_stable_hash_selection_is_deterministic_and_not_score_ordered() -> None:
         _candidate(symbol="7203", score=0.99),
         _candidate(symbol="6758", score=0.01),
         _candidate(symbol="9984", score=0.50),
+        _candidate(symbol="8306", score=0.20),
     ]
 
     first = swing.order_candidates(candidates, selection="stable_hash", rng=swing.random.Random(1))
@@ -226,7 +227,7 @@ def test_stable_hash_selection_is_deterministic_and_not_score_ordered() -> None:
     )
 
     assert [candidate.symbol for candidate in first] == [candidate.symbol for candidate in second]
-    assert [candidate.symbol for candidate in first] != ["7203", "9984", "6758"]
+    assert [candidate.symbol for candidate in first] != ["7203", "9984", "8306", "6758"]
 
 
 def test_breakout_candidate_preregisters_new_entry_family() -> None:
@@ -390,6 +391,61 @@ def test_volatility_contraction_entry_signal_rejects_wide_or_low_range_position(
 
     assert not swing.is_entry_signal(wide_range, params)
     assert not swing.is_entry_signal(low_position, params)
+
+
+def test_volatility_contraction_hash_basket_v1_keeps_entry_and_changes_basket_only() -> None:
+    v0 = swing.params_for_candidate(
+        "daily_volatility_contraction_v0",
+        1_000_000.0,
+        200_000_000.0,
+    )
+    basket = swing.params_for_candidate(
+        "daily_volatility_contraction_hash_basket_v1",
+        1_000_000.0,
+        200_000_000.0,
+    )
+
+    assert basket.entry_mode == v0.entry_mode
+    assert basket.min_return_20d == v0.min_return_20d
+    assert basket.max_return_20d == v0.max_return_20d
+    assert basket.min_return_60d == v0.min_return_60d
+    assert basket.max_prior_range_20d_pct == v0.max_prior_range_20d_pct
+    assert basket.min_prior_range_20d_position == v0.min_prior_range_20d_position
+    assert basket.min_atr_pct == v0.min_atr_pct
+    assert basket.max_atr_pct == v0.max_atr_pct
+    assert basket.min_entry_gap_pct == v0.min_entry_gap_pct
+    assert basket.max_entry_gap_pct == v0.max_entry_gap_pct
+    assert basket.exit_mode == "fixed_hold"
+    assert basket.max_hold_days == 10
+    assert basket.max_new_positions_per_day == 3
+    assert basket.risk_per_trade_pct == 0.0035
+    assert basket.max_notional_per_position_pct == 0.08
+    assert swing.deterministic_selections_for_candidate(
+        "daily_volatility_contraction_hash_basket_v1"
+    ) == ("volatility_basket_hash",)
+
+
+def test_volatility_basket_hash_selection_is_deterministic_and_not_score_ordered() -> None:
+    candidates = [
+        _candidate(symbol="7203", score=0.99),
+        _candidate(symbol="6758", score=0.01),
+        _candidate(symbol="9984", score=0.50),
+        _candidate(symbol="8306", score=0.20),
+    ]
+
+    first = swing.order_candidates(
+        candidates,
+        selection="volatility_basket_hash",
+        rng=swing.random.Random(1),
+    )
+    second = swing.order_candidates(
+        list(reversed(candidates)),
+        selection="volatility_basket_hash",
+        rng=swing.random.Random(99),
+    )
+
+    assert [candidate.symbol for candidate in first] == [candidate.symbol for candidate in second]
+    assert [candidate.symbol for candidate in first] != ["7203", "9984", "8306", "6758"]
 
 
 def test_parse_candidate_list_defaults_to_all_research_candidates() -> None:
