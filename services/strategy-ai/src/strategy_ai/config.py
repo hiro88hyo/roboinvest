@@ -19,6 +19,11 @@ class StrategyAiSettings(BaseSettings):
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.0-flash"
     gemini_timeout_seconds: float = 30.0
+    local_llm_base_url: str = ""
+    local_llm_api_key: str = ""
+    local_llm_model: str = ""
+    local_llm_timeout_seconds: float = 60.0
+    local_llm_max_concurrency: int = 2
 
     ai_min_interval_seconds: float = 300.0
     ai_temperature: Decimal = Decimal("0.0")

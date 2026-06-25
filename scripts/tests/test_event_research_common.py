@@ -1,0 +1,212 @@
+from __future__ import annotations
+
+import importlib.util
+import random
+import sys
+from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
+from pathlib import Path
+
+import pytest
+from trade_contracts.event_research import EntryArm, ExitArm
+
+
+def _load_module():
+    path = Path(__file__).resolve().parents[1] / "event_research_common.py"
+    spec = importlib.util.spec_from_file_location("event_research_common", path)
+    assert spec is not None
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+event_research = _load_module()
+
+
+def _bars(symbol: str = "7203", *, start_close: int = 1000):
+    rows = []
+    for idx in range(45):
+        day = date(2026, 1, 1) + timedelta(days=idx)
+        close = Decimal(start_close + idx * 5)
+        rows.append(
+            event_research.OhlcvRow(
+                symbol=symbol,
+                date=day,
+                open=close - Decimal("2"),
+                high=close + Decimal("8"),
+                low=close - Decimal("8"),
+                close=close,
+                volume=500_000,
+                turnover=close * Decimal("500000"),
+            )
+        )
+    return rows
+
+
+def _raw(**overrides):
+    raw = {
+        "Code": "72030",
+        "DisclosedDate": "2026-01-21",
+        "DisclosedTime": "15:30",
+        "DisclosureNumber": "fixture-1",
+        "TypeOfDocument": "ForecastRevision",
+        "PreviousForecastEarningsPerShare": "100",
+        "ForecastEarningsPerShare": "125",
+        "PreviousForecastOperatingProfit": "1000",
+        "ForecastOperatingProfit": "1250",
+        "PreviousForecastProfit": "800",
+        "ForecastProfit": "1000",
+        "EarningsPerShare": "110",
+        "BookValuePerShare": "1000",
+        "ForecastDividendPerShareAnnual": "40",
+    }
+    raw.update(overrides)
+    return raw
+
+
+def _event(raw: dict[str, object], bars: list[object]):
+    return event_research.build_events_from_financial_rows(
+        [raw],
+        ohlcv_rows=bars,
+        fetched_at=datetime(2026, 1, 22, tzinfo=UTC),
+    )[0]
+
+
+def test_post_close_and_unknown_time_enter_next_trading_day() -> None:
+    bars = _bars()
+    post_close = _event(_raw(DisclosedDate="2026-01-21", DisclosedTime="15:30"), bars)
+    unknown = _event(_raw(DisclosedDate="2026-01-21", DisclosedTime=""), bars)
+
+    assert post_close.disclosed_at.isoformat() == "2026-01-21T15:30:00+00:00"
+    assert unknown.disclosed_at.isoformat() == "2026-01-21T23:59:59+00:00"
+    assert post_close.entry_date == "2026-01-22"
+    assert unknown.entry_date == "2026-01-22"
+
+
+def test_next_open_features_use_signal_close_not_entry_open() -> None:
+    bars = _bars()
+    event = _event(_raw(), bars)
+    observation = event_research.build_observations([event], ohlcv_rows=bars)[0]
+
+    assert observation.entry_date == "2026-01-22"
+    assert observation.valuation_price == Decimal("1100")
+    assert observation.entry_price == Decimal("1103")
+    assert observation.valuation_features_v0.forecast_per.value == Decimal("8.8")
+
+
+def test_eps_sign_change_does_not_make_percentage_or_negative_per() -> None:
+    bars = _bars(symbol="6758", start_close=2000)
+    raw = _raw(
+        Code="67580",
+        PreviousForecastEarningsPerShare="-5",
+        ForecastEarningsPerShare="8",
+        EarningsPerShare="-3",
+        DisclosureNumber="fixture-2",
+    )
+    event = _event(raw, bars)
+    observation = event_research.build_observations([event], ohlcv_rows=bars)[0]
+
+    assert observation.fundamental_features_v0.sign_changed is True
+    assert observation.fundamental_features_v0.forecast_eps_revision_pct.valid is False
+    assert observation.valuation_features_v0.trailing_per.value is None
+    assert observation.valuation_features_v0.trailing_per_valid is False
+    assert observation.valuation_features_v0.forecast_per.value is not None
+
+
+def test_missing_financial_values_are_null_not_zero() -> None:
+    bars = _bars()
+    event = _event(
+        _raw(
+            ForecastEarningsPerShare="",
+            EarningsPerShare="",
+            BookValuePerShare="",
+            ForecastDividendPerShareAnnual="",
+        ),
+        bars,
+    )
+    observation = event_research.build_observations([event], ohlcv_rows=bars)[0]
+
+    assert observation.fundamental_features_v0.missing_eps is True
+    assert observation.valuation_features_v0.forecast_per.value is None
+    assert observation.valuation_features_v0.pbr.value is None
+    assert observation.valuation_features_v0.forecast_dividend_yield.value is None
+
+
+def test_technical_veto_is_preregistered_and_uses_pre_event_bars_only() -> None:
+    bars = _bars()
+    event = _event(_raw(), bars)
+    observation = event_research.build_observations([event], ohlcv_rows=bars)[0]
+
+    assert event_research.entry_arm_allows(observation, EntryArm.EVENT_PLUS_TECHNICAL)
+    assert observation.technical_context_v0.avg_turnover_20d.valid is True
+
+
+def test_fixed_exit_uses_trading_session_horizon() -> None:
+    bars = _bars()
+    event = _event(_raw(), bars)
+    observation = event_research.build_observations([event], ohlcv_rows=bars)[0]
+
+    assert observation.labels["exit_date_10d"] == "2026-02-01"
+    metrics = event_research.metrics_for_observations([observation], exit_arm=ExitArm.FIXED_10D)
+    assert metrics["trade_count"] == 1
+
+
+def test_gap_through_catastrophic_stop_exits_at_unfavorable_open() -> None:
+    bars = _bars()
+    for idx, bar in enumerate(bars):
+        if bar.date == date(2026, 1, 24):
+            bars[idx] = event_research.OhlcvRow(
+                symbol=bar.symbol,
+                date=bar.date,
+                open=Decimal("850"),
+                high=Decimal("860"),
+                low=Decimal("840"),
+                close=Decimal("855"),
+                volume=bar.volume,
+                turnover=bar.turnover,
+            )
+            break
+    event = _event(_raw(), bars)
+    observation = event_research.build_observations([event], ohlcv_rows=bars)[0]
+
+    stop_return = observation.labels["catastrophic_stop_return_10d"]
+    assert stop_return == pytest.approx((850 / 1103) - 1)
+    assert observation.labels["catastrophic_stop_exit_reason_10d"] == (
+        "gap_through_catastrophic_stop"
+    )
+
+
+def test_manifest_has_20_trading_day_purge() -> None:
+    bars = _bars()
+    events = [
+        _event(_raw(DisclosedDate=f"2026-01-{day:02d}", DisclosureNumber=f"fixture-{day}"), bars)
+        for day in range(3, 26)
+    ]
+    observations = event_research.build_observations(events, ohlcv_rows=bars)
+    manifest = event_research.split_manifest(observations)
+
+    assert manifest["purge_days"] == 20
+    assert manifest["feature_schema_version"] == "event_research_v0"
+
+
+def test_random_baseline_is_seeded_and_symbol_constrained() -> None:
+    bars = _bars() + _bars(symbol="6758", start_close=2000)
+    events = [
+        _event(_raw(Code="72030", DisclosureNumber="fixture-7203"), bars),
+        _event(_raw(Code="67580", DisclosureNumber="fixture-6758"), bars),
+    ]
+    observations = event_research.build_observations(events, ohlcv_rows=bars)
+
+    first = event_research.random_baselines(observations, seed_count=5)
+    second = event_research.random_baselines(observations, seed_count=5)
+    sample = event_research.sample_random_baseline(
+        observations,
+        name="same_symbol_random_date",
+        rng=random.Random(1),
+    )
+
+    assert first == second
+    assert [obs.symbol for obs in sample] == [obs.symbol for obs in observations]
+    assert 0 <= first["same_symbol_random_date"]["selected_percentile"] <= 1
