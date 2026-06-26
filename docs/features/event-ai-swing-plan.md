@@ -197,8 +197,13 @@ uv run python scripts/run-event-llm-jobs.py \
 uv run python scripts/evaluate-event-ai.py \
   --observations out/event-research/observations.jsonl \
   --labels out/event-ai/fixture-labels.jsonl \
-  --output-dir out/event-ai
+  --output-dir out/event-ai \
+  --split development
 ```
+
+The AI evaluator uses the same split guard as the rule-only event evaluator.
+Locked OOS requires `--split locked-oos --include-locked-oos` after prompt,
+feature schema, model, and thresholds are frozen.
 
 7. Run a local OpenAI-compatible model:
 

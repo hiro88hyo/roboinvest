@@ -6,10 +6,12 @@ import json
 from pathlib import Path
 
 from event_research_common import (
+    EVALUATION_SPLITS,
     EXIT_ARMS_FOR_REPORT,
     entry_arm_allows,
     metrics_for_observations,
     read_jsonl,
+    select_observations_for_split,
 )
 from strategy_ai.event.evaluator import ai_arm_allows, shuffle_labels_within_event_type
 from trade_contracts.event_research import (
@@ -25,9 +27,25 @@ def main() -> int:
     parser.add_argument("--observations", type=Path, required=True)
     parser.add_argument("--labels", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, default=Path("out/event-ai"))
+    parser.add_argument(
+        "--split",
+        choices=EVALUATION_SPLITS,
+        default="development",
+        help="Evaluation split. Default excludes locked OOS details.",
+    )
+    parser.add_argument(
+        "--include-locked-oos",
+        action="store_true",
+        help="Required when --split is locked-oos or all.",
+    )
     args = parser.parse_args()
 
-    observations = [ObservationRecord.model_validate(row) for row in read_jsonl(args.observations)]
+    if args.split in {"locked-oos", "all"} and not args.include_locked_oos:
+        parser.error("--include-locked-oos is required when --split is locked-oos or all")
+    all_observations = [
+        ObservationRecord.model_validate(row) for row in read_jsonl(args.observations)
+    ]
+    observations, split_info = select_observations_for_split(all_observations, split=args.split)
     labeled = [EventAiLabeledRecord.model_validate(row) for row in read_jsonl(args.labels)]
     labels = {row.event_id: row.label for row in labeled}
     rows = _evaluate_ai_rows(observations, labels)
@@ -40,6 +58,7 @@ def main() -> int:
         "rows": rows,
         "placebo": placebo,
         "confidence_buckets": confidence_buckets(observations, labels),
+        "evaluation_split": split_info,
         "ai_value_minimum_conditions": {
             "must_beat_event_only": True,
             "must_beat_rule_only": True,
@@ -54,7 +73,11 @@ def main() -> int:
         json.dumps(result, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
-    print(f"event_ai_eval rows={len(rows)} output={args.output_dir}")
+    print(
+        "event_ai_eval "
+        f"split={args.split} observations={len(observations)} "
+        f"rows={len(rows)} output={args.output_dir}"
+    )
     return 0
 
 
