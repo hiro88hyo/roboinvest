@@ -195,6 +195,27 @@ uv run python scripts/build-event-llm-jobs.py \
   --model-id local-model
 ```
 
+To generate a numerical-field placebo prompt set for the same sample:
+
+```bash
+uv run python scripts/build-event-llm-jobs.py \
+  --events out/event-research/events.jsonl \
+  --observations out/event-research/observations.jsonl \
+  --output out/event-ai/jobs-sample100-numerical-placebo.jsonl \
+  --split development \
+  --sample-size 100 \
+  --sample-seed 1 \
+  --placebo-mode numerical_fields_shuffled \
+  --placebo-seed 1 \
+  --model-provider openai_compatible \
+  --model-id local-model
+```
+
+The numerical placebo shuffles only `FeatureValue.value` fields within each
+event type. Feature timing metadata such as `available_at` and
+`feature_cutoff_at` is preserved so the placebo prompt does not introduce
+future timestamps.
+
 5. Run fixture labels:
 
 ```bash

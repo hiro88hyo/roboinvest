@@ -128,8 +128,8 @@ def test_event_ai_evaluator_defaults_to_development_split(
     }
     assert {item["name"] for item in report["unavailable_placebos"]} == {
         "event_title_shuffled",
-        "numerical_fields_shuffled",
     }
+    assert report["external_placebos"][0]["name"] == "numerical_fields_shuffled"
 
 
 def test_event_ai_evaluator_requires_locked_oos_opt_in(

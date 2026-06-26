@@ -67,9 +67,13 @@ def main() -> int:
                 "name": "event_title_shuffled",
                 "reason": "labels.jsonl evaluation input does not carry event title/text fields",
             },
+        ],
+        "external_placebos": [
             {
                 "name": "numerical_fields_shuffled",
-                "reason": "labels.jsonl evaluation input does not carry feature bundle values",
+                "how_to_generate": (
+                    "build-event-llm-jobs.py --placebo-mode numerical_fields_shuffled"
+                ),
             },
         ],
         "ai_value_minimum_conditions": {

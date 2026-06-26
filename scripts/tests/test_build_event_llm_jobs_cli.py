@@ -8,7 +8,14 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
-from trade_contracts.event_research import EventRecord, EventSource, EventType, ObservationRecord
+from trade_contracts.event_research import (
+    EventRecord,
+    EventSource,
+    EventType,
+    FeatureValue,
+    FundamentalFeaturesV0,
+    ObservationRecord,
+)
 
 
 def _load_module():
@@ -63,6 +70,9 @@ def _observation(idx: int) -> ObservationRecord:
         entry_price=Decimal("1000"),
         valuation_price=Decimal("990"),
         source_record_id=event.raw_source_identifier,
+        fundamental_features_v0=FundamentalFeaturesV0(
+            profit_revision_pct=FeatureValue(value=idx, valid=True)
+        ),
     )
 
 
@@ -145,6 +155,66 @@ def test_llm_job_builder_can_sample_development_jobs(
     ]
     assert len(first_rows) == 5
     assert [row["event_id"] for row in first_rows] == [row["event_id"] for row in second_rows]
+
+
+def test_llm_job_builder_can_shuffle_numerical_feature_placebo(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events = [_event(idx) for idx in range(40)]
+    observations = [_observation(idx) for idx in range(40)]
+    events_path = tmp_path / "events.jsonl"
+    observations_path = tmp_path / "observations.jsonl"
+    baseline_output = tmp_path / "jobs-baseline.jsonl"
+    placebo_output = tmp_path / "jobs-placebo.jsonl"
+    _write_jsonl(events_path, events)
+    _write_jsonl(observations_path, observations)
+
+    for output_path, extra_args in (
+        (baseline_output, []),
+        (
+            placebo_output,
+            [
+                "--placebo-mode",
+                "numerical_fields_shuffled",
+                "--placebo-seed",
+                "3",
+            ],
+        ),
+    ):
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "build-event-llm-jobs.py",
+                "--events",
+                str(events_path),
+                "--observations",
+                str(observations_path),
+                "--output",
+                str(output_path),
+                *extra_args,
+            ],
+        )
+        assert build_event_llm_jobs.main() == 0
+
+    baseline_rows = [
+        json.loads(line) for line in baseline_output.read_text(encoding="utf-8").splitlines()
+    ]
+    placebo_rows = [
+        json.loads(line) for line in placebo_output.read_text(encoding="utf-8").splitlines()
+    ]
+    baseline_values = [
+        json.loads(row["prompt"])["fundamental_features_v0"]["profit_revision_pct"]["value"]
+        for row in baseline_rows
+    ]
+    placebo_values = [
+        json.loads(row["prompt"])["fundamental_features_v0"]["profit_revision_pct"]["value"]
+        for row in placebo_rows
+    ]
+    assert [row["event_id"] for row in baseline_rows] == [row["event_id"] for row in placebo_rows]
+    assert sorted(baseline_values) == sorted(placebo_values)
+    assert baseline_values != placebo_values
 
 
 def test_llm_job_builder_requires_locked_oos_opt_in(
