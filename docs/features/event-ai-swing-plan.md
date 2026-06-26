@@ -181,6 +181,20 @@ uv run python scripts/build-event-llm-jobs.py \
   --model-id fixture-event-labeler-v0
 ```
 
+For a local LLM smoke run, generate a deterministic development sample first:
+
+```bash
+uv run python scripts/build-event-llm-jobs.py \
+  --events out/event-research/events.jsonl \
+  --observations out/event-research/observations.jsonl \
+  --output out/event-ai/jobs-sample100.jsonl \
+  --split development \
+  --sample-size 100 \
+  --sample-seed 1 \
+  --model-provider openai_compatible \
+  --model-id local-model
+```
+
 5. Run fixture labels:
 
 ```bash

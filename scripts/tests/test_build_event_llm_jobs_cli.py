@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -101,6 +102,49 @@ def test_llm_job_builder_defaults_to_development_split(
 
     job_count = len(output_path.read_text(encoding="utf-8").splitlines())
     assert 0 < job_count < len(observations)
+
+
+def test_llm_job_builder_can_sample_development_jobs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events = [_event(idx) for idx in range(40)]
+    observations = [_observation(idx) for idx in range(40)]
+    events_path = tmp_path / "events.jsonl"
+    observations_path = tmp_path / "observations.jsonl"
+    first_output = tmp_path / "jobs-first.jsonl"
+    second_output = tmp_path / "jobs-second.jsonl"
+    _write_jsonl(events_path, events)
+    _write_jsonl(observations_path, observations)
+
+    for output_path in (first_output, second_output):
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "build-event-llm-jobs.py",
+                "--events",
+                str(events_path),
+                "--observations",
+                str(observations_path),
+                "--output",
+                str(output_path),
+                "--sample-size",
+                "5",
+                "--sample-seed",
+                "7",
+            ],
+        )
+        assert build_event_llm_jobs.main() == 0
+
+    first_rows = [
+        json.loads(line) for line in first_output.read_text(encoding="utf-8").splitlines()
+    ]
+    second_rows = [
+        json.loads(line) for line in second_output.read_text(encoding="utf-8").splitlines()
+    ]
+    assert len(first_rows) == 5
+    assert [row["event_id"] for row in first_rows] == [row["event_id"] for row in second_rows]
 
 
 def test_llm_job_builder_requires_locked_oos_opt_in(
