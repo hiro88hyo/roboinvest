@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
 from trade_contracts.event_research import EventAiJob
 
 
@@ -40,6 +41,15 @@ def _job(idx: int) -> EventAiJob:
         temperature=Decimal("0"),
         seed=None,
         created_at=at,
+    )
+
+
+def _openai_job(idx: int) -> EventAiJob:
+    return _job(idx).model_copy(
+        update={
+            "model_provider": "openai_compatible",
+            "model_id": "local-model",
+        }
     )
 
 
@@ -154,3 +164,58 @@ def test_event_llm_runner_no_resume_overwrites_labels(
     assert labels[0]["job_id"] == "job-0"
     assert manifest["cached"] == 0
     assert manifest["completed"] == 1
+
+
+def test_event_llm_runner_rejects_provider_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    jobs_path = tmp_path / "jobs.jsonl"
+    _write_jobs(jobs_path, [_openai_job(0)])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run-event-llm-jobs.py",
+            "--jobs",
+            str(jobs_path),
+            "--provider",
+            "fixture",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        run_event_llm_jobs.main()
+
+    assert exc.value.code != 0
+
+
+def test_event_llm_runner_preflights_local_llm_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    jobs_path = tmp_path / "jobs.jsonl"
+    _write_jobs(jobs_path, [_openai_job(0)])
+    for name in (
+        "LOCAL_LLM_BASE_URL",
+        "LOCAL_LLM_MODEL",
+        "LOCAL_LLM_API_KEY",
+        "LLM_PROVIDER",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run-event-llm-jobs.py",
+            "--jobs",
+            str(jobs_path),
+            "--provider",
+            "openai_compatible",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        run_event_llm_jobs.main()
+
+    assert "LOCAL_LLM_BASE_URL" in str(exc.value)

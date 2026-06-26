@@ -6,6 +6,7 @@ import asyncio
 import json
 import subprocess
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -48,7 +49,7 @@ def main() -> int:
 
 async def _amain(args: argparse.Namespace) -> int:
     jobs = [EventAiJob.model_validate(row) for row in read_jsonl(args.jobs)]
-    client = _build_client(args.provider)
+    _validate_jobs(jobs, args.provider)
     resume = not args.no_resume
     labels, cached_keys = _load_existing_labels(
         args.output_labels,
@@ -62,18 +63,24 @@ async def _amain(args: argparse.Namespace) -> int:
     args.output_failures.parent.mkdir(parents=True, exist_ok=True)
     args.output_failures.write_text("", encoding="utf-8")
     started = datetime.now(tz=UTC)
-    attempted = 0
-    completed = 0
     cached = 0
+    pending_jobs: list[EventAiJob] = []
     for job in jobs:
         cache_key = _job_cache_key(job, args.provider)
         if cache_key in cached_keys:
             cached += 1
             continue
-        if args.max_jobs is not None and attempted >= args.max_jobs:
+        if args.max_jobs is not None and len(pending_jobs) >= args.max_jobs:
             break
-        attempted += 1
+        pending_jobs.append(job)
+
+    client = _build_client(args.provider, pending_jobs) if pending_jobs else None
+    completed = 0
+    for job in pending_jobs:
+        cache_key = _job_cache_key(job, args.provider)
         try:
+            if client is None:
+                raise LLMError("LLM client is not configured")
             raw = await client.complete(job.prompt)
             label = parse_event_ai_label(raw)
             record = EventAiLabeledRecord(
@@ -110,7 +117,7 @@ async def _amain(args: argparse.Namespace) -> int:
         "temperature": str(jobs[0].temperature) if jobs else None,
         "seed": jobs[0].seed if jobs else None,
         "total_jobs": len(jobs),
-        "attempted": attempted,
+        "attempted": len(pending_jobs),
         "completed": completed,
         "failed": len(failures),
         "cached": cached,
@@ -133,13 +140,13 @@ async def _amain(args: argparse.Namespace) -> int:
     args.output_manifest.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
     print(
         "event_llm_run "
-        f"attempted={attempted} completed={completed} failed={len(failures)} "
+        f"attempted={len(pending_jobs)} completed={completed} failed={len(failures)} "
         f"cached={cached} labels_total={len(labels)}"
     )
     return 0
 
 
-def _build_client(provider: str):
+def _build_client(provider: str, jobs: list[EventAiJob]):
     if provider == "fixture":
         responses = (
             json.dumps(
@@ -158,8 +165,44 @@ def _build_client(provider: str):
             ),
         )
         return FixtureLLMClient(responses=responses)
-    settings = StrategyAiSettings(_env_file=None, llm_provider="openai_compatible")
+    settings = StrategyAiSettings(
+        _env_file=None,
+        llm_provider="openai_compatible",
+        ai_temperature=jobs[0].temperature if jobs else Decimal("0"),
+    )
+    missing = [
+        name
+        for name, value in (
+            ("LOCAL_LLM_BASE_URL", settings.local_llm_base_url),
+            ("LOCAL_LLM_MODEL", settings.local_llm_model),
+        )
+        if not value
+    ]
+    if missing:
+        raise SystemExit(f"missing required local LLM env: {', '.join(missing)}")
+    if jobs and settings.local_llm_model != jobs[0].model_id:
+        raise SystemExit(
+            "LOCAL_LLM_MODEL must match jobs model_id: "
+            f"{settings.local_llm_model!r} != {jobs[0].model_id!r}"
+        )
     return build_llm_client(settings)
+
+
+def _validate_jobs(jobs: list[EventAiJob], provider: str) -> None:
+    provider_mismatches = sorted(
+        {job.model_provider for job in jobs if job.model_provider != provider}
+    )
+    if provider_mismatches:
+        raise SystemExit(
+            f"--provider {provider!r} does not match job model_provider values: "
+            f"{provider_mismatches}"
+        )
+    model_ids = sorted({job.model_id for job in jobs})
+    if len(model_ids) > 1:
+        raise SystemExit(f"all jobs in one run must use one model_id: {model_ids}")
+    temperatures = sorted({str(job.temperature) for job in jobs})
+    if len(temperatures) > 1:
+        raise SystemExit(f"all jobs in one run must use one temperature: {temperatures}")
 
 
 def _git_commit() -> str | None:
