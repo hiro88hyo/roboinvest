@@ -234,12 +234,18 @@ LOCAL_LLM_MODEL=local-model \
 LOCAL_LLM_TIMEOUT_SECONDS=60 \
 LOCAL_LLM_MAX_CONCURRENCY=2 \
 uv run python scripts/run-event-llm-jobs.py \
-  --jobs out/event-ai/jobs.jsonl \
+  --jobs out/event-ai/jobs-sample100.jsonl \
   --provider openai_compatible \
-  --output-labels out/event-ai/labels.jsonl \
-  --output-failures out/event-ai/failures.jsonl \
-  --output-manifest out/event-ai/run-manifest.json
+  --output-labels out/event-ai/labels-sample100.jsonl \
+  --output-failures out/event-ai/failures-sample100.jsonl \
+  --output-manifest out/event-ai/run-manifest-sample100.json \
+  --max-jobs 100
 ```
+
+`run-event-llm-jobs.py` resumes by default from existing successful labels
+using a cache key derived from prompt hash, provider, model, temperature, and
+seed. Use `--no-resume` only when intentionally overwriting a run. Failed jobs
+are not cached and are retried on the next run.
 
 ## Data Limitations
 

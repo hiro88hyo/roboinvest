@@ -223,6 +223,7 @@ class EventAiLabeledRecord(BaseModel):
     job_id: str
     event_id: str
     prompt_hash: str
+    cache_key: str | None = None
     model_provider: str
     model_id: str
     raw_response: str
