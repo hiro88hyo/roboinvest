@@ -125,10 +125,15 @@ def build_events_from_financial_rows(
         if event_type is None:
             continue
         symbol = normalize_symbol(str(raw.get("Code") or raw.get("code") or ""))
-        disclosed_date = _parse_date_field(raw.get("DisclosedDate") or raw.get("Date"))
-        disclosed_time = _time_str(raw.get("DisclosedTime"))
+        disclosed_date = _parse_date_field(
+            raw.get("DisclosedDate") or raw.get("DiscDate") or raw.get("Date")
+        )
+        disclosed_time = _time_str(raw.get("DisclosedTime") or raw.get("DiscTime"))
         disclosed_at = disclosed_datetime(disclosed_date, disclosed_time)
-        entry_date = next_trading_date(trading_dates, disclosed_date)
+        try:
+            entry_date = next_trading_date(trading_dates, disclosed_date)
+        except ValueError:
+            continue
         cluster_id = event_cluster_id(symbol, disclosed_at)
         cluster_counts[cluster_id] += 1
         raw_events.append((raw, event_type, disclosed_at, disclosed_time or "", symbol, entry_date))
@@ -136,6 +141,7 @@ def build_events_from_financial_rows(
     for raw, event_type, disclosed_at, disclosed_time, symbol, entry_date in raw_events:
         raw_id = str(
             raw.get("DisclosureNumber")
+            or raw.get("DiscNo")
             or raw.get("disclosure_number")
             or raw.get("LocalCode")
             or raw.get("Code")
@@ -150,9 +156,11 @@ def build_events_from_financial_rows(
                 event_cluster_id=cluster_id,
                 symbol=symbol,
                 source=EventSource.JQUANTS_FINS_SUMMARY,
-                raw_document_type=str(raw.get("TypeOfDocument") or raw.get("DocumentType") or ""),
+                raw_document_type=str(
+                    raw.get("TypeOfDocument") or raw.get("DocumentType") or raw.get("DocType") or ""
+                ),
                 event_type=event_type,
-                event_subtype=str(raw.get("TypeOfDocument") or "") or None,
+                event_subtype=str(raw.get("TypeOfDocument") or raw.get("DocType") or "") or None,
                 disclosed_date=disclosed_date.isoformat(),
                 disclosed_time=disclosed_time or None,
                 disclosed_at=disclosed_at,
@@ -240,7 +248,9 @@ def build_observations(
 
 
 def classify_event_type(raw: dict[str, Any]) -> EventType | None:
-    doc = str(raw.get("TypeOfDocument") or raw.get("DocumentType") or "").lower()
+    doc = str(
+        raw.get("TypeOfDocument") or raw.get("DocumentType") or raw.get("DocType") or ""
+    ).lower()
     if "buyback" in doc or "repurchase" in doc:
         return EventType.BUYBACK_ANNOUNCEMENT
     if "dividend" in doc:
@@ -254,14 +264,14 @@ def classify_event_type(raw: dict[str, Any]) -> EventType | None:
 
 def build_fundamental_features(raw: dict[str, Any], event: EventRecord) -> FundamentalFeaturesV0:
     prev_eps = _decimal(_first(raw, "PreviousForecastEarningsPerShare", "PreviousForecastEPS"))
-    revised_eps = _decimal(_first(raw, "ForecastEarningsPerShare", "ForecastEPS"))
+    revised_eps = _decimal(_first(raw, "ForecastEarningsPerShare", "ForecastEPS", "FEPS"))
     eps_latest = _decimal(_first(raw, "EarningsPerShare", "EPS"))
     prev_op = _decimal(_first(raw, "PreviousForecastOperatingProfit"))
-    revised_op = _decimal(_first(raw, "ForecastOperatingProfit"))
+    revised_op = _decimal(_first(raw, "ForecastOperatingProfit", "FOP"))
     prev_profit = _decimal(_first(raw, "PreviousForecastProfit"))
-    revised_profit = _decimal(_first(raw, "ForecastProfit"))
+    revised_profit = _decimal(_first(raw, "ForecastProfit", "FNP"))
     prev_sales = _decimal(_first(raw, "PreviousForecastNetSales", "PreviousForecastSales"))
-    revised_sales = _decimal(_first(raw, "ForecastNetSales", "ForecastSales"))
+    revised_sales = _decimal(_first(raw, "ForecastNetSales", "ForecastSales", "FSales"))
 
     missing_eps = revised_eps is None and eps_latest is None
     negative_eps = any(value is not None and value < 0 for value in (revised_eps, eps_latest))
@@ -337,8 +347,8 @@ def build_fundamental_features(raw: dict[str, Any], event: EventRecord) -> Funda
             **common,
         ),
         accounting_standard=feature(
-            raw.get("AccountingStandard"),
-            raw.get("AccountingStandard") is not None,
+            _first(raw, "AccountingStandard", "DocType"),
+            _first(raw, "AccountingStandard", "DocType") is not None,
             **common,
         ),
         fundamental_data_age_days=feature(0, True, **common),
@@ -359,10 +369,18 @@ def build_valuation_features(
     sector: str | None,
 ) -> ValuationFeaturesV0:
     eps_latest = _decimal(_first(raw, "EarningsPerShare", "EPS"))
-    forecast_eps = _decimal(_first(raw, "ForecastEarningsPerShare", "ForecastEPS"))
+    forecast_eps = _decimal(_first(raw, "ForecastEarningsPerShare", "ForecastEPS", "FEPS"))
     bps = _decimal(_first(raw, "BookValuePerShare", "BPS"))
     roe = _decimal(raw.get("ROE"))
-    dividend = _decimal(_first(raw, "ForecastDividendPerShareAnnual", "ForecastDividend"))
+    dividend = _decimal(
+        _first(
+            raw,
+            "ForecastDividendPerShareAnnual",
+            "ForecastDividend",
+            "FDivTotalAnn",
+            "FDivAnn",
+        )
+    )
     trailing_per = _per(valuation_price, eps_latest)
     forecast_per = _per(valuation_price, forecast_eps)
     pbr = None if bps is None or bps <= 0 else valuation_price / bps
@@ -619,6 +637,8 @@ def metrics_for_observations(
 
 def random_baselines(observations: list[ObservationRecord], *, seed_count: int) -> dict[str, Any]:
     selected = _net_for_sample(observations, seed=0)
+    pnl_by_observation = [_net_pnl_10d(obs) for obs in observations]
+    pools_by_name = _baseline_index_pools(observations)
     baselines: dict[str, list[Decimal]] = {
         "same_symbol_random_date": [],
         "same_symbol_same_month_random_date": [],
@@ -628,9 +648,12 @@ def random_baselines(observations: list[ObservationRecord], *, seed_count: int) 
     }
     for seed in range(1, seed_count + 1):
         rng = random.Random(seed)
-        for name in baselines:
-            sample = sample_random_baseline(observations, name=name, rng=rng)
-            baselines[name].append(_net_for_sample(sample, seed=seed))
+        for name, pools in pools_by_name.items():
+            total = 0.0
+            for obs_idx, pool in enumerate(pools):
+                chosen_idx = rng.choice(pool) if pool else obs_idx
+                total += pnl_by_observation[chosen_idx]
+            baselines[name].append(Decimal(str(total)))
     return {name: random_summary(values, selected) for name, values in baselines.items()}
 
 
@@ -640,14 +663,27 @@ def sample_random_baseline(
     name: str,
     rng: random.Random,
 ) -> list[ObservationRecord]:
+    return _sample_random_baseline(
+        observations,
+        name=name,
+        rng=rng,
+        indexes=_baseline_indexes(observations),
+    )
+
+
+def _sample_random_baseline(
+    observations: list[ObservationRecord],
+    *,
+    name: str,
+    rng: random.Random,
+    indexes: dict[str, Any],
+) -> list[ObservationRecord]:
+    by_symbol = indexes["by_symbol"]
+    by_symbol_month = indexes["by_symbol_month"]
+    by_symbol_regime = indexes["by_symbol_regime"]
+    by_sector_date = indexes["by_sector_date"]
+    by_event_type = indexes["by_event_type"]
     out: list[ObservationRecord] = []
-    by_symbol: dict[str, list[ObservationRecord]] = defaultdict(list)
-    by_sector_date: dict[tuple[str | None, str], list[ObservationRecord]] = defaultdict(list)
-    by_event_type: dict[EventType, list[ObservationRecord]] = defaultdict(list)
-    for obs in observations:
-        by_symbol[obs.symbol].append(obs)
-        by_sector_date[(obs.sector, obs.signal_date)].append(obs)
-        by_event_type[obs.event_type].append(obs)
     for obs in observations:
         if name in {
             "same_symbol_random_date",
@@ -656,12 +692,10 @@ def sample_random_baseline(
         }:
             pool = by_symbol[obs.symbol]
             if name == "same_symbol_same_month_random_date":
-                pool = [item for item in pool if item.signal_date[:7] == obs.signal_date[:7]]
+                pool = by_symbol_month[(obs.symbol, obs.signal_date[:7])]
             if name == "same_symbol_same_regime_random_date":
                 regime = obs.technical_context_v0.market_regime.value
-                pool = [
-                    item for item in pool if item.technical_context_v0.market_regime.value == regime
-                ]
+                pool = by_symbol_regime[(obs.symbol, regime)]
         elif name == "same_sector_same_date_random":
             pool = by_sector_date[(obs.sector, obs.signal_date)]
         elif name == "event_type_matched_random":
@@ -670,6 +704,55 @@ def sample_random_baseline(
             raise ValueError(f"unknown baseline: {name}")
         out.append(rng.choice(pool) if pool else obs)
     return out
+
+
+def _baseline_indexes(observations: list[ObservationRecord]) -> dict[str, Any]:
+    by_symbol: dict[str, list[ObservationRecord]] = defaultdict(list)
+    by_symbol_month: dict[tuple[str, str], list[ObservationRecord]] = defaultdict(list)
+    by_symbol_regime: dict[tuple[str, Any], list[ObservationRecord]] = defaultdict(list)
+    by_sector_date: dict[tuple[str | None, str], list[ObservationRecord]] = defaultdict(list)
+    by_event_type: dict[EventType, list[ObservationRecord]] = defaultdict(list)
+    for obs in observations:
+        by_symbol[obs.symbol].append(obs)
+        by_symbol_month[(obs.symbol, obs.signal_date[:7])].append(obs)
+        by_symbol_regime[(obs.symbol, obs.technical_context_v0.market_regime.value)].append(obs)
+        by_sector_date[(obs.sector, obs.signal_date)].append(obs)
+        by_event_type[obs.event_type].append(obs)
+    return {
+        "by_symbol": by_symbol,
+        "by_symbol_month": by_symbol_month,
+        "by_symbol_regime": by_symbol_regime,
+        "by_sector_date": by_sector_date,
+        "by_event_type": by_event_type,
+    }
+
+
+def _baseline_index_pools(observations: list[ObservationRecord]) -> dict[str, list[list[int]]]:
+    by_symbol: dict[str, list[int]] = defaultdict(list)
+    by_symbol_month: dict[tuple[str, str], list[int]] = defaultdict(list)
+    by_symbol_regime: dict[tuple[str, Any], list[int]] = defaultdict(list)
+    by_sector_date: dict[tuple[str | None, str], list[int]] = defaultdict(list)
+    by_event_type: dict[EventType, list[int]] = defaultdict(list)
+    for idx, obs in enumerate(observations):
+        by_symbol[obs.symbol].append(idx)
+        by_symbol_month[(obs.symbol, obs.signal_date[:7])].append(idx)
+        by_symbol_regime[(obs.symbol, obs.technical_context_v0.market_regime.value)].append(idx)
+        by_sector_date[(obs.sector, obs.signal_date)].append(idx)
+        by_event_type[obs.event_type].append(idx)
+    return {
+        "same_symbol_random_date": [by_symbol[obs.symbol] for obs in observations],
+        "same_symbol_same_month_random_date": [
+            by_symbol_month[(obs.symbol, obs.signal_date[:7])] for obs in observations
+        ],
+        "same_symbol_same_regime_random_date": [
+            by_symbol_regime[(obs.symbol, obs.technical_context_v0.market_regime.value)]
+            for obs in observations
+        ],
+        "same_sector_same_date_random": [
+            by_sector_date[(obs.sector, obs.signal_date)] for obs in observations
+        ],
+        "event_type_matched_random": [by_event_type[obs.event_type] for obs in observations],
+    }
 
 
 def random_summary(values: list[Decimal], selected: Decimal) -> dict[str, Any]:
@@ -713,8 +796,8 @@ def split_manifest(observations: list[ObservationRecord]) -> dict[str, Any]:
         "locked_oos_end": dates[-1].isoformat(),
         "purge_days": PURGE_TRADING_DAYS,
         "dataset_hash": dataset_hash,
-        "event_count": len(observations),
-        "symbol_count": len({obs.symbol for obs in observations}),
+        "split_observation_count": len(observations),
+        "split_symbol_count": len({obs.symbol for obs in observations}),
         "feature_schema_version": FEATURE_SCHEMA_VERSION,
     }
 
@@ -1021,6 +1104,9 @@ def max_drawdown(pnls: list[Decimal]) -> Decimal:
 
 def block_stability(observations: list[ObservationRecord], pnls: list[Decimal]) -> dict[str, Any]:
     by_month: dict[str, Decimal] = _monthly_pnls(observations, pnls)
+    counts: dict[str, int] = defaultdict(int)
+    for obs in observations:
+        counts[obs.entry_date[:7]] += 1
     values = list(by_month.values())
     return {
         "positive_block_ratio": None
@@ -1028,9 +1114,7 @@ def block_stability(observations: list[ObservationRecord], pnls: list[Decimal]) 
         else sum(1 for value in values if value > 0) / len(values),
         "worst_block_pnl": None if not values else float(min(values)),
         "median_block_pnl": None if not values else float(_median(values)),
-        "event_count_per_block": {
-            key: sum(1 for obs in observations if obs.entry_date[:7] == key) for key in by_month
-        },
+        "event_count_per_block": dict(counts),
     }
 
 
@@ -1060,8 +1144,21 @@ def _quantile(sorted_values: list[Decimal], q: Decimal) -> Decimal:
 
 
 def _net_for_sample(observations: list[ObservationRecord], *, seed: int) -> Decimal:
-    metrics = metrics_for_observations(observations, exit_arm=ExitArm.FIXED_10D)
-    return Decimal(str(metrics["net_pnl"]))
+    return sum((_net_pnl_10d_decimal(obs) for obs in observations), Decimal("0"))
+
+
+def _net_pnl_10d(obs: ObservationRecord) -> float:
+    value = obs.labels.get("forward_return_10d")
+    if value is None:
+        return 0.0
+    return float(DEFAULT_TRADE_NOTIONAL) * (float(value) - float(ROUND_TRIP_COST_RATE))
+
+
+def _net_pnl_10d_decimal(obs: ObservationRecord) -> Decimal:
+    value = obs.labels.get("forward_return_10d")
+    if value is None:
+        return Decimal("0")
+    return DEFAULT_TRADE_NOTIONAL * (Decimal(str(value)) - ROUND_TRIP_COST_RATE)
 
 
 def _shift_trading_date(dates: list[date], start: date, days: int) -> date:

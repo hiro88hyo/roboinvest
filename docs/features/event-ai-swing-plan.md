@@ -118,7 +118,20 @@ Research, paper, and live gates are defined in
 
 All commands use `uv`.
 
-1. Build the event dataset:
+1. Export J-Quants financial summaries:
+
+```bash
+uv run python scripts/export-jquants-financial-summaries-jsonl.py \
+  --start-date 2021-01-01 \
+  --end-date 2026-12-31 \
+  --output out/event-research/financial-summaries.jsonl \
+  --resume \
+  --concurrency 1 \
+  --sleep-seconds 1.4 \
+  --log-every-dates 50
+```
+
+2. Build the event dataset:
 
 ```bash
 uv run python scripts/build-event-research-dataset.py \
@@ -128,7 +141,7 @@ uv run python scripts/build-event-research-dataset.py \
   --output-dir out/event-research
 ```
 
-2. Evaluate event/fundamental/technical baselines:
+3. Evaluate event/fundamental/technical baselines:
 
 ```bash
 uv run python scripts/evaluate-event-research.py \
@@ -137,7 +150,7 @@ uv run python scripts/evaluate-event-research.py \
   --random-seeds 300
 ```
 
-3. Generate LLM jobs:
+4. Generate LLM jobs:
 
 ```bash
 uv run python scripts/build-event-llm-jobs.py \
@@ -148,7 +161,7 @@ uv run python scripts/build-event-llm-jobs.py \
   --model-id fixture-event-labeler-v0
 ```
 
-4. Run fixture labels:
+5. Run fixture labels:
 
 ```bash
 uv run python scripts/run-event-llm-jobs.py \
@@ -159,7 +172,7 @@ uv run python scripts/run-event-llm-jobs.py \
   --output-manifest out/event-ai/run-manifest.json
 ```
 
-5. Evaluate AI labels:
+6. Evaluate AI labels:
 
 ```bash
 uv run python scripts/evaluate-event-ai.py \
@@ -168,7 +181,7 @@ uv run python scripts/evaluate-event-ai.py \
   --output-dir out/event-ai
 ```
 
-6. Run a local OpenAI-compatible model:
+7. Run a local OpenAI-compatible model:
 
 ```bash
 LLM_PROVIDER=openai_compatible \

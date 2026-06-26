@@ -8,7 +8,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
-from trade_contracts.event_research import EntryArm, ExitArm
+from trade_contracts.event_research import EntryArm, EventType, ExitArm
 
 
 def _load_module():
@@ -85,6 +85,17 @@ def test_post_close_and_unknown_time_enter_next_trading_day() -> None:
     assert unknown.entry_date == "2026-01-22"
 
 
+def test_events_without_next_trading_day_are_skipped() -> None:
+    bars = _bars()
+    events = event_research.build_events_from_financial_rows(
+        [_raw(DisclosedDate="2026-02-14", DisclosedTime="15:30")],
+        ohlcv_rows=bars,
+        fetched_at=datetime(2026, 2, 14, tzinfo=UTC),
+    )
+
+    assert events == []
+
+
 def test_next_open_features_use_signal_close_not_entry_open() -> None:
     bars = _bars()
     event = _event(_raw(), bars)
@@ -94,6 +105,34 @@ def test_next_open_features_use_signal_close_not_entry_open() -> None:
     assert observation.valuation_price == Decimal("1100")
     assert observation.entry_price == Decimal("1103")
     assert observation.valuation_features_v0.forecast_per.value == Decimal("8.8")
+
+
+def test_real_jquants_summary_keys_are_mapped_point_in_time() -> None:
+    bars = _bars()
+    raw = {
+        "Code": "72030",
+        "DiscDate": "2026-01-21",
+        "DiscTime": "15:30:00",
+        "DiscNo": "20260121555555",
+        "DocType": "3QFinancialStatements_Consolidated_JP",
+        "EPS": "40.3",
+        "FEPS": "59.38",
+        "FOP": "2200000000",
+        "FNP": "1220000000",
+        "FSales": "38600000000",
+        "BPS": "1000",
+        "FDivTotalAnn": "20",
+    }
+
+    event = _event(raw, bars)
+    observation = event_research.build_observations([event], ohlcv_rows=bars)[0]
+
+    assert event.event_type == EventType.EARNINGS_RESULT
+    assert event.raw_document_type == "3QFinancialStatements_Consolidated_JP"
+    assert event.raw_source_identifier == "20260121555555"
+    assert observation.fundamental_features_v0.eps_latest.value == Decimal("40.3")
+    assert observation.fundamental_features_v0.revised_forecast_eps.value == Decimal("59.38")
+    assert observation.valuation_features_v0.forecast_dividend_per_share.value == Decimal("20")
 
 
 def test_eps_sign_change_does_not_make_percentage_or_negative_per() -> None:
