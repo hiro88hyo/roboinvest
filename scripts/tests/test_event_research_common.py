@@ -230,6 +230,27 @@ def test_manifest_has_20_trading_day_purge() -> None:
     assert manifest["feature_schema_version"] == "event_research_v0"
 
 
+def test_select_observations_for_split_excludes_purge_and_locked_oos() -> None:
+    bars = _bars()
+    events = [
+        _event(_raw(DisclosedDate=f"2026-01-{day:02d}", DisclosureNumber=f"fixture-{day}"), bars)
+        for day in range(3, 26)
+    ]
+    observations = event_research.build_observations(events, ohlcv_rows=bars)
+
+    development, info = event_research.select_observations_for_split(
+        observations,
+        split="development",
+    )
+    locked, _ = event_research.select_observations_for_split(observations, split="locked-oos")
+
+    assert info["split_counts"]["purge_train_validation"] > 0
+    assert len(development) + len(locked) < len(observations)
+    assert {obs.observation_id for obs in development}.isdisjoint(
+        {obs.observation_id for obs in locked}
+    )
+
+
 def test_random_baseline_is_seeded_and_symbol_constrained() -> None:
     bars = _bars() + _bars(symbol="6758", start_close=2000)
     events = [

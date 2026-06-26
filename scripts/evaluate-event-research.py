@@ -6,7 +6,13 @@ import csv
 import json
 from pathlib import Path
 
-from event_research_common import RANDOM_BASELINE_NAMES, evaluate_observations, read_jsonl
+from event_research_common import (
+    EVALUATION_SPLITS,
+    RANDOM_BASELINE_NAMES,
+    evaluate_observations,
+    read_jsonl,
+    select_observations_for_split,
+)
 from trade_contracts.event_research import ObservationRecord
 
 
@@ -15,10 +21,27 @@ def main() -> int:
     parser.add_argument("--observations", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, default=Path("out/event-research"))
     parser.add_argument("--random-seeds", type=int, default=300)
+    parser.add_argument(
+        "--split",
+        choices=EVALUATION_SPLITS,
+        default="development",
+        help="Evaluation split. Default excludes locked OOS details.",
+    )
+    parser.add_argument(
+        "--include-locked-oos",
+        action="store_true",
+        help="Required when --split is locked-oos or all.",
+    )
     args = parser.parse_args()
 
-    observations = [ObservationRecord.model_validate(row) for row in read_jsonl(args.observations)]
+    if args.split in {"locked-oos", "all"} and not args.include_locked_oos:
+        parser.error("--include-locked-oos is required when --split is locked-oos or all")
+    all_observations = [
+        ObservationRecord.model_validate(row) for row in read_jsonl(args.observations)
+    ]
+    observations, split_info = select_observations_for_split(all_observations, split=args.split)
     result = evaluate_observations(observations, random_seed_count=args.random_seeds)
+    result["evaluation_split"] = split_info
     args.output_dir.mkdir(parents=True, exist_ok=True)
     (args.output_dir / "event-alpha-report.json").write_text(
         json.dumps(result, indent=2, ensure_ascii=False) + "\n",
@@ -30,6 +53,7 @@ def main() -> int:
     )
     with (args.output_dir / "event-alpha-summary.csv").open("w", encoding="utf-8", newline="") as f:
         fieldnames = [
+            "split",
             "event_type",
             "entry_arm",
             "exit_arm",
@@ -48,8 +72,14 @@ def main() -> int:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         for row in result["rows"]:
-            writer.writerow({key: row.get(key) for key in fieldnames})
-    print(f"event_alpha rows={len(result['rows'])} output={args.output_dir}")
+            writer.writerow(
+                {key: args.split if key == "split" else row.get(key) for key in fieldnames}
+            )
+    print(
+        "event_alpha "
+        f"split={args.split} observations={len(observations)} "
+        f"rows={len(result['rows'])} output={args.output_dir}"
+    )
     return 0
 
 

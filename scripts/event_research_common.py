@@ -47,6 +47,13 @@ RANDOM_BASELINE_NAMES = (
     "same_sector_same_date_random",
     "event_type_matched_random",
 )
+EVALUATION_SPLITS = (
+    "development",
+    "train",
+    "validation",
+    "locked-oos",
+    "all",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -841,6 +848,65 @@ def percentile(values: list[Decimal], selected: Decimal) -> float:
     if not values:
         return 0.0
     return sum(1 for value in values if value <= selected) / len(values)
+
+
+def select_observations_for_split(
+    observations: list[ObservationRecord],
+    *,
+    split: str,
+) -> tuple[list[ObservationRecord], dict[str, Any]]:
+    if split not in EVALUATION_SPLITS:
+        raise ValueError(f"unsupported evaluation split: {split}")
+    manifest = split_manifest(observations)
+    if not manifest:
+        return [], {"requested_split": split, "selected_observation_count": 0}
+    if split == "all":
+        selected = list(observations)
+    else:
+        selected = [
+            obs
+            for obs in observations
+            if _observation_split(obs, manifest) in _requested_split_labels(split)
+        ]
+    counts: dict[str, int] = defaultdict(int)
+    for obs in observations:
+        counts[_observation_split(obs, manifest)] += 1
+    return selected, {
+        "requested_split": split,
+        "selected_observation_count": len(selected),
+        "selected_symbol_count": len({obs.symbol for obs in selected}),
+        "split_counts": dict(counts),
+        "split_manifest": manifest,
+    }
+
+
+def _requested_split_labels(split: str) -> set[str]:
+    if split == "development":
+        return {"train", "validation"}
+    if split == "train":
+        return {"train"}
+    if split == "validation":
+        return {"validation"}
+    if split == "locked-oos":
+        return {"locked_oos"}
+    raise ValueError(f"unsupported evaluation split: {split}")
+
+
+def _observation_split(obs: ObservationRecord, manifest: dict[str, Any]) -> str:
+    signal_date = date.fromisoformat(obs.signal_date)
+    train_end = date.fromisoformat(manifest["train_end"])
+    validation_start = date.fromisoformat(manifest["validation_start"])
+    validation_end = date.fromisoformat(manifest["validation_end"])
+    locked_oos_start = date.fromisoformat(manifest["locked_oos_start"])
+    if signal_date <= train_end:
+        return "train"
+    if signal_date < validation_start:
+        return "purge_train_validation"
+    if signal_date <= validation_end:
+        return "validation"
+    if signal_date < locked_oos_start:
+        return "purge_validation_locked_oos"
+    return "locked_oos"
 
 
 def split_manifest(observations: list[ObservationRecord]) -> dict[str, Any]:

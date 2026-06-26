@@ -147,6 +147,7 @@ uv run python scripts/build-event-research-dataset.py \
 uv run python scripts/evaluate-event-research.py \
   --observations out/event-research/observations.jsonl \
   --output-dir out/event-research \
+  --split development \
   --random-seeds 300
 ```
 
@@ -154,6 +155,19 @@ uv run python scripts/evaluate-event-research.py \
 `event_type` / `entry_arm` / `exit_arm` row. `random-baselines.json` keeps the
 legacy aggregate fixed-10-day baseline for broad sanity checks only; gate
 decisions must use the row-specific percentiles in the summary/report.
+
+The default split is `development`, which includes train and validation while
+excluding purge windows and locked OOS. Locked OOS details require an explicit
+opt-in:
+
+```bash
+uv run python scripts/evaluate-event-research.py \
+  --observations out/event-research/observations.jsonl \
+  --output-dir out/event-research-locked-oos \
+  --split locked-oos \
+  --include-locked-oos \
+  --random-seeds 300
+```
 
 4. Generate LLM jobs:
 
