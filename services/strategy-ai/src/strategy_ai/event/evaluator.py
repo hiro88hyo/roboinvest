@@ -83,6 +83,73 @@ def shuffle_labels_within_event_type(
     return out
 
 
+def shuffle_confidence_within_event_type(
+    labels: dict[str, EventAiLabel],
+    observations: list[ObservationRecord],
+    *,
+    seed: int,
+) -> dict[str, EventAiLabel]:
+    rng = random.Random(seed)
+    by_type: dict[EventType, list[float]] = defaultdict(list)
+    for obs in observations:
+        label = labels.get(obs.event_id)
+        if label is not None:
+            by_type[obs.event_type].append(label.confidence)
+    for items in by_type.values():
+        rng.shuffle(items)
+    cursors: dict[EventType, int] = defaultdict(int)
+    out: dict[str, EventAiLabel] = {}
+    for obs in observations:
+        label = labels.get(obs.event_id)
+        if label is None:
+            continue
+        pool = by_type.get(obs.event_type, [])
+        if not pool:
+            continue
+        idx = cursors[obs.event_type] % len(pool)
+        out[obs.event_id] = label.model_copy(update={"confidence": pool[idx]})
+        cursors[obs.event_type] += 1
+    return out
+
+
+def random_threshold_labels_within_event_type(
+    labels: dict[str, EventAiLabel],
+    observations: list[ObservationRecord],
+    *,
+    seed: int,
+) -> dict[str, EventAiLabel]:
+    rng = random.Random(seed)
+    pass_counts: dict[EventType, int] = defaultdict(int)
+    label_counts: dict[EventType, int] = defaultdict(int)
+    for obs in observations:
+        label = labels.get(obs.event_id)
+        if label is None:
+            continue
+        label_counts[obs.event_type] += 1
+        if ai_arm_allows(obs, label, EntryArm.EVENT_PLUS_AI):
+            pass_counts[obs.event_type] += 1
+    pass_rates = {
+        event_type: pass_counts[event_type] / count for event_type, count in label_counts.items()
+    }
+    out: dict[str, EventAiLabel] = {}
+    for obs in observations:
+        label = labels.get(obs.event_id)
+        if label is None:
+            continue
+        if rng.random() < pass_rates.get(obs.event_type, 0.0):
+            out[obs.event_id] = label.model_copy(
+                update={
+                    "fundamental_direction": "positive",
+                    "fundamental_strength": 2,
+                    "expected_horizon": "10d",
+                    "confidence": 0.8,
+                }
+            )
+        else:
+            out[obs.event_id] = label.model_copy(update={"confidence": 0.0})
+    return out
+
+
 def _as_decimal(value: Any) -> Decimal | None:
     if value in (None, ""):
         return None

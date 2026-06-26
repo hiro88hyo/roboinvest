@@ -151,3 +151,27 @@ def test_ai_arm_does_not_emit_direct_strategy_signal() -> None:
 
     assert ai_arm_allows(_observation(), _label(), EntryArm.EVENT_PLUS_AI)
     assert not ai_arm_allows(_observation(), _label(confidence=0.4), EntryArm.EVENT_PLUS_AI)
+
+
+def test_ai_placebo_labels_are_deterministic() -> None:
+    from strategy_ai.event.evaluator import (
+        random_threshold_labels_within_event_type,
+        shuffle_confidence_within_event_type,
+    )
+
+    observations = [
+        _observation().model_copy(update={"event_id": f"event-{idx}"}) for idx in range(4)
+    ]
+    labels = {
+        obs.event_id: _label(confidence=confidence)
+        for obs, confidence in zip(observations, (0.1, 0.4, 0.7, 0.9), strict=True)
+    }
+
+    first_confidence = shuffle_confidence_within_event_type(labels, observations, seed=1)
+    second_confidence = shuffle_confidence_within_event_type(labels, observations, seed=1)
+    first_random = random_threshold_labels_within_event_type(labels, observations, seed=1)
+    second_random = random_threshold_labels_within_event_type(labels, observations, seed=1)
+
+    assert first_confidence == second_confidence
+    assert first_random == second_random
+    assert sorted(label.confidence for label in first_confidence.values()) == [0.1, 0.4, 0.7, 0.9]

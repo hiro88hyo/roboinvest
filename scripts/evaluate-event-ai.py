@@ -13,9 +13,15 @@ from event_research_common import (
     read_jsonl,
     select_observations_for_split,
 )
-from strategy_ai.event.evaluator import ai_arm_allows, shuffle_labels_within_event_type
+from strategy_ai.event.evaluator import (
+    ai_arm_allows,
+    random_threshold_labels_within_event_type,
+    shuffle_confidence_within_event_type,
+    shuffle_labels_within_event_type,
+)
 from trade_contracts.event_research import (
     EntryArm,
+    EventAiLabel,
     EventAiLabeledRecord,
     ExitArm,
     ObservationRecord,
@@ -49,16 +55,23 @@ def main() -> int:
     labeled = [EventAiLabeledRecord.model_validate(row) for row in read_jsonl(args.labels)]
     labels = {row.event_id: row.label for row in labeled}
     rows = _evaluate_ai_rows(observations, labels)
-    placebo = _evaluate_ai_rows(
-        observations,
-        shuffle_labels_within_event_type(labels, observations, seed=1),
-        prefix="shuffled_label_",
-    )
+    placebos = _evaluate_placebos(observations, labels)
     result = {
         "rows": rows,
-        "placebo": placebo,
+        "placebo": placebos["labels_shuffled_within_event_type"],
+        "placebos": placebos,
         "confidence_buckets": confidence_buckets(observations, labels),
         "evaluation_split": split_info,
+        "unavailable_placebos": [
+            {
+                "name": "event_title_shuffled",
+                "reason": "labels.jsonl evaluation input does not carry event title/text fields",
+            },
+            {
+                "name": "numerical_fields_shuffled",
+                "reason": "labels.jsonl evaluation input does not carry feature bundle values",
+            },
+        ],
         "ai_value_minimum_conditions": {
             "must_beat_event_only": True,
             "must_beat_rule_only": True,
@@ -79,6 +92,29 @@ def main() -> int:
         f"rows={len(rows)} output={args.output_dir}"
     )
     return 0
+
+
+def _evaluate_placebos(
+    observations: list[ObservationRecord],
+    labels: dict[str, EventAiLabel],
+) -> dict[str, list[dict[str, object]]]:
+    return {
+        "labels_shuffled_within_event_type": _evaluate_ai_rows(
+            observations,
+            shuffle_labels_within_event_type(labels, observations, seed=1),
+            prefix="labels_shuffled_",
+        ),
+        "confidence_shuffled_within_event_type": _evaluate_ai_rows(
+            observations,
+            shuffle_confidence_within_event_type(labels, observations, seed=1),
+            prefix="confidence_shuffled_",
+        ),
+        "random_threshold_within_event_type": _evaluate_ai_rows(
+            observations,
+            random_threshold_labels_within_event_type(labels, observations, seed=1),
+            prefix="random_threshold_",
+        ),
+    }
 
 
 def _evaluate_ai_rows(

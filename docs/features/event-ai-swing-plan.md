@@ -205,6 +205,10 @@ uv run python scripts/evaluate-event-ai.py \
 The AI evaluator uses the same split guard as the rule-only event evaluator.
 Locked OOS requires `--split locked-oos --include-locked-oos` after prompt,
 feature schema, model, and thresholds are frozen.
+The report includes label-shuffled, confidence-shuffled, and random-threshold
+placebos within event type. Event-title and numerical-field shuffled placebos
+are reported as unavailable until the evaluator consumes the full feature bundle
+instead of labels-only input.
 
 7. Run a local OpenAI-compatible model:
 

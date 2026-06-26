@@ -120,6 +120,15 @@ def test_event_ai_evaluator_defaults_to_development_split(
     assert report["evaluation_split"]["requested_split"] == "development"
     assert report["evaluation_split"]["split_counts"]["locked_oos"] > 0
     assert report["evaluation_split"]["selected_observation_count"] < len(observations)
+    assert set(report["placebos"]) == {
+        "labels_shuffled_within_event_type",
+        "confidence_shuffled_within_event_type",
+        "random_threshold_within_event_type",
+    }
+    assert {item["name"] for item in report["unavailable_placebos"]} == {
+        "event_title_shuffled",
+        "numerical_fields_shuffled",
+    }
 
 
 def test_event_ai_evaluator_requires_locked_oos_opt_in(
