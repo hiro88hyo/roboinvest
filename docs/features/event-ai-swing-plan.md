@@ -176,6 +176,7 @@ uv run python scripts/build-event-llm-jobs.py \
   --events out/event-research/events.jsonl \
   --observations out/event-research/observations.jsonl \
   --output out/event-ai/jobs.jsonl \
+  --split development \
   --model-provider fixture \
   --model-id fixture-event-labeler-v0
 ```
