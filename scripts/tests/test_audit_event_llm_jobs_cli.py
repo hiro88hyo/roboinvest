@@ -18,6 +18,9 @@ from trade_contracts.event_research import (
     ObservationRecord,
 )
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from event_research_common import select_observations_for_split
+
 
 def _load_module():
     path = Path(__file__).resolve().parents[1] / "audit-event-llm-jobs.py"
@@ -89,7 +92,7 @@ def test_audit_event_llm_jobs_accepts_development_jobs_and_placebo(
 ) -> None:
     events = [_event(idx) for idx in range(40)]
     observations = [_observation(idx) for idx in range(40)]
-    selected, _ = audit_event_llm_jobs.select_observations_for_split(
+    selected, _ = select_observations_for_split(
         observations,
         split="development",
     )
@@ -153,7 +156,7 @@ def test_audit_event_llm_jobs_rejects_prompt_hash_mismatch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     observations = [_observation(idx) for idx in range(40)]
-    selected, _ = audit_event_llm_jobs.select_observations_for_split(
+    selected, _ = select_observations_for_split(
         observations,
         split="development",
     )

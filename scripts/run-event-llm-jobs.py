@@ -37,6 +37,11 @@ def main() -> int:
         help="Run at most this many uncached jobs. Useful for local LLM smoke tests.",
     )
     parser.add_argument(
+        "--max-concurrency",
+        type=int,
+        help="Bounded LLM request concurrency. Defaults to LOCAL_LLM_MAX_CONCURRENCY.",
+    )
+    parser.add_argument(
         "--no-resume",
         action="store_true",
         help="Ignore existing labels and overwrite outputs from scratch.",
@@ -44,6 +49,8 @@ def main() -> int:
     args = parser.parse_args()
     if args.max_jobs is not None and args.max_jobs < 0:
         parser.error("--max-jobs must be non-negative")
+    if args.max_concurrency is not None and args.max_concurrency < 1:
+        parser.error("--max-concurrency must be >= 1")
     return asyncio.run(_amain(args))
 
 
@@ -76,36 +83,29 @@ async def _amain(args: argparse.Namespace) -> int:
 
     client = _build_client(args.provider, pending_jobs) if pending_jobs else None
     completed = 0
-    for job in pending_jobs:
-        cache_key = _job_cache_key(job, args.provider)
-        try:
-            if client is None:
-                raise LLMError("LLM client is not configured")
-            raw = await client.complete(job.prompt)
-            label = parse_event_ai_label(raw)
-            record = EventAiLabeledRecord(
-                job_id=job.job_id,
-                event_id=job.event_id,
-                prompt_hash=job.prompt_hash,
-                cache_key=cache_key,
-                model_provider=args.provider,
-                model_id=job.model_id,
-                raw_response=raw,
-                label=label,
-                created_at=datetime.now(tz=UTC),
+    max_concurrency = _max_concurrency(args.provider, args.max_concurrency)
+    if pending_jobs and client is None:
+        raise LLMError("LLM client is not configured")
+    semaphore = asyncio.Semaphore(max_concurrency)
+    tasks = [
+        asyncio.create_task(
+            _run_one_job(
+                job,
+                provider=args.provider,
+                client=client,
+                semaphore=semaphore,
             )
+        )
+        for job in pending_jobs
+    ]
+    for task in asyncio.as_completed(tasks):
+        record, failure = await task
+        if record is not None:
             labels.append(record)
-            cached_keys.add(cache_key)
+            cached_keys.add(record.cache_key)
             _append_jsonl(args.output_labels, record)
             completed += 1
-        except (EventAiParseError, LLMError) as exc:
-            failure = {
-                "job_id": job.job_id,
-                "event_id": job.event_id,
-                "prompt_hash": job.prompt_hash,
-                "cache_key": cache_key,
-                "error": f"{type(exc).__name__}: {exc}",
-            }
+        if failure is not None:
             failures.append(failure)
             _append_jsonl(args.output_failures, failure)
     ended = datetime.now(tz=UTC)
@@ -124,6 +124,7 @@ async def _amain(args: argparse.Namespace) -> int:
         "labels_total": len(labels),
         "resume_enabled": resume,
         "max_jobs": args.max_jobs,
+        "max_concurrency": max_concurrency,
         "start_time": started.isoformat(),
         "end_time": ended.isoformat(),
         "cache_key_example": None
@@ -144,6 +145,54 @@ async def _amain(args: argparse.Namespace) -> int:
         f"cached={cached} labels_total={len(labels)}"
     )
     return 0
+
+
+async def _run_one_job(
+    job: EventAiJob,
+    *,
+    provider: str,
+    client: Any,
+    semaphore: asyncio.Semaphore,
+) -> tuple[EventAiLabeledRecord | None, dict[str, object] | None]:
+    cache_key = _job_cache_key(job, provider)
+    try:
+        async with semaphore:
+            raw = await client.complete(job.prompt)
+        label = parse_event_ai_label(raw)
+        return (
+            EventAiLabeledRecord(
+                job_id=job.job_id,
+                event_id=job.event_id,
+                prompt_hash=job.prompt_hash,
+                cache_key=cache_key,
+                model_provider=provider,
+                model_id=job.model_id,
+                raw_response=raw,
+                label=label,
+                created_at=datetime.now(tz=UTC),
+            ),
+            None,
+        )
+    except (EventAiParseError, LLMError) as exc:
+        return (
+            None,
+            {
+                "job_id": job.job_id,
+                "event_id": job.event_id,
+                "prompt_hash": job.prompt_hash,
+                "cache_key": cache_key,
+                "error": f"{type(exc).__name__}: {exc}",
+            },
+        )
+
+
+def _max_concurrency(provider: str, override: int | None) -> int:
+    if override is not None:
+        return override
+    if provider == "fixture":
+        return 1
+    settings = StrategyAiSettings(_env_file=None)
+    return max(settings.local_llm_max_concurrency, 1)
 
 
 def _build_client(provider: str, jobs: list[EventAiJob]):

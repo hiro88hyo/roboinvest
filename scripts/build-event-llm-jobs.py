@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import random
 from decimal import Decimal
 from pathlib import Path
 
 from event_research_common import (
     EVALUATION_SPLITS,
+    observation_split_label,
     read_jsonl,
     select_observations_for_split,
     write_jsonl,
@@ -36,10 +39,15 @@ def main() -> int:
         type=int,
         help="Deterministically sample this many observations after split filtering.",
     )
+    parser.add_argument(
+        "--balanced-sample-size",
+        type=int,
+        help="Deterministically sample this many observations balanced by event_type.",
+    )
     parser.add_argument("--sample-seed", type=int, default=1)
     parser.add_argument(
         "--placebo-mode",
-        choices=["none", "numerical_fields_shuffled"],
+        choices=["none", "numerical_fields_shuffled", "bundle_shuffled"],
         default="none",
         help="Build placebo prompts. Numerical shuffle preserves feature timing metadata.",
     )
@@ -61,18 +69,37 @@ def main() -> int:
         parser.error("--include-locked-oos is required when --split is locked-oos or all")
     if args.sample_size is not None and args.sample_size < 0:
         parser.error("--sample-size must be non-negative")
+    if args.balanced_sample_size is not None and args.balanced_sample_size < 0:
+        parser.error("--balanced-sample-size must be non-negative")
+    if args.sample_size is not None and args.balanced_sample_size is not None:
+        parser.error("--sample-size and --balanced-sample-size cannot be used together")
     events = {row["event_id"]: EventRecord.model_validate(row) for row in read_jsonl(args.events)}
     all_observations = [
         ObservationRecord.model_validate(row) for row in read_jsonl(args.observations)
     ]
     observations, split_info = select_observations_for_split(all_observations, split=args.split)
-    observations = _sample_observations(
-        observations,
-        sample_size=args.sample_size,
-        sample_seed=args.sample_seed,
-    )
+    split_manifest = split_info.get("split_manifest", {})
+    split_manifest_hash = _stable_hash(split_manifest) if split_manifest else None
+    dataset_hash = split_manifest.get("dataset_hash") if split_manifest else None
+    if args.balanced_sample_size is not None:
+        observations = _balanced_sample_observations(
+            observations,
+            sample_size=args.balanced_sample_size,
+            sample_seed=args.sample_seed,
+        )
+    else:
+        observations = _sample_observations(
+            observations,
+            sample_size=args.sample_size,
+            sample_seed=args.sample_seed,
+        )
     if args.placebo_mode == "numerical_fields_shuffled":
         observations = _shuffle_numerical_feature_values(
+            observations,
+            seed=args.placebo_seed,
+        )
+    if args.placebo_mode == "bundle_shuffled":
+        observations = _shuffle_feature_bundles(
             observations,
             seed=args.placebo_seed,
         )
@@ -84,6 +111,14 @@ def main() -> int:
             model_id=args.model_id,
             temperature=Decimal(args.temperature),
             seed=args.seed,
+        ).model_copy(
+            update={
+                "dataset_hash": dataset_hash,
+                "split_manifest_hash": split_manifest_hash,
+                "split_label": None
+                if not split_manifest
+                else observation_split_label(obs, split_manifest),
+            }
         )
         for obs in observations
         if obs.event_id in events
@@ -92,7 +127,8 @@ def main() -> int:
     print(
         "event_llm_jobs "
         f"split={args.split} observations={split_info['selected_observation_count']} "
-        f"sample_size={args.sample_size or 'all'} placebo_mode={args.placebo_mode} "
+        f"sample_size={args.sample_size or args.balanced_sample_size or 'all'} "
+        f"balanced={args.balanced_sample_size is not None} placebo_mode={args.placebo_mode} "
         f"count={len(jobs)} output={args.output}"
     )
     return 0
@@ -112,6 +148,34 @@ def _sample_observations(
     ordered = sorted(observations, key=lambda obs: (obs.signal_date, obs.event_id))
     indexes = sorted(rng.sample(range(len(ordered)), sample_size))
     return [ordered[idx] for idx in indexes]
+
+
+def _balanced_sample_observations(
+    observations: list[ObservationRecord],
+    *,
+    sample_size: int,
+    sample_seed: int,
+) -> list[ObservationRecord]:
+    if sample_size >= len(observations):
+        return observations
+    rng = random.Random(sample_seed)
+    by_type: dict[str, list[ObservationRecord]] = {}
+    for obs in observations:
+        by_type.setdefault(obs.event_type.value, []).append(obs)
+    event_types = sorted(by_type)
+    base = sample_size // len(event_types) if event_types else 0
+    remainder = sample_size % len(event_types) if event_types else 0
+    selected: list[ObservationRecord] = []
+    for idx, event_type in enumerate(event_types):
+        pool = sorted(by_type[event_type], key=lambda obs: (obs.signal_date, obs.event_id))
+        take = min(len(pool), base + (1 if idx < remainder else 0))
+        if take:
+            selected.extend(rng.sample(pool, take))
+    if len(selected) < sample_size:
+        selected_ids = {obs.observation_id for obs in selected}
+        remaining = [obs for obs in observations if obs.observation_id not in selected_ids]
+        selected.extend(rng.sample(remaining, min(sample_size - len(selected), len(remaining))))
+    return sorted(selected, key=lambda obs: (obs.signal_date, obs.event_id))
 
 
 def _shuffle_numerical_feature_values(
@@ -144,6 +208,37 @@ def _shuffle_numerical_feature_values(
                     updated_group = current_group.model_copy(update={field_name: updated_feature})
                     out[idx] = out[idx].model_copy(update={group_name: updated_group})
     return out
+
+
+def _shuffle_feature_bundles(
+    observations: list[ObservationRecord],
+    *,
+    seed: int,
+) -> list[ObservationRecord]:
+    rng = random.Random(seed)
+    out = [obs.model_copy(deep=True) for obs in observations]
+    event_types = sorted({obs.event_type for obs in out}, key=lambda item: item.value)
+    for event_type in event_types:
+        indexes = [idx for idx, obs in enumerate(out) if obs.event_type == event_type]
+        if len(indexes) < 2:
+            continue
+        donor_indexes = indexes[:]
+        rng.shuffle(donor_indexes)
+        for idx, donor_idx in zip(indexes, donor_indexes, strict=True):
+            donor = out[donor_idx]
+            out[idx] = out[idx].model_copy(
+                update={
+                    "fundamental_features_v0": donor.fundamental_features_v0,
+                    "valuation_features_v0": donor.valuation_features_v0,
+                    "technical_context_v0": donor.technical_context_v0,
+                }
+            )
+    return out
+
+
+def _stable_hash(value: object) -> str:
+    raw = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 if __name__ == "__main__":

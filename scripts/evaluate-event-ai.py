@@ -75,6 +75,10 @@ def main() -> int:
                     "build-event-llm-jobs.py --placebo-mode numerical_fields_shuffled"
                 ),
             },
+            {
+                "name": "bundle_shuffled",
+                "how_to_generate": "build-event-llm-jobs.py --placebo-mode bundle_shuffled",
+            },
         ],
         "ai_value_minimum_conditions": {
             "must_beat_event_only": True,

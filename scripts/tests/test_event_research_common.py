@@ -48,19 +48,18 @@ def _bars(symbol: str = "7203", *, start_close: int = 1000):
 def _raw(**overrides):
     raw = {
         "Code": "72030",
-        "DisclosedDate": "2026-01-21",
-        "DisclosedTime": "15:30",
-        "DisclosureNumber": "fixture-1",
-        "TypeOfDocument": "ForecastRevision",
-        "PreviousForecastEarningsPerShare": "100",
-        "ForecastEarningsPerShare": "125",
-        "PreviousForecastOperatingProfit": "1000",
-        "ForecastOperatingProfit": "1250",
-        "PreviousForecastProfit": "800",
-        "ForecastProfit": "1000",
-        "EarningsPerShare": "110",
-        "BookValuePerShare": "1000",
-        "ForecastDividendPerShareAnnual": "40",
+        "DiscDate": "2026-01-21",
+        "DiscTime": "15:30",
+        "DiscNo": "fixture-1",
+        "DocType": "ForecastRevision_Consolidated_JP",
+        "CurFYEn": "2026-03-31",
+        "FEPS": "125",
+        "FOP": "1250",
+        "FNP": "1000",
+        "FSales": "10000",
+        "EPS": "110",
+        "BPS": "1000",
+        "FDivAnn": "40",
     }
     raw.update(overrides)
     return raw
@@ -76,11 +75,11 @@ def _event(raw: dict[str, object], bars: list[object]):
 
 def test_post_close_and_unknown_time_enter_next_trading_day() -> None:
     bars = _bars()
-    post_close = _event(_raw(DisclosedDate="2026-01-21", DisclosedTime="15:30"), bars)
-    unknown = _event(_raw(DisclosedDate="2026-01-21", DisclosedTime=""), bars)
+    post_close = _event(_raw(DiscDate="2026-01-21", DiscTime="15:30"), bars)
+    unknown = _event(_raw(DiscDate="2026-01-21", DiscTime=""), bars)
 
-    assert post_close.disclosed_at.isoformat() == "2026-01-21T15:30:00+00:00"
-    assert unknown.disclosed_at.isoformat() == "2026-01-21T23:59:59+00:00"
+    assert post_close.disclosed_at.isoformat() == "2026-01-21T06:30:00+00:00"
+    assert unknown.disclosed_at.isoformat() == "2026-01-20T15:00:00+00:00"
     assert post_close.entry_date == "2026-01-22"
     assert unknown.entry_date == "2026-01-22"
 
@@ -88,7 +87,7 @@ def test_post_close_and_unknown_time_enter_next_trading_day() -> None:
 def test_events_without_next_trading_day_are_skipped() -> None:
     bars = _bars()
     events = event_research.build_events_from_financial_rows(
-        [_raw(DisclosedDate="2026-02-14", DisclosedTime="15:30")],
+        [_raw(DiscDate="2026-02-14", DiscTime="15:30")],
         ohlcv_rows=bars,
         fetched_at=datetime(2026, 2, 14, tzinfo=UTC),
     )
@@ -105,6 +104,22 @@ def test_next_open_features_use_signal_close_not_entry_open() -> None:
     assert observation.valuation_price == Decimal("1100")
     assert observation.entry_price == Decimal("1103")
     assert observation.valuation_features_v0.forecast_per.value == Decimal("8.8")
+    assert observation.source_bar_date == "2026-01-21"
+    assert observation.source_bar_available_at <= observation.feature_cutoff_at
+
+
+def test_intraday_and_unknown_time_do_not_use_same_day_bar() -> None:
+    bars = _bars()
+    intraday = _event(_raw(DiscTime="14:00"), bars)
+    unknown = _event(_raw(DiscTime=""), bars)
+
+    intraday_obs = event_research.build_observations([intraday], ohlcv_rows=bars)[0]
+    unknown_obs = event_research.build_observations([unknown], ohlcv_rows=bars)[0]
+
+    assert unknown.signal_date == "2026-01-21"
+    assert unknown.entry_date == "2026-01-22"
+    assert intraday_obs.source_bar_date == "2026-01-20"
+    assert unknown_obs.source_bar_date == "2026-01-20"
 
 
 def test_real_jquants_summary_keys_are_mapped_point_in_time() -> None:
@@ -121,7 +136,7 @@ def test_real_jquants_summary_keys_are_mapped_point_in_time() -> None:
         "FNP": "1220000000",
         "FSales": "38600000000",
         "BPS": "1000",
-        "FDivTotalAnn": "20",
+        "FDivAnn": "20",
     }
 
     event = _event(raw, bars)
@@ -137,21 +152,68 @@ def test_real_jquants_summary_keys_are_mapped_point_in_time() -> None:
 
 def test_eps_sign_change_does_not_make_percentage_or_negative_per() -> None:
     bars = _bars(symbol="6758", start_close=2000)
-    raw = _raw(
+    prior = _raw(
         Code="67580",
-        PreviousForecastEarningsPerShare="-5",
-        ForecastEarningsPerShare="8",
-        EarningsPerShare="-3",
-        DisclosureNumber="fixture-2",
+        DiscDate="2026-01-20",
+        DiscNo="fixture-6758-prior",
+        FEPS="-5",
+        EPS="-3",
     )
-    event = _event(raw, bars)
-    observation = event_research.build_observations([event], ohlcv_rows=bars)[0]
+    current = _raw(
+        Code="67580",
+        DiscNo="fixture-6758-current",
+        FEPS="8",
+        EPS="-3",
+    )
+    events = event_research.build_events_from_financial_rows(
+        [prior, current],
+        ohlcv_rows=bars,
+        fetched_at=datetime(2026, 1, 22, tzinfo=UTC),
+    )
+    observations = event_research.build_observations(events, ohlcv_rows=bars)
+    observation = next(
+        obs for obs in observations if obs.source_record_id == "fixture-6758-current"
+    )
 
     assert observation.fundamental_features_v0.sign_changed is True
+    assert observation.fundamental_features_v0.previous_forecast_eps.value == Decimal("-5")
     assert observation.fundamental_features_v0.forecast_eps_revision_pct.valid is False
     assert observation.valuation_features_v0.trailing_per.value is None
     assert observation.valuation_features_v0.trailing_per_valid is False
     assert observation.valuation_features_v0.forecast_per.value is not None
+
+
+def test_dividend_revision_subtype_blocks_decrease_long_candidate() -> None:
+    bars = _bars()
+    prior = _raw(
+        DiscDate="2026-01-19",
+        DiscNo="fixture-prior-dividend",
+        DocType="ForecastRevision_Consolidated_JP",
+        FDivAnn="60",
+    )
+    increase = _raw(
+        DiscNo="fixture-dividend-increase",
+        DocType="DividendRevision_Consolidated_JP",
+        FDivAnn="75",
+    )
+    decrease = _raw(
+        DiscDate="2026-01-22",
+        DiscNo="fixture-dividend-decrease",
+        DocType="DividendRevision_Consolidated_JP",
+        FDivAnn="50",
+    )
+    events = event_research.build_events_from_financial_rows(
+        [increase, decrease, prior],
+        ohlcv_rows=bars,
+        fetched_at=datetime(2026, 1, 23, tzinfo=UTC),
+    )
+    observations = event_research.build_observations(events, ohlcv_rows=bars)
+    by_source = {obs.source_record_id: obs for obs in observations}
+
+    assert by_source["fixture-dividend-increase"].event_subtype == "increase"
+    assert by_source["fixture-dividend-decrease"].event_subtype == "decrease"
+    assert event_research.fundamental_rule_allows(by_source["fixture-dividend-increase"])
+    assert not event_research.fundamental_rule_allows(by_source["fixture-dividend-decrease"])
 
 
 def test_missing_financial_values_are_null_not_zero() -> None:
@@ -162,6 +224,10 @@ def test_missing_financial_values_are_null_not_zero() -> None:
             EarningsPerShare="",
             BookValuePerShare="",
             ForecastDividendPerShareAnnual="",
+            FEPS="",
+            EPS="",
+            BPS="",
+            FDivAnn="",
         ),
         bars,
     )
@@ -220,7 +286,7 @@ def test_gap_through_catastrophic_stop_exits_at_unfavorable_open() -> None:
 def test_manifest_has_20_trading_day_purge() -> None:
     bars = _bars()
     events = [
-        _event(_raw(DisclosedDate=f"2026-01-{day:02d}", DisclosureNumber=f"fixture-{day}"), bars)
+        _event(_raw(DiscDate=f"2026-01-{day:02d}", DiscNo=f"fixture-{day}"), bars)
         for day in range(3, 26)
     ]
     observations = event_research.build_observations(events, ohlcv_rows=bars)
@@ -233,7 +299,7 @@ def test_manifest_has_20_trading_day_purge() -> None:
 def test_select_observations_for_split_excludes_purge_and_locked_oos() -> None:
     bars = _bars()
     events = [
-        _event(_raw(DisclosedDate=f"2026-01-{day:02d}", DisclosureNumber=f"fixture-{day}"), bars)
+        _event(_raw(DiscDate=f"2026-01-{day:02d}", DiscNo=f"fixture-{day}"), bars)
         for day in range(3, 26)
     ]
     observations = event_research.build_observations(events, ohlcv_rows=bars)
@@ -249,18 +315,35 @@ def test_select_observations_for_split_excludes_purge_and_locked_oos() -> None:
     assert {obs.observation_id for obs in development}.isdisjoint(
         {obs.observation_id for obs in locked}
     )
+    manifest = info["split_manifest"]
+    validation_start = date.fromisoformat(manifest["validation_start"])
+    train = [
+        obs
+        for obs in development
+        if event_research.observation_split_label(obs, manifest) == "train"
+    ]
+    assert all(date.fromisoformat(obs.labels["exit_date_20d"]) < validation_start for obs in train)
 
 
 def test_random_baseline_is_seeded_and_symbol_constrained() -> None:
     bars = _bars() + _bars(symbol="6758", start_close=2000)
     events = [
-        _event(_raw(Code="72030", DisclosureNumber="fixture-7203"), bars),
-        _event(_raw(Code="67580", DisclosureNumber="fixture-6758"), bars),
+        _event(_raw(Code="72030", DiscNo="fixture-7203"), bars),
+        _event(_raw(Code="67580", DiscNo="fixture-6758"), bars),
     ]
     observations = event_research.build_observations(events, ohlcv_rows=bars)
+    random_dates = event_research.build_random_date_observations(ohlcv_rows=bars)
 
-    first = event_research.random_baselines(observations, seed_count=5)
-    second = event_research.random_baselines(observations, seed_count=5)
+    first = event_research.random_baselines(
+        observations,
+        seed_count=5,
+        random_date_observations=random_dates,
+    )
+    second = event_research.random_baselines(
+        observations,
+        seed_count=5,
+        random_date_observations=random_dates,
+    )
     sample = event_research.sample_random_baseline(
         observations,
         name="same_symbol_random_date",
@@ -270,18 +353,28 @@ def test_random_baseline_is_seeded_and_symbol_constrained() -> None:
     assert first == second
     assert [obs.symbol for obs in sample] == [obs.symbol for obs in observations]
     assert 0 <= first["same_symbol_random_date"]["selected_percentile"] <= 1
+    assert 0 <= first["same_symbol_random_event_date"]["selected_percentile"] <= 1
 
 
 def test_evaluation_rows_include_matched_random_percentiles() -> None:
     bars = _bars() + _bars(symbol="6758", start_close=2000)
     events = [
-        _event(_raw(Code="72030", DisclosureNumber="fixture-7203"), bars),
-        _event(_raw(Code="67580", DisclosureNumber="fixture-6758"), bars),
+        _event(_raw(Code="72030", DiscNo="fixture-7203"), bars),
+        _event(_raw(Code="67580", DiscNo="fixture-6758"), bars),
     ]
     observations = event_research.build_observations(events, ohlcv_rows=bars)
+    random_dates = event_research.build_random_date_observations(ohlcv_rows=bars)
 
-    first = event_research.evaluate_observations(observations, random_seed_count=3)
-    second = event_research.evaluate_observations(observations, random_seed_count=3)
+    first = event_research.evaluate_observations(
+        observations,
+        random_seed_count=3,
+        random_date_observations=random_dates,
+    )
+    second = event_research.evaluate_observations(
+        observations,
+        random_seed_count=3,
+        random_date_observations=random_dates,
+    )
     row = next(
         item
         for item in first["rows"]
@@ -292,4 +385,6 @@ def test_evaluation_rows_include_matched_random_percentiles() -> None:
     assert first == second
     assert len(first["row_random_baselines"]) == len(first["rows"])
     assert row["random_baselines"]["same_symbol_random_date"]["random_count"] == 3
+    assert row["random_baselines"]["same_symbol_random_event_date"]["random_count"] == 3
     assert 0 <= row["same_symbol_random_date_percentile"] <= 1
+    assert first["random_baseline_coverage"]["same_symbol_random_date"]["matched"] > 0

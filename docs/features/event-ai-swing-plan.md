@@ -187,25 +187,37 @@ For a local LLM smoke run, generate a deterministic development sample first:
 uv run python scripts/build-event-llm-jobs.py \
   --events out/event-research/events.jsonl \
   --observations out/event-research/observations.jsonl \
-  --output out/event-ai/jobs-sample100.jsonl \
+  --output out/event-ai/jobs-balanced100.jsonl \
   --split development \
-  --sample-size 100 \
+  --balanced-sample-size 100 \
   --sample-seed 1 \
   --model-provider openai_compatible \
   --model-id local-model
 ```
 
-To generate a numerical-field placebo prompt set for the same sample:
+To generate placebo prompt sets for the same sample:
 
 ```bash
 uv run python scripts/build-event-llm-jobs.py \
   --events out/event-research/events.jsonl \
   --observations out/event-research/observations.jsonl \
-  --output out/event-ai/jobs-sample100-numerical-placebo.jsonl \
+  --output out/event-ai/jobs-balanced100-numerical-placebo.jsonl \
   --split development \
-  --sample-size 100 \
+  --balanced-sample-size 100 \
   --sample-seed 1 \
   --placebo-mode numerical_fields_shuffled \
+  --placebo-seed 1 \
+  --model-provider openai_compatible \
+  --model-id local-model
+
+uv run python scripts/build-event-llm-jobs.py \
+  --events out/event-research/events.jsonl \
+  --observations out/event-research/observations.jsonl \
+  --output out/event-ai/jobs-balanced100-bundle-placebo.jsonl \
+  --split development \
+  --balanced-sample-size 100 \
+  --sample-seed 1 \
+  --placebo-mode bundle_shuffled \
   --placebo-seed 1 \
   --model-provider openai_compatible \
   --model-id local-model
@@ -214,16 +226,18 @@ uv run python scripts/build-event-llm-jobs.py \
 The numerical placebo shuffles only `FeatureValue.value` fields within each
 event type. Feature timing metadata such as `available_at` and
 `feature_cutoff_at` is preserved so the placebo prompt does not introduce
-future timestamps.
+future timestamps. The bundle placebo shuffles the fundamental, valuation, and
+technical feature bundles within event type as a less adversarial numerical
+placebo.
 
 Before running a local model, audit the baseline and placebo job files:
 
 ```bash
 uv run python scripts/audit-event-llm-jobs.py \
-  --jobs out/event-ai/jobs-sample100.jsonl \
-  --placebo-jobs out/event-ai/jobs-sample100-numerical-placebo.jsonl \
+  --jobs out/event-ai/jobs-balanced100.jsonl \
+  --placebo-jobs out/event-ai/jobs-balanced100-bundle-placebo.jsonl \
   --observations out/event-research/observations.jsonl \
-  --output out/event-ai/job-audit-sample100.json \
+  --output out/event-ai/jobs-balanced100-audit.json \
   --provider openai_compatible \
   --model-id local-model \
   --split development
@@ -258,9 +272,8 @@ The AI evaluator uses the same split guard as the rule-only event evaluator.
 Locked OOS requires `--split locked-oos --include-locked-oos` after prompt,
 feature schema, model, and thresholds are frozen.
 The report includes label-shuffled, confidence-shuffled, and random-threshold
-placebos within event type. Event-title and numerical-field shuffled placebos
-are reported as unavailable until the evaluator consumes the full feature bundle
-instead of labels-only input.
+placebos within event type. Numerical-field and bundle-shuffled prompt sets are
+generated as external placebo job files and audited before local LLM execution.
 
 7. Run a local OpenAI-compatible model:
 
@@ -274,9 +287,9 @@ LOCAL_LLM_MAX_CONCURRENCY=2 \
 uv run python scripts/run-event-llm-jobs.py \
   --jobs out/event-ai/jobs-sample100.jsonl \
   --provider openai_compatible \
-  --output-labels out/event-ai/labels-sample100.jsonl \
-  --output-failures out/event-ai/failures-sample100.jsonl \
-  --output-manifest out/event-ai/run-manifest-sample100.json \
+  --output-labels out/event-ai/labels-balanced100.jsonl \
+  --output-failures out/event-ai/failures-balanced100.jsonl \
+  --output-manifest out/event-ai/run-manifest-balanced100.json \
   --max-jobs 100
 ```
 
@@ -284,6 +297,84 @@ uv run python scripts/run-event-llm-jobs.py \
 using a cache key derived from prompt hash, provider, model, temperature, and
 seed. Use `--no-resume` only when intentionally overwriting a run. Failed jobs
 are not cached and are retried on the next run.
+
+For a bounded real-data validity audit before large LLM runs:
+
+```bash
+uv run python scripts/audit-event-research-data.py \
+  --financial-summary-jsonl out/event-research/financial-summaries.jsonl \
+  --events out/event-research/events.jsonl \
+  --observations out/event-research/observations.jsonl \
+  --ohlcv data/reference/daily_ohlcv.csv \
+  --output out/event-research/data-audit-30d.json \
+  --max-trading-days 30
+
+uv run python scripts/evaluate-event-research.py \
+  --observations out/event-research/observations.jsonl \
+  --ohlcv data/reference/daily_ohlcv.csv \
+  --output-dir out/event-research-eval-30d \
+  --split all \
+  --include-locked-oos \
+  --max-trading-days 30 \
+  --random-seeds 30
+```
+
+The true `same_symbol_random_date` baseline samples from daily OHLCV trading
+dates, including non-event dates, excludes self event dates, and reports
+matched/fallback coverage. The previous event-only sampling diagnostic is named
+`same_symbol_random_event_date`.
+
+For non-random block stability diagnostics:
+
+```bash
+uv run python scripts/scan-event-alpha-blocks.py \
+  --observations out/event-research/observations.jsonl \
+  --output-dir out/event-research-block-scan-60d \
+  --block-trading-days 60 \
+  --min-trades 30
+
+uv run python scripts/scan-event-alpha-blocks.py \
+  --observations out/event-research/observations.jsonl \
+  --output-dir out/event-research-block-scan-120d \
+  --block-trading-days 120 \
+  --min-trades 50
+```
+
+This scan reports observation-level block diagnostics only. It deliberately
+does not replace the matched-random gate.
+
+The first post-audit hypothesis worth carrying into local LLM smoke testing is:
+
+- event type: `forecast_revision`
+- entry arm: `event_plus_fundamental_plus_technical`
+- exit arms to compare: `fixed_2d`, `fixed_5d`, `fixed_10d`,
+  `fixed_10d_plus_catastrophic_stop`
+- reason: full-period rule-only evaluation with 300 random seeds showed
+  positive net PnL, PF > 1.2, and high true `same_symbol_random_date`
+  percentile for 2d/5d/10d. The unfiltered `forecast_revision` event-only arm
+  remains rejected.
+
+Example focused random check:
+
+```bash
+uv run python scripts/evaluate-event-research.py \
+  --observations out/event-research/observations.jsonl \
+  --ohlcv data/reference/daily_ohlcv.csv \
+  --output-dir out/event-research-forecast-revision-random \
+  --split all \
+  --include-locked-oos \
+  --event-type forecast_revision \
+  --random-seeds 300
+```
+
+`event-alpha-report.json` PF/DD values are observation/trade-notional alpha
+metrics, not portfolio-level PF/DD. Portfolio sizing, cash reuse, and OMS
+sequencing remain out of scope for this research-only evaluator.
+
+Until a TOPIX or market-breadth series is available in the point-in-time
+dataset, the per-symbol trend bucket is written as `symbol_regime`.
+`market_regime` is retained only as a backward-compatible alias for older
+artifacts and must not be interpreted as broad market breadth.
 
 ## Data Limitations
 

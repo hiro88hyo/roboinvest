@@ -129,6 +129,7 @@ class TechnicalContextV0(BaseModel):
     pre_event_gap_history: FeatureValue = Field(default_factory=FeatureValue)
     sector_relative_return_20d: FeatureValue = Field(default_factory=FeatureValue)
     topix_return_20d: FeatureValue = Field(default_factory=FeatureValue)
+    symbol_regime: FeatureValue = Field(default_factory=FeatureValue)
     market_regime: FeatureValue = Field(default_factory=FeatureValue)
 
 
@@ -152,6 +153,8 @@ class EventRecord(BaseModel):
     raw_source_identifier: str
     fetched_at: datetime
     cluster_member_count: int = 1
+    fiscal_target: str | None = None
+    consolidation_type: str | None = None
     raw: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -161,9 +164,11 @@ class ObservationRecord(BaseModel):
     observation_id: str
     event_id: str
     event_cluster_id: str
+    trade_group_id: str | None = None
     symbol: str
     sector: str | None = None
     event_type: EventType
+    event_subtype: str | None = None
     execution_mode: ExecutionMode = ExecutionMode.NEXT_OPEN_UNCONDITIONAL
     signal_date: str
     entry_date: str
@@ -171,6 +176,13 @@ class ObservationRecord(BaseModel):
     data_available_at: datetime
     entry_price: Decimal | None = None
     valuation_price: Decimal | None = None
+    source_bar_date: str | None = None
+    source_bar_available_at: datetime | None = None
+    previous_forecast_source_record_id: str | None = None
+    previous_forecast_available_at: datetime | None = None
+    split_label: str | None = None
+    dataset_hash: str | None = None
+    split_manifest_hash: str | None = None
     source_record_id: str
     fundamental_features_v0: FundamentalFeaturesV0 = Field(default_factory=FundamentalFeaturesV0)
     valuation_features_v0: ValuationFeaturesV0 = Field(default_factory=ValuationFeaturesV0)
@@ -210,6 +222,9 @@ class EventAiJob(BaseModel):
     prompt: str
     feature_schema_version: str
     feature_cutoff_at: datetime
+    dataset_hash: str | None = None
+    split_manifest_hash: str | None = None
+    split_label: str | None = None
     model_provider: str
     model_id: str
     temperature: Decimal

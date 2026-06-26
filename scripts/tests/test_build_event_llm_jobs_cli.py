@@ -33,15 +33,17 @@ def _load_module():
 build_event_llm_jobs = _load_module()
 
 
-def _event(idx: int) -> EventRecord:
+def _event(idx: int, *, event_type: EventType = EventType.FORECAST_REVISION) -> EventRecord:
     at = datetime(2026, 1, 1, 15, 30, tzinfo=UTC) + timedelta(days=idx)
     return EventRecord(
         event_id=f"event-{idx}",
         event_cluster_id=f"cluster-{idx}",
         symbol="7203",
         source=EventSource.FIXTURE,
-        raw_document_type="ForecastRevision",
-        event_type=EventType.FORECAST_REVISION,
+        raw_document_type="ForecastRevision"
+        if event_type == EventType.FORECAST_REVISION
+        else "DividendRevision",
+        event_type=event_type,
         disclosed_date=at.date().isoformat(),
         disclosed_time="15:30:00",
         disclosed_at=at,
@@ -55,8 +57,10 @@ def _event(idx: int) -> EventRecord:
     )
 
 
-def _observation(idx: int) -> ObservationRecord:
-    event = _event(idx)
+def _observation(
+    idx: int, *, event_type: EventType = EventType.FORECAST_REVISION
+) -> ObservationRecord:
+    event = _event(idx, event_type=event_type)
     return ObservationRecord(
         observation_id=f"obs-{idx}",
         event_id=event.event_id,
@@ -155,6 +159,51 @@ def test_llm_job_builder_can_sample_development_jobs(
     ]
     assert len(first_rows) == 5
     assert [row["event_id"] for row in first_rows] == [row["event_id"] for row in second_rows]
+    assert all(row["dataset_hash"] for row in first_rows)
+    assert all(row["split_manifest_hash"] for row in first_rows)
+    assert {row["split_label"] for row in first_rows} <= {"train", "validation"}
+
+
+def test_llm_job_builder_can_balanced_sample_jobs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[EventRecord] = []
+    observations: list[ObservationRecord] = []
+    for idx in range(60):
+        event_type = EventType.FORECAST_REVISION if idx % 2 == 0 else EventType.DIVIDEND_REVISION
+        events.append(_event(idx, event_type=event_type))
+        observations.append(_observation(idx, event_type=event_type))
+    events_path = tmp_path / "events.jsonl"
+    observations_path = tmp_path / "observations.jsonl"
+    output_path = tmp_path / "jobs.jsonl"
+    _write_jsonl(events_path, events)
+    _write_jsonl(observations_path, observations)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "build-event-llm-jobs.py",
+            "--events",
+            str(events_path),
+            "--observations",
+            str(observations_path),
+            "--output",
+            str(output_path),
+            "--balanced-sample-size",
+            "10",
+            "--sample-seed",
+            "11",
+        ],
+    )
+
+    assert build_event_llm_jobs.main() == 0
+
+    rows = [json.loads(line) for line in output_path.read_text(encoding="utf-8").splitlines()]
+    event_types = [json.loads(row["prompt"])["event"]["event_type"] for row in rows]
+    assert len(rows) == 10
+    assert event_types.count(EventType.FORECAST_REVISION.value) == 5
+    assert event_types.count(EventType.DIVIDEND_REVISION.value) == 5
 
 
 def test_llm_job_builder_can_shuffle_numerical_feature_placebo(

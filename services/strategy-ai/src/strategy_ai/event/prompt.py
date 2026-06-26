@@ -30,6 +30,7 @@ def build_event_prompt(event: EventRecord, observation: ObservationRecord) -> st
             "data_available_at": event.data_available_at.isoformat(),
             "feature_cutoff_at": event.feature_cutoff_at.isoformat(),
         },
+        "official_numeric_summary": _official_numeric_summary(event.raw),
         "fundamental_features_v0": observation.fundamental_features_v0.model_dump(mode="json"),
         "valuation_features_v0": observation.valuation_features_v0.model_dump(mode="json"),
         "technical_context_v0": observation.technical_context_v0.model_dump(mode="json"),
@@ -54,6 +55,25 @@ def build_event_prompt(event: EventRecord, observation: ObservationRecord) -> st
 
 def prompt_hash(prompt: str) -> str:
     return hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+
+
+def _official_numeric_summary(raw: dict[str, Any]) -> dict[str, Any]:
+    allowlist = (
+        "FEPS",
+        "FOP",
+        "FNP",
+        "FSales",
+        "FDivAnn",
+        "EPS",
+        "BPS",
+        "CurFYEn",
+        "NxtFYEn",
+        "DocType",
+        "DiscDate",
+        "DiscTime",
+        "DiscNo",
+    )
+    return {key: raw.get(key) for key in allowlist if raw.get(key) not in (None, "")}
 
 
 def _assert_no_forbidden_keys(value: Any) -> None:

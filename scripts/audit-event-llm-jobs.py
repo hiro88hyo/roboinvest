@@ -5,16 +5,18 @@ import argparse
 import hashlib
 import json
 from collections import Counter
+from datetime import date
 from pathlib import Path
 from typing import Any
 
 from event_research_common import (
     EVALUATION_SPLITS,
+    FEATURE_SCHEMA_VERSION,
+    PURGE_TRADING_DAYS,
     read_jsonl,
-    select_observations_for_split,
 )
 from strategy_ai.event.prompt import FORBIDDEN_PROMPT_KEYS
-from trade_contracts.event_research import EventAiJob, ObservationRecord
+from trade_contracts.event_research import EventAiJob
 
 
 def main() -> int:
@@ -41,12 +43,13 @@ def main() -> int:
         parser.error("--include-locked-oos is required when --split is locked-oos or all")
 
     jobs = [EventAiJob.model_validate(row) for row in read_jsonl(args.jobs)]
-    observations = [ObservationRecord.model_validate(row) for row in read_jsonl(args.observations)]
     errors: list[str] = []
     warnings: list[str] = []
-    selected, split_info = select_observations_for_split(observations, split=args.split)
-    selected_event_ids = {obs.event_id for obs in selected}
-    all_event_ids = {obs.event_id for obs in observations}
+    split_info, selected_event_ids, all_event_ids = _stream_observation_split_info(
+        args.observations,
+        requested_split=args.split,
+        event_ids={job.event_id for job in jobs},
+    )
     _audit_jobs(
         jobs,
         selected_event_ids=selected_event_ids,
@@ -199,6 +202,125 @@ def _find_forbidden_keys(value: Any) -> set[str]:
         for item in value:
             found.update(_find_forbidden_keys(item))
     return found
+
+
+def _stream_observation_split_info(
+    path: Path,
+    *,
+    requested_split: str,
+    event_ids: set[str],
+) -> tuple[dict[str, Any], set[str], set[str]]:
+    manifest = _stream_split_manifest(path)
+    split_counts: Counter[str] = Counter()
+    selected_event_ids: set[str] = set()
+    all_event_ids: set[str] = set()
+    selected_symbols: set[str] = set()
+    selected_count = 0
+    requested_labels = _requested_split_labels(requested_split)
+    for row in _iter_jsonl(path):
+        split = _observation_split_label(row, manifest)
+        split_counts[split] += 1
+        event_id = str(row["event_id"])
+        if event_id in event_ids:
+            all_event_ids.add(event_id)
+        if split in requested_labels:
+            selected_count += 1
+            selected_symbols.add(str(row["symbol"]))
+            if event_id in event_ids:
+                selected_event_ids.add(event_id)
+    return (
+        {
+            "requested_split": requested_split,
+            "selected_observation_count": selected_count,
+            "selected_symbol_count": len(selected_symbols),
+            "split_counts": dict(split_counts),
+            "split_manifest": manifest,
+        },
+        selected_event_ids,
+        all_event_ids,
+    )
+
+
+def _iter_jsonl(path: Path):
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                yield json.loads(line)
+
+
+def _stream_split_manifest(path: Path) -> dict[str, Any]:
+    dates: set[date] = set()
+    symbols: set[str] = set()
+    count = 0
+    digest = hashlib.sha256()
+    for row in _iter_jsonl(path):
+        dates.add(date.fromisoformat(str(row["signal_date"])))
+        symbols.add(str(row["symbol"]))
+        count += 1
+        digest.update(json.dumps(row, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+        digest.update(b"\n")
+    ordered_dates = sorted(dates)
+    if not ordered_dates:
+        return {}
+    train_end = ordered_dates[int(len(ordered_dates) * 0.60)]
+    validation_start = _shift_trading_date(ordered_dates, train_end, PURGE_TRADING_DAYS)
+    validation_end = ordered_dates[int(len(ordered_dates) * 0.80)]
+    locked_oos_start = _shift_trading_date(ordered_dates, validation_end, PURGE_TRADING_DAYS)
+    return {
+        "train_start": ordered_dates[0].isoformat(),
+        "train_end": train_end.isoformat(),
+        "validation_start": validation_start.isoformat(),
+        "validation_end": validation_end.isoformat(),
+        "locked_oos_start": locked_oos_start.isoformat(),
+        "locked_oos_end": ordered_dates[-1].isoformat(),
+        "purge_days": PURGE_TRADING_DAYS,
+        "dataset_hash": digest.hexdigest(),
+        "split_observation_count": count,
+        "split_symbol_count": len(symbols),
+        "feature_schema_version": FEATURE_SCHEMA_VERSION,
+    }
+
+
+def _shift_trading_date(dates: list[date], start: date, offset: int) -> date:
+    idx = dates.index(start)
+    return dates[min(idx + offset, len(dates) - 1)]
+
+
+def _requested_split_labels(split: str) -> set[str]:
+    if split == "development":
+        return {"train", "validation"}
+    if split == "train":
+        return {"train"}
+    if split == "validation":
+        return {"validation"}
+    if split == "locked-oos":
+        return {"locked_oos"}
+    if split == "all":
+        return {"train", "validation", "locked_oos"}
+    raise ValueError(f"unsupported evaluation split: {split}")
+
+
+def _observation_split_label(row: dict[str, Any], manifest: dict[str, Any]) -> str:
+    signal_date = date.fromisoformat(str(row["signal_date"]))
+    train_end = date.fromisoformat(manifest["train_end"])
+    validation_start = date.fromisoformat(manifest["validation_start"])
+    validation_end = date.fromisoformat(manifest["validation_end"])
+    locked_oos_start = date.fromisoformat(manifest["locked_oos_start"])
+    raw_exit = row.get("labels", {}).get("exit_date_20d")
+    exit_20d = None if raw_exit in (None, "") else date.fromisoformat(str(raw_exit))
+    if signal_date <= train_end:
+        if exit_20d is not None and exit_20d >= validation_start:
+            return "purge_train_validation"
+        return "train"
+    if signal_date < validation_start:
+        return "purge_train_validation"
+    if signal_date <= validation_end:
+        if exit_20d is not None and exit_20d >= locked_oos_start:
+            return "purge_validation_locked_oos"
+        return "validation"
+    if signal_date < locked_oos_start:
+        return "purge_validation_locked_oos"
+    return "locked_oos"
 
 
 if __name__ == "__main__":
