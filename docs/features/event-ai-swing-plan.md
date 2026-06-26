@@ -216,6 +216,23 @@ event type. Feature timing metadata such as `available_at` and
 `feature_cutoff_at` is preserved so the placebo prompt does not introduce
 future timestamps.
 
+Before running a local model, audit the baseline and placebo job files:
+
+```bash
+uv run python scripts/audit-event-llm-jobs.py \
+  --jobs out/event-ai/jobs-sample100.jsonl \
+  --placebo-jobs out/event-ai/jobs-sample100-numerical-placebo.jsonl \
+  --observations out/event-research/observations.jsonl \
+  --output out/event-ai/job-audit-sample100.json \
+  --provider openai_compatible \
+  --model-id local-model \
+  --split development
+```
+
+The audit fails on prompt hash mismatch, forbidden prompt keys such as forward
+returns or PnL, provider/model mismatch, requested split mismatch, and broken
+baseline/placebo event ordering.
+
 5. Run fixture labels:
 
 ```bash
