@@ -40,6 +40,13 @@ EXIT_ARMS_FOR_REPORT = (
     ExitArm.FIXED_10D_PLUS_CATASTROPHIC_STOP,
     ExitArm.FIXED_20D_PLUS_CATASTROPHIC_STOP,
 )
+RANDOM_BASELINE_NAMES = (
+    "same_symbol_random_date",
+    "same_symbol_same_month_random_date",
+    "same_symbol_same_regime_random_date",
+    "same_sector_same_date_random",
+    "event_type_matched_random",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -529,6 +536,9 @@ def evaluate_observations(
     random_seed_count: int = 300,
 ) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
+    row_random_baselines: list[dict[str, Any]] = []
+    observation_indexes = {obs.observation_id: idx for idx, obs in enumerate(observations)}
+    pools_by_name = _baseline_index_pools(observations)
     for event_type in sorted({obs.event_type for obs in observations}, key=str):
         subset = [obs for obs in observations if obs.event_type == event_type]
         for entry_arm in (
@@ -538,17 +548,39 @@ def evaluate_observations(
             EntryArm.EVENT_PLUS_FUNDAMENTAL_PLUS_TECHNICAL,
         ):
             selected = [obs for obs in subset if entry_arm_allows(obs, entry_arm)]
+            selected_indexes = [observation_indexes[obs.observation_id] for obs in selected]
+            random_by_exit = random_baselines_for_selection_by_exit(
+                observations,
+                selected_indexes=selected_indexes,
+                seed_count=random_seed_count,
+                pools_by_name=pools_by_name,
+            )
             for exit_arm in EXIT_ARMS_FOR_REPORT:
-                rows.append(
+                row_baselines = random_by_exit[exit_arm.value]
+                row = {
+                    "event_type": event_type.value,
+                    "entry_arm": entry_arm.value,
+                    "exit_arm": exit_arm.value,
+                    **metrics_for_observations(selected, exit_arm=exit_arm),
+                    "random_baselines": row_baselines,
+                }
+                for name in RANDOM_BASELINE_NAMES:
+                    row[f"{name}_percentile"] = row_baselines[name]["selected_percentile"]
+                rows.append(row)
+                row_random_baselines.append(
                     {
                         "event_type": event_type.value,
                         "entry_arm": entry_arm.value,
                         "exit_arm": exit_arm.value,
-                        **metrics_for_observations(selected, exit_arm=exit_arm),
+                        "baselines": row_baselines,
                     }
                 )
     baselines = random_baselines(observations, seed_count=random_seed_count)
-    return {"rows": rows, "random_baselines": baselines}
+    return {
+        "rows": rows,
+        "random_baselines": baselines,
+        "row_random_baselines": row_random_baselines,
+    }
 
 
 def entry_arm_allows(obs: ObservationRecord, arm: EntryArm) -> bool:
@@ -636,16 +668,10 @@ def metrics_for_observations(
 
 
 def random_baselines(observations: list[ObservationRecord], *, seed_count: int) -> dict[str, Any]:
-    selected = _net_for_sample(observations, seed=0)
-    pnl_by_observation = [_net_pnl_10d(obs) for obs in observations]
+    selected = _net_for_sample(observations, exit_arm=ExitArm.FIXED_10D)
+    pnl_by_observation = [_net_pnl_for_exit_arm(obs, ExitArm.FIXED_10D) for obs in observations]
     pools_by_name = _baseline_index_pools(observations)
-    baselines: dict[str, list[Decimal]] = {
-        "same_symbol_random_date": [],
-        "same_symbol_same_month_random_date": [],
-        "same_symbol_same_regime_random_date": [],
-        "same_sector_same_date_random": [],
-        "event_type_matched_random": [],
-    }
+    baselines: dict[str, list[Decimal]] = {name: [] for name in RANDOM_BASELINE_NAMES}
     for seed in range(1, seed_count + 1):
         rng = random.Random(seed)
         for name, pools in pools_by_name.items():
@@ -655,6 +681,47 @@ def random_baselines(observations: list[ObservationRecord], *, seed_count: int) 
                 total += pnl_by_observation[chosen_idx]
             baselines[name].append(Decimal(str(total)))
     return {name: random_summary(values, selected) for name, values in baselines.items()}
+
+
+def random_baselines_for_selection_by_exit(
+    observations: list[ObservationRecord],
+    *,
+    selected_indexes: list[int],
+    seed_count: int,
+    pools_by_name: dict[str, list[list[int]]] | None = None,
+) -> dict[str, dict[str, dict[str, Any]]]:
+    pools = _baseline_index_pools(observations) if pools_by_name is None else pools_by_name
+    pnl_by_exit = {
+        exit_arm.value: [_net_pnl_for_exit_arm(obs, exit_arm) for obs in observations]
+        for exit_arm in EXIT_ARMS_FOR_REPORT
+    }
+    selected_by_exit = {
+        exit_name: Decimal(str(sum(pnls[idx] for idx in selected_indexes)))
+        for exit_name, pnls in pnl_by_exit.items()
+    }
+    values_by_exit_and_name: dict[str, dict[str, list[Decimal]]] = {
+        exit_arm.value: {name: [] for name in RANDOM_BASELINE_NAMES}
+        for exit_arm in EXIT_ARMS_FOR_REPORT
+    }
+    for seed in range(1, seed_count + 1):
+        rng = random.Random(seed)
+        for name in RANDOM_BASELINE_NAMES:
+            totals = {exit_arm.value: 0.0 for exit_arm in EXIT_ARMS_FOR_REPORT}
+            baseline_pools = pools[name]
+            for obs_idx in selected_indexes:
+                pool = baseline_pools[obs_idx]
+                chosen_idx = rng.choice(pool) if pool else obs_idx
+                for exit_name, pnls in pnl_by_exit.items():
+                    totals[exit_name] += pnls[chosen_idx]
+            for exit_name, total in totals.items():
+                values_by_exit_and_name[exit_name][name].append(Decimal(str(total)))
+    return {
+        exit_name: {
+            name: random_summary(values, selected_by_exit[exit_name])
+            for name, values in values_by_name.items()
+        }
+        for exit_name, values_by_name in values_by_exit_and_name.items()
+    }
 
 
 def sample_random_baseline(
@@ -1143,19 +1210,29 @@ def _quantile(sorted_values: list[Decimal], q: Decimal) -> Decimal:
     return sorted_values[idx]
 
 
-def _net_for_sample(observations: list[ObservationRecord], *, seed: int) -> Decimal:
-    return sum((_net_pnl_10d_decimal(obs) for obs in observations), Decimal("0"))
+def _net_for_sample(observations: list[ObservationRecord], *, exit_arm: ExitArm) -> Decimal:
+    return sum((_net_pnl_for_exit_arm_decimal(obs, exit_arm) for obs in observations), Decimal("0"))
 
 
 def _net_pnl_10d(obs: ObservationRecord) -> float:
-    value = obs.labels.get("forward_return_10d")
+    return _net_pnl_for_exit_arm(obs, ExitArm.FIXED_10D)
+
+
+def _net_pnl_for_exit_arm(obs: ObservationRecord, exit_arm: ExitArm) -> float:
+    horizon = _exit_horizon(exit_arm)
+    value = obs.labels.get(_return_label_key(exit_arm, horizon))
     if value is None:
         return 0.0
     return float(DEFAULT_TRADE_NOTIONAL) * (float(value) - float(ROUND_TRIP_COST_RATE))
 
 
 def _net_pnl_10d_decimal(obs: ObservationRecord) -> Decimal:
-    value = obs.labels.get("forward_return_10d")
+    return _net_pnl_for_exit_arm_decimal(obs, ExitArm.FIXED_10D)
+
+
+def _net_pnl_for_exit_arm_decimal(obs: ObservationRecord, exit_arm: ExitArm) -> Decimal:
+    horizon = _exit_horizon(exit_arm)
+    value = obs.labels.get(_return_label_key(exit_arm, horizon))
     if value is None:
         return Decimal("0")
     return DEFAULT_TRADE_NOTIONAL * (Decimal(str(value)) - ROUND_TRIP_COST_RATE)

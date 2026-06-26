@@ -249,3 +249,26 @@ def test_random_baseline_is_seeded_and_symbol_constrained() -> None:
     assert first == second
     assert [obs.symbol for obs in sample] == [obs.symbol for obs in observations]
     assert 0 <= first["same_symbol_random_date"]["selected_percentile"] <= 1
+
+
+def test_evaluation_rows_include_matched_random_percentiles() -> None:
+    bars = _bars() + _bars(symbol="6758", start_close=2000)
+    events = [
+        _event(_raw(Code="72030", DisclosureNumber="fixture-7203"), bars),
+        _event(_raw(Code="67580", DisclosureNumber="fixture-6758"), bars),
+    ]
+    observations = event_research.build_observations(events, ohlcv_rows=bars)
+
+    first = event_research.evaluate_observations(observations, random_seed_count=3)
+    second = event_research.evaluate_observations(observations, random_seed_count=3)
+    row = next(
+        item
+        for item in first["rows"]
+        if item["entry_arm"] == EntryArm.EVENT_ONLY.value
+        and item["exit_arm"] == ExitArm.FIXED_10D.value
+    )
+
+    assert first == second
+    assert len(first["row_random_baselines"]) == len(first["rows"])
+    assert row["random_baselines"]["same_symbol_random_date"]["random_count"] == 3
+    assert 0 <= row["same_symbol_random_date_percentile"] <= 1

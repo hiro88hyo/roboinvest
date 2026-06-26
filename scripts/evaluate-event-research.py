@@ -6,7 +6,7 @@ import csv
 import json
 from pathlib import Path
 
-from event_research_common import evaluate_observations, read_jsonl
+from event_research_common import RANDOM_BASELINE_NAMES, evaluate_observations, read_jsonl
 from trade_contracts.event_research import ObservationRecord
 
 
@@ -43,6 +43,7 @@ def main() -> int:
             "hit_rate",
             "positive_month_ratio",
             "worst_month",
+            *[f"{name}_percentile" for name in RANDOM_BASELINE_NAMES],
         ]
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()

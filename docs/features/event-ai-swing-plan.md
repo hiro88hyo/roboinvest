@@ -150,6 +150,11 @@ uv run python scripts/evaluate-event-research.py \
   --random-seeds 300
 ```
 
+`event-alpha-summary.csv` includes matched-random selected percentiles for each
+`event_type` / `entry_arm` / `exit_arm` row. `random-baselines.json` keeps the
+legacy aggregate fixed-10-day baseline for broad sanity checks only; gate
+decisions must use the row-specific percentiles in the summary/report.
+
 4. Generate LLM jobs:
 
 ```bash
