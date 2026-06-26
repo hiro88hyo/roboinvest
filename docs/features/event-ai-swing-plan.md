@@ -247,6 +247,26 @@ The audit fails on prompt hash mismatch, forbidden prompt keys such as forward
 returns or PnL, provider/model mismatch, requested split mismatch, and broken
 baseline/placebo event ordering.
 
+External review on 2026-06-26 approved running the balanced-100 local LLM smoke
+after the data-validity fixes. The execution order is fixed:
+
+1. Data audit.
+2. Rule-only 30-trading-day audit.
+3. Balanced-100 baseline job generation.
+4. Balanced-100 bundle placebo job generation.
+5. Job audit.
+6. Balanced-100 LLM run.
+7. Bundle placebo LLM run.
+8. AI evaluation.
+9. Development full run only if smoke is promising.
+10. Validation only if development full run remains promising.
+11. Locked OOS last.
+
+Do not tune prompts, thresholds, model choice, temperature, or sample seed after
+seeing a good smoke result and then keep re-reading the same
+development/validation periods. For the first smoke observation, freeze
+`prompt_version`, model ID, temperature, and `sample_seed` and run it once.
+
 5. Run fixture labels:
 
 ```bash
@@ -285,7 +305,7 @@ LOCAL_LLM_MODEL=local-model \
 LOCAL_LLM_TIMEOUT_SECONDS=60 \
 LOCAL_LLM_MAX_CONCURRENCY=2 \
 uv run python scripts/run-event-llm-jobs.py \
-  --jobs out/event-ai/jobs-sample100.jsonl \
+  --jobs out/event-ai/jobs-balanced100.jsonl \
   --provider openai_compatible \
   --output-labels out/event-ai/labels-balanced100.jsonl \
   --output-failures out/event-ai/failures-balanced100.jsonl \
