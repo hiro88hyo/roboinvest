@@ -146,7 +146,11 @@ def _evaluate_ai_rows(
                 {
                     "entry_arm": prefix + arm.value,
                     "exit_arm": exit_arm.value,
-                    **metrics_for_observations(selected, exit_arm=exit_arm),
+                    **metrics_for_observations(
+                        selected,
+                        exit_arm=exit_arm,
+                        include_bootstrap_ci=False,
+                    ),
                 }
             )
     return rows
@@ -175,7 +179,11 @@ def confidence_buckets(
     return [
         {
             "bucket": key,
-            **metrics_for_observations(items, exit_arm=ExitArm.FIXED_10D),
+            **metrics_for_observations(
+                items,
+                exit_arm=ExitArm.FIXED_10D,
+                include_bootstrap_ci=False,
+            ),
         }
         for key, items in buckets.items()
     ]

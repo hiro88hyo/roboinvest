@@ -639,6 +639,7 @@ def metrics_for_observations(
     observations: list[ObservationRecord],
     *,
     exit_arm: ExitArm,
+    include_bootstrap_ci: bool = True,
 ) -> dict[str, Any]:
     horizon = _exit_horizon(exit_arm)
     return_key = _return_label_key(exit_arm, horizon)
@@ -670,7 +671,9 @@ def metrics_for_observations(
         else sum(1 for v in monthly.values() if v > 0) / len(monthly),
         "worst_month": None if not monthly else float(min(monthly.values())),
         "block_stability": block_stability(observations, pnls),
-        "clustered_bootstrap_ci": bootstrap_ci(pnls, seed=1),
+        "clustered_bootstrap_ci": bootstrap_ci(pnls, seed=1)
+        if include_bootstrap_ci
+        else {"low": None, "high": None, "skipped": True},
     }
 
 

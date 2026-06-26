@@ -120,6 +120,7 @@ def test_event_ai_evaluator_defaults_to_development_split(
     assert report["evaluation_split"]["requested_split"] == "development"
     assert report["evaluation_split"]["split_counts"]["locked_oos"] > 0
     assert report["evaluation_split"]["selected_observation_count"] < len(observations)
+    assert report["rows"][0]["clustered_bootstrap_ci"]["skipped"] is True
     assert set(report["placebos"]) == {
         "labels_shuffled_within_event_type",
         "confidence_shuffled_within_event_type",
