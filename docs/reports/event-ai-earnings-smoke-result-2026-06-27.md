@@ -30,6 +30,7 @@ No paper/live route was enabled.
 - Bundle placebo eval: `out/event-ai/eval-earnings300-bundle-placebo-gemma4-seed1/event-ai-report.json`
 - Real diagnostics: `out/event-ai/smoke-diagnostics-earnings300-gemma4-seed1.json`
 - Bundle placebo diagnostics: `out/event-ai/smoke-diagnostics-earnings300-bundle-placebo-gemma4-seed1.json`
+- Real/placebo comparison: `out/event-ai/placebo-compare-earnings300-gemma4-seed1.json`
 
 ## Run Status
 
@@ -90,6 +91,40 @@ However, it does not beat the stronger external bundle placebo:
 
 The bundle placebo having similar or better results means the smoke does not yet prove that the real prompt's official numeric/event alignment adds value.
 
+## Real Vs Bundle Placebo Comparison
+
+The direct comparison uses only the common label cohort, excluding the one
+bundle placebo parse failure.
+
+- common labels: 299
+- real AI pass: 37
+- bundle placebo AI pass: 42
+- both pass: 8
+- real-only pass: 29
+- placebo-only pass: 34
+- neither pass: 228
+- pass Jaccard: 0.113
+
+Fixed 20 trading session exit on the common cohort:
+
+| Cohort | Trades | Net PnL | PF | Max DD | Hit Rate | Positive Month Ratio |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| real AI pass | 37 | 104,547 | 2.385 | 21,669 | 0.541 | 0.524 |
+| bundle placebo AI pass | 42 | 110,991 | 2.311 | 30,285 | 0.476 | 0.462 |
+| both pass | 8 | 84,257 | 13.173 | 3,817 | 0.750 | 1.000 |
+| real-only pass | 29 | 20,291 | 1.296 | 21,669 | 0.483 | 0.450 |
+| placebo-only pass | 34 | 26,735 | 1.344 | 30,285 | 0.412 | 0.375 |
+| neither pass | 228 | 144,721 | 1.225 | 190,657 | 0.518 | 0.463 |
+
+Interpretation:
+
+- The common 8 events explain most of the apparent AI-pass strength.
+- Real-only and placebo-only selections are both only modestly positive.
+- The pass overlap is low, so the model is not producing a stable, uniquely
+  real-information-driven selection set.
+- Both real and placebo confidence distributions collapsed into the `0.7..1.0`
+  bucket, so confidence remains unusable as a threshold.
+
 ## Semantic Diagnostics
 
 Real fixed_20d label buckets:
@@ -127,7 +162,6 @@ Next work should stay inside development-only diagnostics and should not inspect
 
 Before any larger LLM run:
 
-1. Add a strict label distribution audit to fail or warn when confidence collapses into one bucket.
-2. Add explicit comparison reporting between real labels and external bundle placebo labels.
-3. Investigate why bundle-shuffled jobs still select profitable earnings events.
-4. Keep `prompt_version=event_ai_label_v0`, model, temperature, and sample seed frozen for this recorded smoke; any prompt change must be treated as a new pre-registered experiment.
+1. Investigate why the shared real/placebo pass set is unusually strong.
+2. Investigate why bundle-shuffled jobs still select profitable earnings events.
+3. Keep `prompt_version=event_ai_label_v0`, model, temperature, and sample seed frozen for this recorded smoke; any prompt change must be treated as a new pre-registered experiment.

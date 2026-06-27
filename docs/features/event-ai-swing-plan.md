@@ -335,6 +335,25 @@ weaker labels, and whether confidence buckets are monotonic. Failing these
 checks blocks full development LLM execution with the current prompt/selection
 rule.
 
+When an external placebo run exists, compare the real and placebo labels on the
+common label cohort before any larger run:
+
+```bash
+uv run python scripts/compare-event-ai-placebo.py \
+  --observations out/event-research/observations.jsonl \
+  --real-labels out/event-ai/labels-balanced100.jsonl \
+  --placebo-labels out/event-ai/labels-balanced100-bundle-placebo.jsonl \
+  --output-json out/event-ai/placebo-compare-balanced100.json \
+  --output-csv out/event-ai/placebo-compare-balanced100.csv \
+  --split development
+```
+
+The placebo comparison reports real-only, placebo-only, both-pass, and
+neither-pass cohorts under the same exit arms. It also emits confidence
+distribution warnings when confidence collapses into a single bucket. A strong
+real AI arm that is matched by bundle placebo does not qualify for a larger
+development run.
+
 7. Run a local OpenAI-compatible model:
 
 ```bash
