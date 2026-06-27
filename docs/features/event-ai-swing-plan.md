@@ -379,6 +379,39 @@ required when diagnosing why a placebo remains strong. For `bundle_shuffled`,
 bundles differ. For `official_numeric_summary_shuffled`, the opposite should be
 true.
 
+If external placebo remains strong, build a deterministic feature-bundle proxy
+without LLM calls and compare it to the real labels before expanding the run:
+
+```bash
+uv run python scripts/build-event-ai-feature-proxy-labels.py \
+  --observations out/event-research/observations.jsonl \
+  --event-ids-from-labels out/event-ai/labels-balanced100.jsonl \
+  --output out/event-ai/labels-balanced100-feature-proxy-v0.jsonl \
+  --split development
+
+uv run python scripts/evaluate-event-ai.py \
+  --observations out/event-research/observations.jsonl \
+  --labels out/event-ai/labels-balanced100-feature-proxy-v0.jsonl \
+  --output-dir out/event-ai/eval-balanced100-feature-proxy-v0 \
+  --split development
+
+uv run python scripts/compare-event-ai-placebo.py \
+  --observations out/event-research/observations.jsonl \
+  --real-labels out/event-ai/labels-balanced100.jsonl \
+  --placebo-labels out/event-ai/labels-balanced100-feature-proxy-v0.jsonl \
+  --real-name real \
+  --placebo-name feature_proxy \
+  --output-json out/event-ai/placebo-compare-balanced100-feature-proxy-v0.json \
+  --output-csv out/event-ai/placebo-compare-balanced100-feature-proxy-v0.csv \
+  --split development \
+  --ohlcv data/reference/daily_ohlcv_20210625_20260624_bydate.csv \
+  --random-seeds 300
+```
+
+This proxy is a diagnostic only. Passing or failing it does not promote a
+candidate; it only checks whether the current AI-pass behavior can be explained
+by coarse pre-registered feature thresholds.
+
 7. Run a local OpenAI-compatible model:
 
 ```bash

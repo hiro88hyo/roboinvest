@@ -85,6 +85,10 @@ def main() -> int:
                 "name": "bundle_shuffled",
                 "how_to_generate": "build-event-llm-jobs.py --placebo-mode bundle_shuffled",
             },
+            {
+                "name": "feature_bundle_proxy_v0",
+                "how_to_generate": "build-event-ai-feature-proxy-labels.py",
+            },
         ],
         "ai_value_minimum_conditions": {
             "must_beat_event_only": True,

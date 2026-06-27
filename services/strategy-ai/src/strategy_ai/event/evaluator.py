@@ -30,6 +30,25 @@ def ai_arm_allows(
     raise ValueError(f"not an AI arm: {arm}")
 
 
+def feature_bundle_proxy_label(obs: ObservationRecord) -> EventAiLabel:
+    """Build a deterministic AI-label proxy from point-in-time feature bundles only."""
+    direction = _feature_fundamental_direction(obs)
+    strength = _feature_fundamental_strength(obs)
+    technical_context = _feature_technical_context(obs)
+    return EventAiLabel(
+        event_type=obs.event_type,
+        fundamental_direction=direction,
+        fundamental_strength=strength,
+        revision_quality=_feature_revision_quality(obs, strength),
+        valuation_context=_feature_valuation_context(obs),
+        technical_context=technical_context,
+        expected_horizon=_feature_expected_horizon(strength, technical_context),
+        risk_flags=_feature_risk_flags(obs),
+        confidence=0.8 if direction in {"positive", "mixed"} and strength >= 2 else 0.3,
+        rationale="deterministic feature-bundle-only proxy; no LLM, no forward returns",
+    )
+
+
 def fundamental_rule_allows(obs: ObservationRecord) -> bool:
     features = obs.fundamental_features_v0
     profit_pct = features.profit_revision_pct.value
@@ -63,6 +82,119 @@ def _technical_regime_value(tech: Any) -> str:
         return str(symbol_regime.value)
     market_regime = getattr(tech, "market_regime", None)
     return str(getattr(market_regime, "value", "") or "")
+
+
+def _feature_fundamental_direction(obs: ObservationRecord) -> str:
+    if obs.event_type == EventType.DIVIDEND_REVISION:
+        if obs.event_subtype == "increase":
+            return "positive"
+        if obs.event_subtype == "decrease":
+            return "negative"
+        return "unclear"
+    values = _revision_values(obs)
+    positives = sum(1 for value in values if value is not None and value > 0)
+    negatives = sum(1 for value in values if value is not None and value < 0)
+    if positives and negatives:
+        return "mixed"
+    if positives:
+        return "positive"
+    if negatives:
+        return "negative"
+    return "neutral"
+
+
+def _feature_fundamental_strength(obs: ObservationRecord) -> int:
+    features = obs.fundamental_features_v0
+    if obs.event_type == EventType.DIVIDEND_REVISION:
+        return 2 if obs.event_subtype in {"increase", "decrease"} else 0
+    values = _revision_values(obs)
+    positives = sum(1 for value in values if value is not None and value > 0)
+    negatives = sum(1 for value in values if value is not None and value < 0)
+    if bool(features.is_loss_to_profit.value):
+        return 3
+    if positives >= 2:
+        return 3
+    if positives == 1:
+        return 2
+    if negatives:
+        return 1
+    return 0
+
+
+def _feature_revision_quality(obs: ObservationRecord, strength: int) -> str:
+    if obs.event_type == EventType.DIVIDEND_REVISION:
+        return "medium" if obs.event_subtype in {"increase", "decrease"} else "unclear"
+    if strength >= 3:
+        return "high"
+    if strength == 2:
+        return "medium"
+    if strength == 1:
+        return "low"
+    return "unclear"
+
+
+def _feature_valuation_context(obs: ObservationRecord) -> str:
+    valuation = obs.valuation_features_v0
+    forecast_per = _as_decimal(valuation.forecast_per.value)
+    if not valuation.forecast_per_valid or forecast_per is None or forecast_per <= 0:
+        return "invalid" if valuation.forecast_per.value not in (None, "") else "unclear"
+    if forecast_per <= Decimal("15"):
+        return "cheap"
+    if forecast_per <= Decimal("25"):
+        return "fair"
+    return "expensive"
+
+
+def _feature_technical_context(obs: ObservationRecord) -> str:
+    if technical_veto_allows(obs):
+        return "favorable"
+    tech = obs.technical_context_v0
+    return_20d = _as_decimal(tech.return_20d.value)
+    atr_pct = _as_decimal(tech.atr_pct_14d.value)
+    avg_turnover = _as_decimal(tech.avg_turnover_20d.value)
+    if return_20d is not None and return_20d >= Decimal("0.30"):
+        return "extended"
+    low_turnover = avg_turnover is not None and avg_turnover < Decimal("200000000")
+    extreme_atr = atr_pct is not None and (atr_pct < Decimal("0.005") or atr_pct > Decimal("0.08"))
+    if low_turnover or extreme_atr or _technical_regime_value(tech) == "broad_downtrend":
+        return "high_risk"
+    return "neutral"
+
+
+def _feature_expected_horizon(strength: int, technical_context: str) -> str:
+    if strength < 2 or technical_context == "high_risk":
+        return "avoid"
+    if strength >= 3:
+        return "20d"
+    return "10d"
+
+
+def _feature_risk_flags(obs: ObservationRecord) -> list[str]:
+    flags: list[str] = []
+    features = obs.fundamental_features_v0
+    tech = obs.technical_context_v0
+    if features.missing_eps:
+        flags.append("missing_eps")
+    if features.sign_changed:
+        flags.append("eps_sign_changed")
+    if features.previous_eps_near_zero:
+        flags.append("previous_eps_near_zero")
+    if _technical_regime_value(tech) == "broad_downtrend":
+        flags.append("broad_downtrend")
+    atr_pct = _as_decimal(tech.atr_pct_14d.value)
+    if atr_pct is not None and atr_pct > Decimal("0.08"):
+        flags.append("extreme_atr")
+    return flags
+
+
+def _revision_values(obs: ObservationRecord) -> list[Decimal | None]:
+    features = obs.fundamental_features_v0
+    return [
+        _as_decimal(features.profit_revision_pct.value),
+        _as_decimal(features.operating_profit_revision_pct.value),
+        _as_decimal(features.forecast_eps_revision_absolute.value),
+        _as_decimal(features.sales_revision_pct.value),
+    ]
 
 
 def shuffle_labels_within_event_type(

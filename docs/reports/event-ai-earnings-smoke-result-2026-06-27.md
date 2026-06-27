@@ -43,6 +43,12 @@ No paper/live route was enabled.
   `out/event-ai/eval-earnings300-official-numeric-placebo-gemma4-seed1/event-ai-report.json`
 - Official-numeric placebo comparison:
   `out/event-ai/placebo-compare-earnings300-official-numeric-placebo-gemma4-seed1-randomdate.json`
+- Feature-bundle proxy labels:
+  `out/event-ai/labels-earnings300-feature-proxy-v0.jsonl`
+- Feature-bundle proxy eval:
+  `out/event-ai/eval-earnings300-feature-proxy-v0/event-ai-report.json`
+- Feature-bundle proxy comparison:
+  `out/event-ai/placebo-compare-earnings300-feature-proxy-v0-randomdate.json`
 
 ## Run Status
 
@@ -226,6 +232,60 @@ Interpretation:
 - Confidence still collapsed into the `0.7..1.0` bucket for both real and
   official-numeric placebo labels, so confidence remains unusable for selection.
 
+## Feature-Bundle Proxy Result
+
+A deterministic `feature_bundle_proxy_v0` label set was generated from the
+same point-in-time feature bundles, without LLM calls and without forward
+returns. It applies the current AI-pass predicate to synthetic labels derived
+from coarse feature thresholds.
+
+Fixed 20 trading session exit:
+
+| Arm | Labels | Trades | Net PnL | PF | Max DD | Hit Rate | Positive Month Ratio |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| feature proxy event_only | 300 | 300 | 274,539 | 1.344 | 203,228 | 0.507 | 0.545 |
+| feature proxy event_plus_technical | 300 | 58 | 65,429 | 1.397 | 54,048 | 0.483 | 0.407 |
+| feature proxy event_plus_ai | 300 | 11 | -1,796 | 0.948 | 17,006 | 0.364 | 0.300 |
+| feature proxy event_plus_ai_plus_fundamental_plus_technical | 300 | 11 | -1,796 | 0.948 | 17,006 | 0.364 | 0.300 |
+
+Direct comparison to real labels:
+
+- real AI pass: 37
+- feature proxy AI pass: 11
+- both pass: 9
+- real-only pass: 28
+- feature-proxy-only pass: 2
+- pass Jaccard: 0.231
+
+Fixed 20 trading session exit by overlap cohort:
+
+| Cohort | Trades | Net PnL | PF | Max DD | Hit Rate | `same_symbol_random_date` percentile |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| real AI pass | 37 | 104,547 | 2.385 | 21,669 | 0.541 | 0.910 |
+| feature proxy AI pass | 11 | -1,796 | 0.948 | 17,006 | 0.364 | 0.287 |
+| both pass | 9 | -3,211 | 0.884 | 20,823 | 0.333 | 0.233 |
+| real-only pass | 28 | 107,758 | 3.258 | 15,803 | 0.607 | 0.960 |
+| feature-proxy-only pass | 2 | 1,415 | 1.215 | 6,595 | 0.500 | 0.553 |
+
+True `same_symbol_random_date` coverage:
+
+- matched: 300
+- fallback: 0
+- fallback rate: 0.0
+- candidate pool size median: 1,219
+
+Interpretation:
+
+- A simple deterministic feature-threshold proxy does not reproduce the real
+  AI-pass strength.
+- The official-numeric placebo result is therefore not explained by the exact
+  coarse feature proxy implemented here.
+- The remaining hypothesis is that the model is using feature bundles and/or
+  event metadata in a more complex way than this proxy, or that another common
+  cohort artifact is driving the pass set.
+- This is still not sufficient to proceed to development-all, validation, or
+  locked OOS.
+
 ## Semantic Diagnostics
 
 Real fixed_20d label buckets:
@@ -258,6 +318,8 @@ Reason:
 - The official-numeric placebo overlap suggests the current pass rule is
   substantially explainable by event metadata and/or engineered feature bundles,
   not by event-specific official disclosure numerics alone.
+- The deterministic feature-bundle proxy does not reproduce the real AI-pass
+  edge, so a simplistic rule-only explanation is also insufficient.
 - Confidence is not discriminative.
 - Technical-context labels are not semantically aligned with forward performance.
 
@@ -268,10 +330,10 @@ Next work should stay inside development-only diagnostics and should not inspect
 Before any larger LLM run:
 
 1. Investigate why the shared real/placebo pass set is unusually strong.
-2. Add a feature-bundle-only deterministic baseline that applies the current
-   AI-pass predicate to synthetic labels derived from feature thresholds.
-3. Add a combined feature-bundle plus official-numeric shuffled placebo if
+2. Add a combined feature-bundle plus official-numeric shuffled placebo if
    another LLM diagnostic is needed.
+3. Inspect real-only versus official-numeric-placebo-only prompt sections and
+   top contributors for common event metadata patterns.
 4. Keep `prompt_version=event_ai_label_v0`, model, temperature, and sample seed
    frozen for this recorded smoke; any prompt change must be treated as a new
    pre-registered experiment.
