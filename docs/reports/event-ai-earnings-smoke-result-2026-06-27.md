@@ -232,6 +232,38 @@ Interpretation:
 - Confidence still collapsed into the `0.7..1.0` bucket for both real and
   official-numeric placebo labels, so confidence remains unusable for selection.
 
+### Official Numeric Overlap Inspection
+
+The real-vs-official-numeric comparison was inspected without changing the
+prompt, model, threshold, or sample.
+
+- `both_pass`: 25 trades, mostly 2Q/3Q disclosures, PnL 72,113, PF 2.284,
+  `same_symbol_random_date` percentile 0.823.
+- `real_only_pass`: 12 trades, PnL 32,434, PF 2.680, percentile 0.797.
+  Six of the 12 were FY financial statements. In the placebo labels, several
+  of these became negative or `expected_horizon=avoid`.
+- `placebo_only_pass`: 13 trades, PnL 13,637, PF 1.695, percentile 0.433.
+  These were mostly cases where shuffled official numerics converted an
+  otherwise `avoid` real label into a tradable positive label.
+
+Prompt section comparison remained:
+
+- `event`: identical rate 1.0
+- `official_numeric_summary`: identical rate 0.0
+- `fundamental_features_v0`: identical rate 1.0
+- `valuation_features_v0`: identical rate 1.0
+- `technical_context_v0`: identical rate 1.0
+
+Interpretation:
+
+- Event-specific official numerics do affect direction/horizon on the margin:
+  real-only is better than placebo-only in this sample.
+- The sample is still too small, and `both_pass` still carries most of the
+  common strength, so this does not justify expanding to development-all.
+- A combined feature-bundle plus official-numeric shuffled placebo is the next
+  LLM diagnostic if we need to test whether the shared `both_pass` cohort is
+  driven by the preserved event metadata alone.
+
 ## Feature-Bundle Proxy Result
 
 A deterministic `feature_bundle_proxy_v0` label set was generated from the
