@@ -132,6 +132,44 @@ def test_event_ai_evaluator_defaults_to_development_split(
     assert report["external_placebos"][0]["name"] == "numerical_fields_shuffled"
 
 
+def test_event_ai_evaluator_uses_label_target_population(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observations = [_observation(idx) for idx in range(40)]
+    labels = [_label(idx) for idx in range(5)]
+    observations_path = tmp_path / "observations.jsonl"
+    labels_path = tmp_path / "labels.jsonl"
+    output_dir = tmp_path / "out"
+    _write_jsonl(observations_path, observations)
+    _write_jsonl(labels_path, labels)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "evaluate-event-ai.py",
+            "--observations",
+            str(observations_path),
+            "--labels",
+            str(labels_path),
+            "--output-dir",
+            str(output_dir),
+        ],
+    )
+
+    assert evaluate_event_ai.main() == 0
+
+    report = json.loads((output_dir / "event-ai-report.json").read_text(encoding="utf-8"))
+    fixed_2d_event_only = next(
+        row
+        for row in report["rows"]
+        if row["entry_arm"] == "event_only" and row["exit_arm"] == "fixed_2d"
+    )
+    assert report["evaluation_split"]["evaluation_population"] == "label_target_observations"
+    assert report["evaluation_split"]["labeled_observation_count"] == 5
+    assert fixed_2d_event_only["trade_count"] == 5
+
+
 def test_event_ai_evaluator_requires_locked_oos_opt_in(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

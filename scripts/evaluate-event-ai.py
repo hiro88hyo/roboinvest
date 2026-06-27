@@ -2,16 +2,21 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+from collections import defaultdict
+from datetime import date
 from pathlib import Path
+from typing import Any
 
 from event_research_common import (
     EVALUATION_SPLITS,
     EXIT_ARMS_FOR_REPORT,
+    FEATURE_SCHEMA_VERSION,
+    PURGE_TRADING_DAYS,
     entry_arm_allows,
     metrics_for_observations,
     read_jsonl,
-    select_observations_for_split,
 )
 from strategy_ai.event.evaluator import (
     ai_arm_allows,
@@ -48,12 +53,13 @@ def main() -> int:
 
     if args.split in {"locked-oos", "all"} and not args.include_locked_oos:
         parser.error("--include-locked-oos is required when --split is locked-oos or all")
-    all_observations = [
-        ObservationRecord.model_validate(row) for row in read_jsonl(args.observations)
-    ]
-    observations, split_info = select_observations_for_split(all_observations, split=args.split)
     labeled = [EventAiLabeledRecord.model_validate(row) for row in read_jsonl(args.labels)]
     labels = {row.event_id: row.label for row in labeled}
+    observations, split_info = _load_labeled_observations_for_split(
+        args.observations,
+        label_event_ids=set(labels),
+        split=args.split,
+    )
     rows = _evaluate_ai_rows(observations, labels)
     placebos = _evaluate_placebos(observations, labels)
     result = {
@@ -96,10 +102,139 @@ def main() -> int:
     )
     print(
         "event_ai_eval "
-        f"split={args.split} observations={len(observations)} "
+        f"split={args.split} labeled_observations={len(observations)} "
         f"rows={len(rows)} output={args.output_dir}"
     )
     return 0
+
+
+def _load_labeled_observations_for_split(
+    path: Path,
+    *,
+    label_event_ids: set[str],
+    split: str,
+) -> tuple[list[ObservationRecord], dict[str, Any]]:
+    manifest = _split_manifest_from_jsonl(path)
+    if not manifest:
+        return [], {"requested_split": split, "selected_observation_count": 0}
+
+    selected_labels = _requested_split_labels(split)
+    observations: list[ObservationRecord] = []
+    counts: dict[str, int] = defaultdict(int)
+    selected_observation_count = 0
+    selected_symbols: set[str] = set()
+    label_target_observation_count = 0
+
+    for row in read_jsonl(path):
+        split_label = _raw_observation_split(row, manifest)
+        counts[split_label] += 1
+        is_selected_split = split == "all" or split_label in selected_labels
+        if is_selected_split:
+            selected_observation_count += 1
+            selected_symbols.add(str(row.get("symbol", "")))
+        if is_selected_split and row.get("event_id") in label_event_ids:
+            label_target_observation_count += 1
+            observations.append(ObservationRecord.model_validate(row))
+
+    return observations, {
+        "requested_split": split,
+        "selected_observation_count": selected_observation_count,
+        "selected_symbol_count": len(selected_symbols),
+        "labeled_observation_count": label_target_observation_count,
+        "input_label_count": len(label_event_ids),
+        "split_counts": dict(counts),
+        "split_manifest": manifest,
+        "evaluation_population": "label_target_observations",
+    }
+
+
+def _split_manifest_from_jsonl(path: Path) -> dict[str, Any]:
+    dates: set[date] = set()
+    symbols: set[str] = set()
+    count = 0
+    digest = hashlib.sha256()
+    for row in read_jsonl(path):
+        count += 1
+        dates.add(date.fromisoformat(str(row["signal_date"])))
+        symbols.add(str(row.get("symbol", "")))
+        digest.update(
+            json.dumps(
+                row,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode("utf-8")
+        )
+        digest.update(b"\n")
+    if not dates:
+        return {}
+    ordered_dates = sorted(dates)
+    train_end = ordered_dates[int(len(ordered_dates) * 0.60)]
+    validation_start = _shift_trading_date(ordered_dates, train_end, PURGE_TRADING_DAYS)
+    validation_end = ordered_dates[int(len(ordered_dates) * 0.80)]
+    oos_start = _shift_trading_date(ordered_dates, validation_end, PURGE_TRADING_DAYS)
+    return {
+        "train_start": ordered_dates[0].isoformat(),
+        "train_end": train_end.isoformat(),
+        "validation_start": validation_start.isoformat(),
+        "validation_end": validation_end.isoformat(),
+        "locked_oos_start": oos_start.isoformat(),
+        "locked_oos_end": ordered_dates[-1].isoformat(),
+        "purge_days": PURGE_TRADING_DAYS,
+        "dataset_hash": digest.hexdigest(),
+        "dataset_hash_algorithm": "jsonl_stream_sha256_v1",
+        "split_observation_count": count,
+        "split_symbol_count": len(symbols),
+        "feature_schema_version": FEATURE_SCHEMA_VERSION,
+    }
+
+
+def _requested_split_labels(split: str) -> set[str]:
+    if split == "development":
+        return {"train", "validation"}
+    if split == "train":
+        return {"train"}
+    if split == "validation":
+        return {"validation"}
+    if split == "locked-oos":
+        return {"locked_oos"}
+    if split == "all":
+        return {"train", "validation", "locked_oos"}
+    raise ValueError(f"unsupported evaluation split: {split}")
+
+
+def _raw_observation_split(row: dict[str, Any], manifest: dict[str, Any]) -> str:
+    signal_date = date.fromisoformat(str(row["signal_date"]))
+    train_end = date.fromisoformat(manifest["train_end"])
+    validation_start = date.fromisoformat(manifest["validation_start"])
+    validation_end = date.fromisoformat(manifest["validation_end"])
+    locked_oos_start = date.fromisoformat(manifest["locked_oos_start"])
+    exit_20d = _raw_label_exit_date(row, 20)
+    if signal_date <= train_end:
+        if exit_20d is not None and exit_20d >= validation_start:
+            return "purge_train_validation"
+        return "train"
+    if signal_date < validation_start:
+        return "purge_train_validation"
+    if signal_date <= validation_end:
+        if exit_20d is not None and exit_20d >= locked_oos_start:
+            return "purge_validation_locked_oos"
+        return "validation"
+    if signal_date < locked_oos_start:
+        return "purge_validation_locked_oos"
+    return "locked_oos"
+
+
+def _raw_label_exit_date(row: dict[str, Any], horizon: int) -> date | None:
+    value = row.get("labels", {}).get(f"exit_date_{horizon}d")
+    if value in (None, ""):
+        return None
+    return date.fromisoformat(str(value))
+
+
+def _shift_trading_date(dates: list[date], start: date, days: int) -> date:
+    idx = dates.index(start)
+    return dates[min(idx + days, len(dates) - 1)]
 
 
 def _evaluate_placebos(

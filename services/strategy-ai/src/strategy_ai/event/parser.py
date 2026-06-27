@@ -11,6 +11,7 @@ class EventAiParseError(ValueError):
 
 
 def parse_event_ai_label(raw: str) -> EventAiLabel:
+    raw = _strip_json_code_fence(raw)
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as exc:
@@ -31,3 +32,16 @@ def _contains_non_finite(value: object) -> bool:
     if isinstance(value, list):
         return any(_contains_non_finite(item) for item in value)
     return False
+
+
+def _strip_json_code_fence(raw: str) -> str:
+    stripped = raw.strip()
+    if not stripped.startswith("```"):
+        return raw
+    lines = stripped.splitlines()
+    if len(lines) < 3 or lines[-1].strip() != "```":
+        return raw
+    opener = lines[0].strip().lower()
+    if opener not in {"```json", "```"}:
+        return raw
+    return "\n".join(lines[1:-1]).strip()

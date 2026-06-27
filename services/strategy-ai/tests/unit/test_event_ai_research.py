@@ -107,6 +107,9 @@ def test_parser_accepts_valid_json_and_rejects_bad_values() -> None:
     raw = _label().model_dump_json()
 
     assert parse_event_ai_label(raw).confidence == 0.7
+    assert parse_event_ai_label("```json\n" + raw + "\n```").confidence == 0.7
+    with pytest.raises(EventAiParseError):
+        parse_event_ai_label("```python\n" + raw + "\n```")
     with pytest.raises(EventAiParseError):
         parse_event_ai_label("{bad json")
     with pytest.raises(EventAiParseError):
