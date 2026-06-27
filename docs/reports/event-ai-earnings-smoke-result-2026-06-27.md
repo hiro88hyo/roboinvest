@@ -31,6 +31,8 @@ No paper/live route was enabled.
 - Real diagnostics: `out/event-ai/smoke-diagnostics-earnings300-gemma4-seed1.json`
 - Bundle placebo diagnostics: `out/event-ai/smoke-diagnostics-earnings300-bundle-placebo-gemma4-seed1.json`
 - Real/placebo comparison: `out/event-ai/placebo-compare-earnings300-gemma4-seed1.json`
+- Real/placebo comparison with true random-date pool:
+  `out/event-ai/placebo-compare-earnings300-gemma4-seed1-randomdate.json`
 
 ## Run Status
 
@@ -116,6 +118,24 @@ Fixed 20 trading session exit on the common cohort:
 | placebo-only pass | 34 | 26,735 | 1.344 | 30,285 | 0.412 | 0.375 |
 | neither pass | 228 | 144,721 | 1.225 | 190,657 | 0.518 | 0.463 |
 
+True `same_symbol_random_date` coverage used the daily OHLCV pool:
+
+- matched: 299
+- fallback: 0
+- fallback rate: 0.0
+- candidate pool size median: 1,219
+
+Fixed 20 trading session `same_symbol_random_date` percentiles:
+
+| Cohort | Selected PnL | Random Median | Random P95 | Selected Percentile |
+| --- | ---: | ---: | ---: | ---: |
+| both pass | 84,257 | 3,027 | 62,656 | 0.980 |
+| real-only pass | 20,291 | 23,113 | 125,725 | 0.487 |
+| placebo-only pass | 26,735 | 8,676 | 96,032 | 0.640 |
+| real AI pass | 104,547 | 30,503 | 139,587 | 0.910 |
+| bundle placebo AI pass | 110,991 | 4,822 | 126,687 | 0.910 |
+| neither pass | 144,721 | 1,575 | 323,767 | 0.767 |
+
 Interpretation:
 
 - The common 8 events explain most of the apparent AI-pass strength.
@@ -124,6 +144,9 @@ Interpretation:
   real-information-driven selection set.
 - Both real and placebo confidence distributions collapsed into the `0.7..1.0`
   bucket, so confidence remains unusable as a threshold.
+- The common 8 events are genuinely unusual versus same-symbol random dates,
+  but this is not enough to attribute the edge to real prompt information
+  because the bundle placebo selected the same 8 events.
 
 ## Semantic Diagnostics
 

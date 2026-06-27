@@ -12,10 +12,22 @@ from typing import Any
 from event_research_common import (
     EVALUATION_SPLITS,
     EXIT_ARMS_FOR_REPORT,
+    RANDOM_BASELINE_NAMES,
+    _baseline_index_pools,
+    _pnl_by_exit_arm,
+    build_random_date_observations,
+    cluster_trade_representatives,
     metrics_for_observations,
+    random_baselines_for_selection_by_exit,
     read_jsonl,
+    read_master_csv,
+    read_ohlcv_csv,
 )
-from strategy_ai.event.evaluator import ai_arm_allows
+from strategy_ai.event.evaluator import (
+    ai_arm_allows,
+    fundamental_rule_allows,
+    technical_veto_allows,
+)
 from trade_contracts.event_research import (
     EntryArm,
     EventAiLabel,
@@ -46,6 +58,9 @@ def main() -> int:
     parser.add_argument("--real-name", default="real")
     parser.add_argument("--placebo-name", default="placebo")
     parser.add_argument("--top-n", type=int, default=20)
+    parser.add_argument("--ohlcv", type=Path)
+    parser.add_argument("--master", type=Path)
+    parser.add_argument("--random-seeds", type=int, default=300)
     parser.add_argument(
         "--split",
         choices=EVALUATION_SPLITS,
@@ -58,7 +73,17 @@ def main() -> int:
     placebo_labels = _load_labels(args.placebo_labels, split=args.split)
     common_event_ids = set(real_labels) & set(placebo_labels)
     observations = _load_observations(args.observations, common_event_ids)
+    random_date_observations = None
+    if args.ohlcv is not None:
+        random_date_observations = build_random_date_observations(
+            ohlcv_rows=read_ohlcv_csv(args.ohlcv),
+            master=read_master_csv(args.master),
+            symbols={obs.symbol for obs in observations},
+        )
     rows = _comparison_rows(
+        observations, real_labels, placebo_labels, args.real_name, args.placebo_name
+    )
+    cohort_observations = _cohort_observations(
         observations, real_labels, placebo_labels, args.real_name, args.placebo_name
     )
     result = {
@@ -76,6 +101,15 @@ def main() -> int:
             args.real_name: _label_distribution(real_labels, common_event_ids),
             args.placebo_name: _label_distribution(placebo_labels, common_event_ids),
         },
+        "cohort_profiles": {
+            cohort: _cohort_profile(items) for cohort, items in cohort_observations.items()
+        },
+        "cohort_random_baselines": _cohort_random_baselines(
+            observations,
+            cohort_observations,
+            random_date_observations=random_date_observations,
+            seed_count=args.random_seeds,
+        ),
         "distribution_warnings": _distribution_warnings(
             {
                 args.real_name: real_labels,
@@ -138,6 +172,38 @@ def _comparison_rows(
     real_name: str,
     placebo_name: str,
 ) -> list[dict[str, Any]]:
+    groups = _cohort_observations(
+        observations,
+        real_labels,
+        placebo_labels,
+        real_name,
+        placebo_name,
+    )
+
+    rows: list[dict[str, Any]] = []
+    for cohort, items in groups.items():
+        for exit_arm in EXIT_ARMS_FOR_REPORT:
+            rows.append(
+                {
+                    "cohort": cohort,
+                    "exit_arm": exit_arm.value,
+                    **metrics_for_observations(
+                        items,
+                        exit_arm=exit_arm,
+                        include_bootstrap_ci=False,
+                    ),
+                }
+            )
+    return rows
+
+
+def _cohort_observations(
+    observations: list[ObservationRecord],
+    real_labels: dict[str, EventAiLabel],
+    placebo_labels: dict[str, EventAiLabel],
+    real_name: str,
+    placebo_name: str,
+) -> dict[str, list[ObservationRecord]]:
     groups: dict[str, list[ObservationRecord]] = {
         f"{real_name}_ai_pass": [],
         f"{real_name}_ai_reject": [],
@@ -163,22 +229,7 @@ def _comparison_rows(
             groups[f"{placebo_name}_only_pass"].append(obs)
         else:
             groups["neither_pass"].append(obs)
-
-    rows: list[dict[str, Any]] = []
-    for cohort, items in groups.items():
-        for exit_arm in EXIT_ARMS_FOR_REPORT:
-            rows.append(
-                {
-                    "cohort": cohort,
-                    "exit_arm": exit_arm.value,
-                    **metrics_for_observations(
-                        items,
-                        exit_arm=exit_arm,
-                        include_bootstrap_ci=False,
-                    ),
-                }
-            )
-    return rows
+    return groups
 
 
 def _ai_pass(obs: ObservationRecord, labels: dict[str, EventAiLabel]) -> bool:
@@ -262,6 +313,114 @@ def _distribution_warnings(
                 }
             )
     return warnings
+
+
+def _cohort_profile(observations: list[ObservationRecord]) -> dict[str, Any]:
+    return {
+        "event_count": len(observations),
+        "trade_count": len(cluster_trade_representatives(observations)),
+        "event_subtype_counts": dict(Counter(str(obs.event_subtype) for obs in observations)),
+        "signal_year_counts": dict(Counter(obs.signal_date[:4] for obs in observations)),
+        "signal_month_counts": dict(Counter(obs.signal_date[:7] for obs in observations)),
+        "top_symbols": dict(Counter(obs.symbol for obs in observations).most_common(20)),
+        "fundamental_rule_pass_count": sum(
+            1 for obs in observations if fundamental_rule_allows(obs)
+        ),
+        "technical_rule_pass_count": sum(1 for obs in observations if technical_veto_allows(obs)),
+        "feature_buckets": {
+            "profit_revision_pct": _feature_counts(
+                observations,
+                "fundamental_features_v0",
+                "profit_revision_pct",
+            ),
+            "operating_profit_revision_pct": _feature_counts(
+                observations,
+                "fundamental_features_v0",
+                "operating_profit_revision_pct",
+            ),
+            "forecast_eps_revision_absolute": _feature_counts(
+                observations,
+                "fundamental_features_v0",
+                "forecast_eps_revision_absolute",
+            ),
+            "forecast_per": _feature_counts(
+                observations,
+                "valuation_features_v0",
+                "forecast_per",
+            ),
+            "return_20d": _feature_counts(observations, "technical_context_v0", "return_20d"),
+            "atr_pct_14d": _feature_counts(observations, "technical_context_v0", "atr_pct_14d"),
+            "avg_turnover_20d": _feature_counts(
+                observations,
+                "technical_context_v0",
+                "avg_turnover_20d",
+            ),
+        },
+    }
+
+
+def _feature_counts(
+    observations: list[ObservationRecord],
+    group_name: str,
+    field_name: str,
+) -> dict[str, int]:
+    return dict(
+        Counter(
+            _feature_bucket(getattr(getattr(obs, group_name), field_name).value)
+            for obs in observations
+        )
+    )
+
+
+def _feature_bucket(value: object) -> str:
+    decimal = _as_decimal(value)
+    if decimal is None:
+        return "missing"
+    if decimal < 0:
+        return "negative"
+    if decimal > 0:
+        return "positive"
+    return "zero"
+
+
+def _cohort_random_baselines(
+    observations: list[ObservationRecord],
+    cohort_observations: dict[str, list[ObservationRecord]],
+    *,
+    random_date_observations: list[ObservationRecord] | None,
+    seed_count: int,
+) -> dict[str, Any]:
+    observation_indexes = {obs.observation_id: idx for idx, obs in enumerate(observations)}
+    pools_by_name, combined_observations, coverage = _baseline_index_pools(
+        observations,
+        random_date_observations=random_date_observations,
+    )
+    pnl_by_exit = _pnl_by_exit_arm(combined_observations)
+    cohort_results: dict[str, Any] = {}
+    for cohort, items in cohort_observations.items():
+        selected = cluster_trade_representatives(items)
+        selected_indexes = [
+            observation_indexes[obs.observation_id]
+            for obs in selected
+            if obs.observation_id in observation_indexes
+        ]
+        by_exit = random_baselines_for_selection_by_exit(
+            combined_observations,
+            selected_indexes=selected_indexes,
+            seed_count=seed_count,
+            pools_by_name=pools_by_name,
+            pnl_by_exit=pnl_by_exit,
+        )
+        cohort_results[cohort] = {
+            exit_arm.value: {name: by_exit[exit_arm.value][name] for name in RANDOM_BASELINE_NAMES}
+            for exit_arm in EXIT_ARMS_FOR_REPORT
+        }
+    return {
+        "seed_count": seed_count,
+        "uses_true_random_date_pool": random_date_observations is not None,
+        "coverage": coverage,
+        "cohorts": cohort_results,
+    }
 
 
 def _confidence_bucket(value: float) -> str:

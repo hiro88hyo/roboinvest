@@ -345,13 +345,17 @@ uv run python scripts/compare-event-ai-placebo.py \
   --placebo-labels out/event-ai/labels-balanced100-bundle-placebo.jsonl \
   --output-json out/event-ai/placebo-compare-balanced100.json \
   --output-csv out/event-ai/placebo-compare-balanced100.csv \
-  --split development
+  --split development \
+  --ohlcv data/reference/daily_ohlcv_20210625_20260624_bydate.csv \
+  --random-seeds 300
 ```
 
 The placebo comparison reports real-only, placebo-only, both-pass, and
 neither-pass cohorts under the same exit arms. It also emits confidence
-distribution warnings when confidence collapses into a single bucket. A strong
-real AI arm that is matched by bundle placebo does not qualify for a larger
+distribution warnings when confidence collapses into a single bucket. When
+`--ohlcv` is supplied, it uses the true daily OHLCV random-date pool for
+`same_symbol_random_date` and reports matched/fallback coverage. A strong real
+AI arm that is matched by bundle placebo does not qualify for a larger
 development run.
 
 7. Run a local OpenAI-compatible model:

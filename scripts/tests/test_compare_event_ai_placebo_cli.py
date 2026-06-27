@@ -162,6 +162,15 @@ def test_compare_event_ai_placebo_cli(
     assert report["summary"]["real_only_pass_count"] == 1
     assert report["summary"]["placebo_only_pass_count"] == 1
     assert report["summary"]["missing_from_placebo"] == 1
+    assert report["cohort_profiles"]["both_pass"]["event_count"] == 1
+    assert report["cohort_random_baselines"]["seed_count"] == 300
+    assert report["cohort_random_baselines"]["uses_true_random_date_pool"] is False
+    assert (
+        report["cohort_random_baselines"]["cohorts"]["both_pass"]["fixed_20d"][
+            "same_symbol_random_event_date"
+        ]["random_count"]
+        == 300
+    )
     assert report["distribution_warnings"][0]["name"] == "confidence_distribution_collapsed"
     real_only_positive = report["top_contributors"]["real_only_pass"]["top_positive_fixed20"]
     assert real_only_positive[0]["event_id"] == "event-1"
