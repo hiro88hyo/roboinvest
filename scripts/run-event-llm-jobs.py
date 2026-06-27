@@ -158,6 +158,16 @@ async def _run_one_job(
     try:
         async with semaphore:
             raw = await client.complete(job.prompt)
+    except LLMError as exc:
+        return (
+            None,
+            _failure_record(
+                job,
+                cache_key=cache_key,
+                error=f"{type(exc).__name__}: {exc}",
+            ),
+        )
+    try:
         label = parse_event_ai_label(raw)
         return (
             EventAiLabeledRecord(
@@ -181,17 +191,46 @@ async def _run_one_job(
             ),
             None,
         )
-    except (EventAiParseError, LLMError) as exc:
+    except EventAiParseError as exc:
         return (
             None,
-            {
-                "job_id": job.job_id,
-                "event_id": job.event_id,
-                "prompt_hash": job.prompt_hash,
-                "cache_key": cache_key,
-                "error": f"{type(exc).__name__}: {exc}",
-            },
+            _failure_record(
+                job,
+                cache_key=cache_key,
+                error=f"{type(exc).__name__}: {exc}",
+                raw_response=raw,
+            ),
         )
+
+
+def _failure_record(
+    job: EventAiJob,
+    *,
+    cache_key: str,
+    error: str,
+    raw_response: str | None = None,
+) -> dict[str, object]:
+    record: dict[str, object] = {
+        "job_id": job.job_id,
+        "event_id": job.event_id,
+        "prompt_version": job.prompt_version,
+        "prompt_hash": job.prompt_hash,
+        "cache_key": cache_key,
+        "feature_schema_version": job.feature_schema_version,
+        "feature_cutoff_at": job.feature_cutoff_at.isoformat(),
+        "dataset_hash": job.dataset_hash,
+        "split_manifest_hash": job.split_manifest_hash,
+        "split_label": job.split_label,
+        "model_provider": job.model_provider,
+        "model_id": job.model_id,
+        "temperature": str(job.temperature),
+        "seed": job.seed,
+        "error": error,
+    }
+    if raw_response is not None:
+        record["raw_response"] = raw_response
+        record["raw_response_length"] = len(raw_response)
+    return record
 
 
 def _max_concurrency(provider: str, override: int | None) -> int:

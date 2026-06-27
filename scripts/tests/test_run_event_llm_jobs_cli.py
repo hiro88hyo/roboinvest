@@ -26,6 +26,11 @@ def _load_module():
 run_event_llm_jobs = _load_module()
 
 
+class _BadJsonClient:
+    async def complete(self, prompt: str) -> str:
+        return "not json"
+
+
 def _job(idx: int) -> EventAiJob:
     at = datetime(2026, 1, 1, 15, 30, tzinfo=UTC)
     return EventAiJob(
@@ -173,6 +178,50 @@ def test_event_llm_runner_no_resume_overwrites_labels(
     assert labels[0]["temperature"] == "0"
     assert manifest["cached"] == 0
     assert manifest["completed"] == 1
+
+
+def test_event_llm_runner_records_raw_parse_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    jobs_path = tmp_path / "jobs.jsonl"
+    labels_path = tmp_path / "labels.jsonl"
+    failures_path = tmp_path / "failures.jsonl"
+    manifest_path = tmp_path / "manifest.json"
+    _write_jobs(jobs_path, [_job(0)])
+    monkeypatch.setattr(
+        run_event_llm_jobs,
+        "_build_client",
+        lambda provider, jobs: _BadJsonClient(),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run-event-llm-jobs.py",
+            "--jobs",
+            str(jobs_path),
+            "--provider",
+            "fixture",
+            "--output-labels",
+            str(labels_path),
+            "--output-failures",
+            str(failures_path),
+            "--output-manifest",
+            str(manifest_path),
+        ],
+    )
+
+    assert run_event_llm_jobs.main() == 0
+
+    failures = _read_jsonl(failures_path)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert failures[0]["error"] == "EventAiParseError: invalid json"
+    assert failures[0]["raw_response"] == "not json"
+    assert failures[0]["raw_response_length"] == 8
+    assert failures[0]["dataset_hash"] == "dataset-hash"
+    assert failures[0]["split_label"] == "train"
+    assert manifest["failed"] == 1
 
 
 def test_event_llm_runner_rejects_provider_mismatch(
