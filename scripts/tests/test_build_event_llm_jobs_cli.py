@@ -59,7 +59,13 @@ def _event(
         feature_cutoff_at=at,
         raw_source_identifier=f"fixture-{idx}",
         fetched_at=at,
-        raw={"ForecastEarningsPerShare": "125"},
+        raw={
+            "ForecastEarningsPerShare": "125",
+            "EPS": str(100 + idx),
+            "BPS": str(1000 + idx),
+            "DiscNo": f"disc-{idx}",
+            "DocType": event_subtype or "ForecastRevision",
+        },
     )
 
 
@@ -329,6 +335,73 @@ def test_llm_job_builder_can_shuffle_numerical_feature_placebo(
     assert [row["event_id"] for row in baseline_rows] == [row["event_id"] for row in placebo_rows]
     assert sorted(baseline_values) == sorted(placebo_values)
     assert baseline_values != placebo_values
+
+
+def test_llm_job_builder_can_shuffle_official_numeric_summary_placebo(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events = [_event(idx, event_type=EventType.EARNINGS_RESULT) for idx in range(40)]
+    observations = [_observation(idx, event_type=EventType.EARNINGS_RESULT) for idx in range(40)]
+    events_path = tmp_path / "events.jsonl"
+    observations_path = tmp_path / "observations.jsonl"
+    baseline_output = tmp_path / "jobs-baseline.jsonl"
+    placebo_output = tmp_path / "jobs-placebo.jsonl"
+    _write_jsonl(events_path, events)
+    _write_jsonl(observations_path, observations)
+
+    for output_path, extra_args in (
+        (baseline_output, []),
+        (
+            placebo_output,
+            [
+                "--placebo-mode",
+                "official_numeric_summary_shuffled",
+                "--placebo-seed",
+                "5",
+            ],
+        ),
+    ):
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "build-event-llm-jobs.py",
+                "--events",
+                str(events_path),
+                "--observations",
+                str(observations_path),
+                "--output",
+                str(output_path),
+                *extra_args,
+            ],
+        )
+        assert build_event_llm_jobs.main() == 0
+
+    baseline_rows = [
+        json.loads(line) for line in baseline_output.read_text(encoding="utf-8").splitlines()
+    ]
+    placebo_rows = [
+        json.loads(line) for line in placebo_output.read_text(encoding="utf-8").splitlines()
+    ]
+    baseline_eps = [
+        json.loads(row["prompt"])["official_numeric_summary"]["EPS"] for row in baseline_rows
+    ]
+    placebo_eps = [
+        json.loads(row["prompt"])["official_numeric_summary"]["EPS"] for row in placebo_rows
+    ]
+    baseline_feature_values = [
+        json.loads(row["prompt"])["fundamental_features_v0"]["profit_revision_pct"]["value"]
+        for row in baseline_rows
+    ]
+    placebo_feature_values = [
+        json.loads(row["prompt"])["fundamental_features_v0"]["profit_revision_pct"]["value"]
+        for row in placebo_rows
+    ]
+    assert [row["event_id"] for row in baseline_rows] == [row["event_id"] for row in placebo_rows]
+    assert sorted(baseline_eps) == sorted(placebo_eps)
+    assert baseline_eps != placebo_eps
+    assert baseline_feature_values == placebo_feature_values
 
 
 def test_llm_job_builder_requires_locked_oos_opt_in(

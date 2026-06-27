@@ -33,6 +33,10 @@ No paper/live route was enabled.
 - Real/placebo comparison: `out/event-ai/placebo-compare-earnings300-gemma4-seed1.json`
 - Real/placebo comparison with true random-date pool:
   `out/event-ai/placebo-compare-earnings300-gemma4-seed1-randomdate.json`
+- Official-numeric placebo jobs:
+  `out/event-ai/jobs-earnings300-official-numeric-placebo-gemma4-seed1.jsonl`
+- Official-numeric placebo job audit:
+  `out/event-ai/jobs-earnings300-official-numeric-placebo-audit.json`
 
 ## Run Status
 
@@ -147,6 +151,14 @@ Interpretation:
 - The common 8 events are genuinely unusual versus same-symbol random dates,
   but this is not enough to attribute the edge to real prompt information
   because the bundle placebo selected the same 8 events.
+- Prompt section audit showed why bundle placebo is not a full official-data
+  placebo: for the common 8 events, `event` and `official_numeric_summary`
+  remained identical while `fundamental_features_v0`, `valuation_features_v0`,
+  and `technical_context_v0` all differed.
+- A new `official_numeric_summary_shuffled` placebo job set was generated and
+  audited. It preserves event metadata and feature bundles while changing
+  `official_numeric_summary`; job audit passed with 300 jobs, no event-order
+  mismatch, and 299 changed prompt hashes.
 
 ## Semantic Diagnostics
 
@@ -186,5 +198,8 @@ Next work should stay inside development-only diagnostics and should not inspect
 Before any larger LLM run:
 
 1. Investigate why the shared real/placebo pass set is unusually strong.
-2. Investigate why bundle-shuffled jobs still select profitable earnings events.
-3. Keep `prompt_version=event_ai_label_v0`, model, temperature, and sample seed frozen for this recorded smoke; any prompt change must be treated as a new pre-registered experiment.
+2. Run the official-numeric placebo LLM labels before any development-all run.
+3. If official-numeric placebo collapses while real remains strong, the signal
+   may be official-summary driven; if it remains strong, the edge is likely not
+   attributable to event-specific official numerics.
+4. Keep `prompt_version=event_ai_label_v0`, model, temperature, and sample seed frozen for this recorded smoke; any prompt change must be treated as a new pre-registered experiment.

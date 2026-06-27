@@ -95,6 +95,20 @@ def _write_jsonl(path: Path, rows: list[object]) -> None:
     )
 
 
+def _write_job_jsonl(path: Path, *, event_ids: list[str], feature_suffix: str) -> None:
+    rows = []
+    for event_id in event_ids:
+        prompt = {
+            "event": {"event_id": event_id, "event_type": "earnings_result"},
+            "official_numeric_summary": {"EPS": "10.0", "DiscNo": event_id},
+            "fundamental_features_v0": {"eps_latest": {"value": feature_suffix}},
+            "valuation_features_v0": {"forecast_per": {"value": feature_suffix}},
+            "technical_context_v0": {"return_20d": {"value": feature_suffix}},
+        }
+        rows.append({"event_id": event_id, "prompt": json.dumps(prompt, sort_keys=True)})
+    path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+
+
 def test_compare_event_ai_placebo_cli(
     tmp_path: Path,
     monkeypatch,
@@ -102,6 +116,8 @@ def test_compare_event_ai_placebo_cli(
     observations_path = tmp_path / "observations.jsonl"
     real_labels_path = tmp_path / "real.jsonl"
     placebo_labels_path = tmp_path / "placebo.jsonl"
+    real_jobs_path = tmp_path / "real-jobs.jsonl"
+    placebo_jobs_path = tmp_path / "placebo-jobs.jsonl"
     output_json = tmp_path / "compare.json"
     output_csv = tmp_path / "compare.csv"
     _write_jsonl(
@@ -130,6 +146,9 @@ def test_compare_event_ai_placebo_cli(
             _label(2, direction="positive", strength=2),
         ],
     )
+    event_ids = [f"event-{idx}" for idx in range(3)]
+    _write_job_jsonl(real_jobs_path, event_ids=event_ids, feature_suffix="real")
+    _write_job_jsonl(placebo_jobs_path, event_ids=event_ids, feature_suffix="placebo")
     monkeypatch.setattr(
         sys,
         "argv",
@@ -141,6 +160,10 @@ def test_compare_event_ai_placebo_cli(
             str(real_labels_path),
             "--placebo-labels",
             str(placebo_labels_path),
+            "--real-jobs",
+            str(real_jobs_path),
+            "--placebo-jobs",
+            str(placebo_jobs_path),
             "--output-json",
             str(output_json),
             "--output-csv",
@@ -171,6 +194,9 @@ def test_compare_event_ai_placebo_cli(
         ]["random_count"]
         == 300
     )
+    both_prompt_sections = report["prompt_section_comparison"]["cohorts"]["both_pass"]["sections"]
+    assert both_prompt_sections["official_numeric_summary"]["identical_rate"] == 1.0
+    assert both_prompt_sections["fundamental_features_v0"]["identical_rate"] == 0.0
     assert report["distribution_warnings"][0]["name"] == "confidence_distribution_collapsed"
     real_only_positive = report["top_contributors"]["real_only_pass"]["top_positive_fixed20"]
     assert real_only_positive[0]["event_id"] == "event-1"

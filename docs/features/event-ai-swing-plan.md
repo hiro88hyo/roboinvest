@@ -243,6 +243,18 @@ uv run python scripts/build-event-llm-jobs.py \
   --placebo-seed 1 \
   --model-provider openai_compatible \
   --model-id local-model
+
+uv run python scripts/build-event-llm-jobs.py \
+  --events out/event-research/events.jsonl \
+  --observations out/event-research/observations.jsonl \
+  --output out/event-ai/jobs-balanced100-official-numeric-placebo.jsonl \
+  --split development \
+  --balanced-sample-size 100 \
+  --sample-seed 1 \
+  --placebo-mode official_numeric_summary_shuffled \
+  --placebo-seed 1 \
+  --model-provider openai_compatible \
+  --model-id local-model
 ```
 
 The numerical placebo shuffles only `FeatureValue.value` fields within each
@@ -250,7 +262,10 @@ event type. Feature timing metadata such as `available_at` and
 `feature_cutoff_at` is preserved so the placebo prompt does not introduce
 future timestamps. The bundle placebo shuffles the fundamental, valuation, and
 technical feature bundles within event type as a less adversarial numerical
-placebo.
+placebo. The official-numeric placebo shuffles the prompt allowlisted
+`official_numeric_summary` bundle within event type while leaving event metadata
+and feature bundles unchanged. Use it when bundle placebo remains strong,
+because bundle placebo intentionally preserves official disclosure numerics.
 
 Before running a local model, audit the baseline and placebo job files:
 
@@ -357,6 +372,12 @@ distribution warnings when confidence collapses into a single bucket. When
 `same_symbol_random_date` and reports matched/fallback coverage. A strong real
 AI arm that is matched by bundle placebo does not qualify for a larger
 development run.
+
+Supply `--real-jobs` and `--placebo-jobs` to compare prompt sections. This is
+required when diagnosing why a placebo remains strong. For `bundle_shuffled`,
+`official_numeric_summary` is expected to remain identical while feature
+bundles differ. For `official_numeric_summary_shuffled`, the opposite should be
+true.
 
 7. Run a local OpenAI-compatible model:
 

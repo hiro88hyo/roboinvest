@@ -53,6 +53,8 @@ def main() -> int:
     parser.add_argument("--observations", type=Path, required=True)
     parser.add_argument("--real-labels", type=Path, required=True)
     parser.add_argument("--placebo-labels", type=Path, required=True)
+    parser.add_argument("--real-jobs", type=Path)
+    parser.add_argument("--placebo-jobs", type=Path)
     parser.add_argument("--output-json", type=Path, required=True)
     parser.add_argument("--output-csv", type=Path, required=True)
     parser.add_argument("--real-name", default="real")
@@ -71,6 +73,8 @@ def main() -> int:
 
     real_labels = _load_labels(args.real_labels, split=args.split)
     placebo_labels = _load_labels(args.placebo_labels, split=args.split)
+    real_jobs = _load_job_prompts(args.real_jobs) if args.real_jobs is not None else None
+    placebo_jobs = _load_job_prompts(args.placebo_jobs) if args.placebo_jobs is not None else None
     common_event_ids = set(real_labels) & set(placebo_labels)
     observations = _load_observations(args.observations, common_event_ids)
     random_date_observations = None
@@ -109,6 +113,11 @@ def main() -> int:
             cohort_observations,
             random_date_observations=random_date_observations,
             seed_count=args.random_seeds,
+        ),
+        "prompt_section_comparison": _prompt_section_comparison(
+            real_jobs,
+            placebo_jobs,
+            cohort_observations,
         ),
         "distribution_warnings": _distribution_warnings(
             {
@@ -163,6 +172,16 @@ def _load_observations(path: Path, event_ids: set[str]) -> list[ObservationRecor
         if row.get("event_id") in event_ids:
             observations.append(ObservationRecord.model_validate(row))
     return observations
+
+
+def _load_job_prompts(path: Path) -> dict[str, dict[str, Any]]:
+    prompts: dict[str, dict[str, Any]] = {}
+    for row in read_jsonl(path):
+        prompt = row.get("prompt")
+        if not isinstance(prompt, str):
+            continue
+        prompts[str(row["event_id"])] = json.loads(prompt)
+    return prompts
 
 
 def _comparison_rows(
@@ -421,6 +440,63 @@ def _cohort_random_baselines(
         "coverage": coverage,
         "cohorts": cohort_results,
     }
+
+
+def _prompt_section_comparison(
+    real_jobs: dict[str, dict[str, Any]] | None,
+    placebo_jobs: dict[str, dict[str, Any]] | None,
+    cohort_observations: dict[str, list[ObservationRecord]],
+) -> dict[str, Any]:
+    if real_jobs is None or placebo_jobs is None:
+        return {
+            "available": False,
+            "reason": "--real-jobs and --placebo-jobs were not supplied",
+        }
+    sections = (
+        "event",
+        "official_numeric_summary",
+        "fundamental_features_v0",
+        "valuation_features_v0",
+        "technical_context_v0",
+    )
+    cohorts: dict[str, Any] = {}
+    for cohort, observations in cohort_observations.items():
+        event_ids = [obs.event_id for obs in observations]
+        compared_ids = [
+            event_id for event_id in event_ids if event_id in real_jobs and event_id in placebo_jobs
+        ]
+        section_counts: dict[str, Any] = {}
+        for section in sections:
+            identical = [
+                event_id
+                for event_id in compared_ids
+                if _canonical(real_jobs[event_id].get(section))
+                == _canonical(placebo_jobs[event_id].get(section))
+            ]
+            section_counts[section] = {
+                "identical_count": len(identical),
+                "different_count": len(compared_ids) - len(identical),
+                "identical_rate": None if not compared_ids else len(identical) / len(compared_ids),
+            }
+        cohorts[cohort] = {
+            "event_count": len(event_ids),
+            "compared_count": len(compared_ids),
+            "missing_job_count": len(event_ids) - len(compared_ids),
+            "sections": section_counts,
+        }
+    return {
+        "available": True,
+        "sections": list(sections),
+        "cohorts": cohorts,
+        "interpretation": (
+            "bundle_shuffled preserves event metadata and official_numeric_summary; "
+            "it only shuffles feature bundles"
+        ),
+    }
+
+
+def _canonical(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
 
 
 def _confidence_bucket(value: float) -> str:

@@ -23,6 +23,21 @@ FEATURE_GROUPS_FOR_NUMERICAL_PLACEBO = (
     "valuation_features_v0",
     "technical_context_v0",
 )
+OFFICIAL_NUMERIC_SUMMARY_PLACEBO_FIELDS = (
+    "FEPS",
+    "FOP",
+    "FNP",
+    "FSales",
+    "FDivAnn",
+    "EPS",
+    "BPS",
+    "CurFYEn",
+    "NxtFYEn",
+    "DocType",
+    "DiscDate",
+    "DiscTime",
+    "DiscNo",
+)
 
 
 def main() -> int:
@@ -63,7 +78,12 @@ def main() -> int:
     )
     parser.add_argument(
         "--placebo-mode",
-        choices=["none", "numerical_fields_shuffled", "bundle_shuffled"],
+        choices=[
+            "none",
+            "numerical_fields_shuffled",
+            "bundle_shuffled",
+            "official_numeric_summary_shuffled",
+        ],
         default="none",
         help="Build placebo prompts. Numerical shuffle preserves feature timing metadata.",
     )
@@ -123,6 +143,12 @@ def main() -> int:
         )
     if args.placebo_mode == "bundle_shuffled":
         observations = _shuffle_feature_bundles(
+            observations,
+            seed=args.placebo_seed,
+        )
+    if args.placebo_mode == "official_numeric_summary_shuffled":
+        events = _shuffle_official_numeric_summary_bundles(
+            events,
             observations,
             seed=args.placebo_seed,
         )
@@ -278,6 +304,38 @@ def _shuffle_feature_bundles(
                     "technical_context_v0": donor.technical_context_v0,
                 }
             )
+    return out
+
+
+def _shuffle_official_numeric_summary_bundles(
+    events: dict[str, EventRecord],
+    observations: list[ObservationRecord],
+    *,
+    seed: int,
+) -> dict[str, EventRecord]:
+    rng = random.Random(seed)
+    out = dict(events)
+    event_types = sorted({obs.event_type for obs in observations}, key=lambda item: item.value)
+    for event_type in event_types:
+        event_ids = [
+            obs.event_id
+            for obs in observations
+            if obs.event_type == event_type and obs.event_id in events
+        ]
+        if len(event_ids) < 2:
+            continue
+        donor_ids = event_ids[:]
+        rng.shuffle(donor_ids)
+        for event_id, donor_id in zip(event_ids, donor_ids, strict=True):
+            target = out[event_id]
+            donor = events[donor_id]
+            updated_raw = dict(target.raw)
+            for field in OFFICIAL_NUMERIC_SUMMARY_PLACEBO_FIELDS:
+                if field in donor.raw:
+                    updated_raw[field] = donor.raw[field]
+                else:
+                    updated_raw.pop(field, None)
+            out[event_id] = target.model_copy(update={"raw": updated_raw})
     return out
 
 
