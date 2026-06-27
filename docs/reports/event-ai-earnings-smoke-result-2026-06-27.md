@@ -49,6 +49,16 @@ No paper/live route was enabled.
   `out/event-ai/eval-earnings300-feature-proxy-v0/event-ai-report.json`
 - Feature-bundle proxy comparison:
   `out/event-ai/placebo-compare-earnings300-feature-proxy-v0-randomdate.json`
+- Combined feature-and-official placebo jobs:
+  `out/event-ai/jobs-earnings300-feature-and-official-placebo-gemma4-seed1.jsonl`
+- Combined feature-and-official placebo job audit:
+  `out/event-ai/jobs-earnings300-feature-and-official-placebo-audit.json`
+- Combined feature-and-official placebo labels:
+  `out/event-ai/labels-earnings300-feature-and-official-placebo-gemma4-seed1.jsonl`
+- Combined feature-and-official placebo eval:
+  `out/event-ai/eval-earnings300-feature-and-official-placebo-gemma4-seed1/event-ai-report.json`
+- Combined feature-and-official placebo comparison:
+  `out/event-ai/placebo-compare-earnings300-feature-and-official-placebo-gemma4-seed1-randomdate.json`
 
 ## Run Status
 
@@ -318,6 +328,84 @@ Interpretation:
 - This is still not sufficient to proceed to development-all, validation, or
   locked OOS.
 
+## Combined Placebo Result
+
+A `feature_and_official_numeric_shuffled` placebo was generated and run through
+the same local LLM with the same prompt version, model, temperature, model seed,
+sample seed, and max concurrency. This placebo preserves event metadata but
+shuffles both `official_numeric_summary` and the fundamental/valuation/technical
+feature bundles within event type.
+
+Job audit:
+
+- ok: true
+- jobs: 300
+- errors: 0
+- event_id order mismatches: 0
+- changed prompt hashes: 299
+
+LLM run:
+
+- completed: 300
+- failed: 0
+- cached: 0
+- labels_total: 300
+
+Prompt section comparison for the 4 both-pass events:
+
+- `event`: identical rate 1.0
+- `official_numeric_summary`: identical rate 0.0
+- `fundamental_features_v0`: identical rate 0.0
+- `valuation_features_v0`: identical rate 0.0
+- `technical_context_v0`: identical rate 0.0
+
+Fixed 20 trading session exit:
+
+| Arm | Labels | Trades | Net PnL | PF | Max DD | Hit Rate | Positive Month Ratio |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| combined placebo event_only | 300 | 300 | 274,539 | 1.344 | 203,228 | 0.507 | 0.545 |
+| combined placebo event_plus_technical | 300 | 58 | 65,429 | 1.397 | 54,048 | 0.483 | 0.407 |
+| combined placebo event_plus_ai | 300 | 32 | -13,799 | 0.857 | 45,613 | 0.438 | 0.579 |
+| combined placebo event_plus_ai_plus_fundamental_plus_technical | 300 | 2 | -5,621 | 0.148 | 6,595 | 0.500 | 0.500 |
+
+Direct comparison to real labels:
+
+- real AI pass: 37
+- combined placebo AI pass: 32
+- both pass: 4
+- real-only pass: 33
+- combined-placebo-only pass: 28
+- pass Jaccard: 0.062
+
+Fixed 20 trading session exit by overlap cohort:
+
+| Cohort | Trades | Net PnL | PF | Max DD | Hit Rate | `same_symbol_random_date` percentile |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| real AI pass | 37 | 104,547 | 2.385 | 21,669 | 0.541 | 0.910 |
+| combined placebo AI pass | 32 | -13,799 | 0.857 | 45,613 | 0.438 | 0.330 |
+| both pass | 4 | 7,386 | 1.855 | 7,529 | 0.500 | 0.593 |
+| real-only pass | 33 | 97,161 | 2.454 | 21,669 | 0.545 | 0.907 |
+| combined-placebo-only pass | 28 | -21,186 | 0.759 | 39,059 | 0.429 | 0.287 |
+
+True `same_symbol_random_date` coverage:
+
+- matched: 300
+- fallback: 0
+- fallback rate: 0.0
+- candidate pool size median: 1,219
+
+Interpretation:
+
+- The combined placebo collapses. This weakens the hypothesis that the strong
+  real AI-pass cohort is driven by event metadata alone.
+- The real-only cohort remains strong after both official numerics and feature
+  bundles are shuffled away in the placebo, which is the best smoke evidence so
+  far that the model is using the aligned event/features rather than only
+  generic metadata.
+- This is still a 300-event development smoke. It does not change the
+  paper/live status, does not inspect validation or locked OOS, and does not
+  justify prompt or threshold tuning on the same sample.
+
 ## Semantic Diagnostics
 
 Real fixed_20d label buckets:
@@ -352,6 +440,8 @@ Reason:
   not by event-specific official disclosure numerics alone.
 - The deterministic feature-bundle proxy does not reproduce the real AI-pass
   edge, so a simplistic rule-only explanation is also insufficient.
+- The combined feature-and-official placebo collapses, which is positive smoke
+  evidence against the event-metadata-only explanation.
 - Confidence is not discriminative.
 - Technical-context labels are not semantically aligned with forward performance.
 
@@ -361,11 +451,13 @@ Next work should stay inside development-only diagnostics and should not inspect
 
 Before any larger LLM run:
 
-1. Investigate why the shared real/placebo pass set is unusually strong.
-2. Add a combined feature-bundle plus official-numeric shuffled placebo if
-   another LLM diagnostic is needed.
-3. Inspect real-only versus official-numeric-placebo-only prompt sections and
-   top contributors for common event metadata patterns.
+1. Decide whether the combined-placebo collapse is sufficient to start a
+   one-time larger development run under the frozen prompt/model/threshold.
+2. If proceeding, run development in a bounded shard plan and do not alter
+   prompt, model, temperature, sample seed, or pass threshold after partial
+   results.
+3. Keep validation and locked OOS hidden until the development run and decision
+   rule are frozen.
 4. Keep `prompt_version=event_ai_label_v0`, model, temperature, and sample seed
    frozen for this recorded smoke; any prompt change must be treated as a new
    pre-registered experiment.

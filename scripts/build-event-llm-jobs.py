@@ -83,6 +83,7 @@ def main() -> int:
             "numerical_fields_shuffled",
             "bundle_shuffled",
             "official_numeric_summary_shuffled",
+            "feature_and_official_numeric_shuffled",
         ],
         default="none",
         help="Build placebo prompts. Numerical shuffle preserves feature timing metadata.",
@@ -147,6 +148,16 @@ def main() -> int:
             seed=args.placebo_seed,
         )
     if args.placebo_mode == "official_numeric_summary_shuffled":
+        events = _shuffle_official_numeric_summary_bundles(
+            events,
+            observations,
+            seed=args.placebo_seed,
+        )
+    if args.placebo_mode == "feature_and_official_numeric_shuffled":
+        observations = _shuffle_feature_bundles(
+            observations,
+            seed=args.placebo_seed,
+        )
         events = _shuffle_official_numeric_summary_bundles(
             events,
             observations,
@@ -287,6 +298,7 @@ def _shuffle_feature_bundles(
     seed: int,
 ) -> list[ObservationRecord]:
     rng = random.Random(seed)
+    donors = [obs.model_copy(deep=True) for obs in observations]
     out = [obs.model_copy(deep=True) for obs in observations]
     event_types = sorted({obs.event_type for obs in out}, key=lambda item: item.value)
     for event_type in event_types:
@@ -296,7 +308,7 @@ def _shuffle_feature_bundles(
         donor_indexes = indexes[:]
         rng.shuffle(donor_indexes)
         for idx, donor_idx in zip(indexes, donor_indexes, strict=True):
-            donor = out[donor_idx]
+            donor = donors[donor_idx]
             out[idx] = out[idx].model_copy(
                 update={
                     "fundamental_features_v0": donor.fundamental_features_v0,

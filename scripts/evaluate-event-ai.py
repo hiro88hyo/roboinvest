@@ -86,6 +86,18 @@ def main() -> int:
                 "how_to_generate": "build-event-llm-jobs.py --placebo-mode bundle_shuffled",
             },
             {
+                "name": "official_numeric_summary_shuffled",
+                "how_to_generate": (
+                    "build-event-llm-jobs.py --placebo-mode official_numeric_summary_shuffled"
+                ),
+            },
+            {
+                "name": "feature_and_official_numeric_shuffled",
+                "how_to_generate": (
+                    "build-event-llm-jobs.py --placebo-mode feature_and_official_numeric_shuffled"
+                ),
+            },
+            {
                 "name": "feature_bundle_proxy_v0",
                 "how_to_generate": "build-event-ai-feature-proxy-labels.py",
             },
