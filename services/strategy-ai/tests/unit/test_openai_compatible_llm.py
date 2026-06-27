@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 from strategy_ai.llm.base import LLMError
@@ -22,6 +24,7 @@ async def test_openai_compatible_uses_mock_transport_without_network() -> None:
         base_url="https://local.test",
         api_key="secret",
         model="local-model",
+        seed=123,
         client_factory=lambda: httpx.AsyncClient(
             base_url="https://local.test",
             transport=transport,
@@ -31,6 +34,7 @@ async def test_openai_compatible_uses_mock_transport_without_network() -> None:
     assert await client.complete("prompt") == '{"ok": true}'
     assert requests[0].url.path == "/chat/completions"
     assert requests[0].headers["authorization"] == "Bearer secret"
+    assert json.loads(requests[0].content)["seed"] == 123
 
 
 @pytest.mark.asyncio

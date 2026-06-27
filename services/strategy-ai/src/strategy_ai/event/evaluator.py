@@ -36,9 +36,9 @@ def fundamental_rule_allows(obs: ObservationRecord) -> bool:
     op_pct = features.operating_profit_revision_pct.value
     eps_abs = features.forecast_eps_revision_absolute.value
     revisions = [_as_decimal(value) for value in (profit_pct, op_pct, eps_abs)]
-    return any(value is not None and value > 0 for value in revisions) or (
-        obs.event_type == EventType.DIVIDEND_REVISION
-    )
+    if obs.event_type == EventType.DIVIDEND_REVISION:
+        return obs.event_subtype == "increase"
+    return any(value is not None and value > 0 for value in revisions)
 
 
 def technical_veto_allows(obs: ObservationRecord) -> bool:
@@ -46,7 +46,7 @@ def technical_veto_allows(obs: ObservationRecord) -> bool:
     avg_turnover = _as_decimal(tech.avg_turnover_20d.value)
     atr_pct = _as_decimal(tech.atr_pct_14d.value)
     return_20d = _as_decimal(tech.return_20d.value)
-    regime = str(tech.market_regime.value or "")
+    regime = _technical_regime_value(tech)
     return (
         avg_turnover is not None
         and avg_turnover >= Decimal("200000000")
@@ -55,6 +55,14 @@ def technical_veto_allows(obs: ObservationRecord) -> bool:
         and (return_20d is None or return_20d < Decimal("0.30"))
         and regime != "broad_downtrend"
     )
+
+
+def _technical_regime_value(tech: Any) -> str:
+    symbol_regime = getattr(tech, "symbol_regime", None)
+    if symbol_regime is not None and getattr(symbol_regime, "value", None):
+        return str(symbol_regime.value)
+    market_regime = getattr(tech, "market_regime", None)
+    return str(getattr(market_regime, "value", "") or "")
 
 
 def shuffle_labels_within_event_type(

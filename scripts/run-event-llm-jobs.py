@@ -15,8 +15,8 @@ from strategy_ai.config import StrategyAiSettings
 from strategy_ai.event.cache import event_ai_cache_key
 from strategy_ai.event.parser import EventAiParseError, parse_event_ai_label
 from strategy_ai.llm.base import LLMError
-from strategy_ai.llm.factory import build_llm_client
 from strategy_ai.llm.fixture import FixtureLLMClient
+from strategy_ai.llm.openai_compatible import OpenAICompatibleClient
 from trade_contracts.event_research import EventAiJob, EventAiLabeledRecord
 
 
@@ -281,7 +281,15 @@ def _build_client(provider: str, jobs: list[EventAiJob]):
             "LOCAL_LLM_MODEL must match jobs model_id: "
             f"{settings.local_llm_model!r} != {jobs[0].model_id!r}"
         )
-    return build_llm_client(settings)
+    return OpenAICompatibleClient(
+        base_url=settings.local_llm_base_url,
+        api_key=settings.local_llm_api_key,
+        model=settings.local_llm_model,
+        timeout_seconds=settings.local_llm_timeout_seconds,
+        temperature=jobs[0].temperature if jobs else Decimal("0"),
+        seed=jobs[0].seed if jobs else None,
+        max_concurrency=settings.local_llm_max_concurrency,
+    )
 
 
 def _validate_jobs(jobs: list[EventAiJob], provider: str) -> None:

@@ -15,7 +15,10 @@ from trade_contracts.event_research import (
     EventRecord,
     EventSource,
     EventType,
+    FeatureValue,
+    FundamentalFeaturesV0,
     ObservationRecord,
+    TechnicalContextV0,
 )
 
 
@@ -154,6 +157,42 @@ def test_ai_arm_does_not_emit_direct_strategy_signal() -> None:
 
     assert ai_arm_allows(_observation(), _label(), EntryArm.EVENT_PLUS_AI)
     assert not ai_arm_allows(_observation(), _label(confidence=0.4), EntryArm.EVENT_PLUS_AI)
+
+
+def test_ai_fundamental_rule_rejects_dividend_decrease() -> None:
+    from strategy_ai.event.evaluator import ai_arm_allows
+
+    observation = _observation().model_copy(
+        update={
+            "event_type": EventType.DIVIDEND_REVISION,
+            "event_subtype": "decrease",
+            "fundamental_features_v0": FundamentalFeaturesV0(
+                profit_revision_pct=FeatureValue(value=0.1, valid=True)
+            ),
+        }
+    )
+    label = _label().model_copy(update={"event_type": EventType.DIVIDEND_REVISION})
+
+    assert ai_arm_allows(observation, label, EntryArm.EVENT_PLUS_AI)
+    assert not ai_arm_allows(observation, label, EntryArm.EVENT_PLUS_AI_PLUS_FUNDAMENTAL)
+
+
+def test_ai_technical_rule_prefers_symbol_regime() -> None:
+    from strategy_ai.event.evaluator import technical_veto_allows
+
+    observation = _observation().model_copy(
+        update={
+            "technical_context_v0": TechnicalContextV0(
+                avg_turnover_20d=FeatureValue(value=300_000_000, valid=True),
+                atr_pct_14d=FeatureValue(value=0.02, valid=True),
+                return_20d=FeatureValue(value=0.05, valid=True),
+                symbol_regime=FeatureValue(value="broad_downtrend", valid=True),
+                market_regime=FeatureValue(value="broad_uptrend", valid=True),
+            )
+        }
+    )
+
+    assert not technical_veto_allows(observation)
 
 
 def test_ai_placebo_labels_are_deterministic() -> None:

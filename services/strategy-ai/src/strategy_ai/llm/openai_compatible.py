@@ -18,6 +18,7 @@ class OpenAICompatibleClient:
     model: str
     timeout_seconds: float = 60.0
     temperature: Decimal = Decimal("0")
+    seed: int | None = None
     max_concurrency: int = 2
     max_retries: int = 2
     client_factory: Callable[[], httpx.AsyncClient] | None = None
@@ -54,6 +55,8 @@ class OpenAICompatibleClient:
             "temperature": float(self.temperature),
             "stream": False,
         }
+        if self.seed is not None:
+            payload["seed"] = self.seed
         timeout = httpx.Timeout(self.timeout_seconds)
         if self.client_factory is None:
             client_cm = httpx.AsyncClient(base_url=self.base_url, timeout=timeout)
