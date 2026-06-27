@@ -16,7 +16,7 @@ from event_research_common import (
     write_jsonl,
 )
 from strategy_ai.event.jobs import build_event_ai_job
-from trade_contracts.event_research import EventRecord, ObservationRecord
+from trade_contracts.event_research import EventRecord, EventType, ObservationRecord
 
 FEATURE_GROUPS_FOR_NUMERICAL_PLACEBO = (
     "fundamental_features_v0",
@@ -45,6 +45,22 @@ def main() -> int:
         help="Deterministically sample this many observations balanced by event_type.",
     )
     parser.add_argument("--sample-seed", type=int, default=1)
+    parser.add_argument(
+        "--event-type",
+        action="append",
+        choices=[item.value for item in EventType],
+        help="Include only this event type. May be repeated.",
+    )
+    parser.add_argument(
+        "--event-subtype",
+        action="append",
+        help="Include only this exact event_subtype. May be repeated.",
+    )
+    parser.add_argument(
+        "--event-subtype-prefix",
+        action="append",
+        help="Include event_subtype values starting with this prefix. May be repeated.",
+    )
     parser.add_argument(
         "--placebo-mode",
         choices=["none", "numerical_fields_shuffled", "bundle_shuffled"],
@@ -78,6 +94,13 @@ def main() -> int:
         ObservationRecord.model_validate(row) for row in read_jsonl(args.observations)
     ]
     observations, split_info = select_observations_for_split(all_observations, split=args.split)
+    observations = _filter_observations(
+        observations,
+        event_types=set(args.event_type or []),
+        event_subtypes=set(args.event_subtype or []),
+        event_subtype_prefixes=tuple(args.event_subtype_prefix or ()),
+    )
+    filtered_observation_count = len(observations)
     split_manifest = split_info.get("split_manifest", {})
     split_manifest_hash = _stable_hash(split_manifest) if split_manifest else None
     dataset_hash = split_manifest.get("dataset_hash") if split_manifest else None
@@ -127,11 +150,33 @@ def main() -> int:
     print(
         "event_llm_jobs "
         f"split={args.split} observations={split_info['selected_observation_count']} "
+        f"filtered_observations={filtered_observation_count} "
+        f"sampled_observations={len(observations)} "
         f"sample_size={args.sample_size or args.balanced_sample_size or 'all'} "
         f"balanced={args.balanced_sample_size is not None} placebo_mode={args.placebo_mode} "
         f"count={len(jobs)} output={args.output}"
     )
     return 0
+
+
+def _filter_observations(
+    observations: list[ObservationRecord],
+    *,
+    event_types: set[str],
+    event_subtypes: set[str],
+    event_subtype_prefixes: tuple[str, ...],
+) -> list[ObservationRecord]:
+    out: list[ObservationRecord] = []
+    for obs in observations:
+        if event_types and obs.event_type.value not in event_types:
+            continue
+        subtype = obs.event_subtype or ""
+        if event_subtypes and subtype not in event_subtypes:
+            continue
+        if event_subtype_prefixes and not subtype.startswith(event_subtype_prefixes):
+            continue
+        out.append(obs)
+    return out
 
 
 def _sample_observations(

@@ -33,7 +33,12 @@ def _load_module():
 build_event_llm_jobs = _load_module()
 
 
-def _event(idx: int, *, event_type: EventType = EventType.FORECAST_REVISION) -> EventRecord:
+def _event(
+    idx: int,
+    *,
+    event_type: EventType = EventType.FORECAST_REVISION,
+    event_subtype: str | None = None,
+) -> EventRecord:
     at = datetime(2026, 1, 1, 15, 30, tzinfo=UTC) + timedelta(days=idx)
     return EventRecord(
         event_id=f"event-{idx}",
@@ -44,6 +49,7 @@ def _event(idx: int, *, event_type: EventType = EventType.FORECAST_REVISION) -> 
         if event_type == EventType.FORECAST_REVISION
         else "DividendRevision",
         event_type=event_type,
+        event_subtype=event_subtype,
         disclosed_date=at.date().isoformat(),
         disclosed_time="15:30:00",
         disclosed_at=at,
@@ -58,15 +64,19 @@ def _event(idx: int, *, event_type: EventType = EventType.FORECAST_REVISION) -> 
 
 
 def _observation(
-    idx: int, *, event_type: EventType = EventType.FORECAST_REVISION
+    idx: int,
+    *,
+    event_type: EventType = EventType.FORECAST_REVISION,
+    event_subtype: str | None = None,
 ) -> ObservationRecord:
-    event = _event(idx, event_type=event_type)
+    event = _event(idx, event_type=event_type, event_subtype=event_subtype)
     return ObservationRecord(
         observation_id=f"obs-{idx}",
         event_id=event.event_id,
         event_cluster_id=event.event_cluster_id,
         symbol=event.symbol,
         event_type=event.event_type,
+        event_subtype=event.event_subtype,
         signal_date=event.signal_date,
         entry_date=event.entry_date,
         feature_cutoff_at=event.feature_cutoff_at,
@@ -204,6 +214,61 @@ def test_llm_job_builder_can_balanced_sample_jobs(
     assert len(rows) == 10
     assert event_types.count(EventType.FORECAST_REVISION.value) == 5
     assert event_types.count(EventType.DIVIDEND_REVISION.value) == 5
+
+
+def test_llm_job_builder_can_filter_event_type_and_subtype_prefix(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[EventRecord] = []
+    observations: list[ObservationRecord] = []
+    specs = (
+        (EventType.EARNINGS_RESULT, "3QFinancialStatements_Consolidated_JP"),
+        (EventType.EARNINGS_RESULT, "FYFinancialStatements_Consolidated_JP"),
+        (EventType.EARNINGS_RESULT, "1QFinancialStatements_Consolidated_JP"),
+        (EventType.FORECAST_REVISION, "EarnForecastRevision"),
+    )
+    for idx in range(80):
+        event_type, event_subtype = specs[idx % len(specs)]
+        events.append(_event(idx, event_type=event_type, event_subtype=event_subtype))
+        observations.append(_observation(idx, event_type=event_type, event_subtype=event_subtype))
+    events_path = tmp_path / "events.jsonl"
+    observations_path = tmp_path / "observations.jsonl"
+    output_path = tmp_path / "jobs.jsonl"
+    _write_jsonl(events_path, events)
+    _write_jsonl(observations_path, observations)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "build-event-llm-jobs.py",
+            "--events",
+            str(events_path),
+            "--observations",
+            str(observations_path),
+            "--output",
+            str(output_path),
+            "--event-type",
+            EventType.EARNINGS_RESULT.value,
+            "--event-subtype-prefix",
+            "3Q",
+            "--sample-size",
+            "5",
+            "--sample-seed",
+            "13",
+        ],
+    )
+
+    assert build_event_llm_jobs.main() == 0
+
+    rows = [json.loads(line) for line in output_path.read_text(encoding="utf-8").splitlines()]
+    prompt_events = [json.loads(row["prompt"])["event"] for row in rows]
+    observations_by_event_id = {obs.event_id: obs for obs in observations}
+    assert len(rows) == 5
+    assert {event["event_type"] for event in prompt_events} == {EventType.EARNINGS_RESULT.value}
+    assert {observations_by_event_id[row["event_id"]].event_subtype for row in rows} == {
+        "3QFinancialStatements_Consolidated_JP"
+    }
 
 
 def test_llm_job_builder_can_shuffle_numerical_feature_placebo(

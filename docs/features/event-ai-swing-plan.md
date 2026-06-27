@@ -195,6 +195,28 @@ uv run python scripts/build-event-llm-jobs.py \
   --model-id local-model
 ```
 
+For preregistered subset smokes, filter before sampling. For example,
+earnings-only jobs:
+
+```bash
+uv run python scripts/build-event-llm-jobs.py \
+  --events out/event-research/events.jsonl \
+  --observations out/event-research/observations.jsonl \
+  --output out/event-ai/jobs-earnings300.jsonl \
+  --split development \
+  --event-type earnings_result \
+  --sample-size 300 \
+  --sample-seed 21 \
+  --model-provider openai_compatible \
+  --model-id local-model \
+  --temperature 0 \
+  --seed 1
+```
+
+`--event-type`, `--event-subtype`, and `--event-subtype-prefix` may be repeated.
+They must be set before seeing the next smoke result, and locked OOS remains
+off limits.
+
 To generate placebo prompt sets for the same sample:
 
 ```bash
