@@ -37,6 +37,12 @@ No paper/live route was enabled.
   `out/event-ai/jobs-earnings300-official-numeric-placebo-gemma4-seed1.jsonl`
 - Official-numeric placebo job audit:
   `out/event-ai/jobs-earnings300-official-numeric-placebo-audit.json`
+- Official-numeric placebo labels:
+  `out/event-ai/labels-earnings300-official-numeric-placebo-gemma4-seed1.jsonl`
+- Official-numeric placebo eval:
+  `out/event-ai/eval-earnings300-official-numeric-placebo-gemma4-seed1/event-ai-report.json`
+- Official-numeric placebo comparison:
+  `out/event-ai/placebo-compare-earnings300-official-numeric-placebo-gemma4-seed1-randomdate.json`
 
 ## Run Status
 
@@ -160,6 +166,66 @@ Interpretation:
   `official_numeric_summary`; job audit passed with 300 jobs, no event-order
   mismatch, and 299 changed prompt hashes.
 
+## Official Numeric Placebo Result
+
+The official-numeric placebo used the same prompt version, model, temperature,
+sample seed, model seed, and max concurrency as the real run. It completed
+without parser failures.
+
+- completed: 300
+- failed: 0
+- labels_total: 300
+- model: `gemma-4-26b-a4b-it-qat`
+- temperature: `0`
+- seed: `1`
+- max concurrency: `1`
+
+Fixed 20 trading session exit:
+
+| Arm | Labels | Trades | Net PnL | PF | Max DD | Hit Rate | Positive Month Ratio |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| official numeric placebo event_only | 300 | 300 | 274,539 | 1.344 | 203,228 | 0.507 | 0.545 |
+| official numeric placebo event_plus_technical | 300 | 58 | 65,429 | 1.397 | 54,048 | 0.483 | 0.407 |
+| official numeric placebo event_plus_ai | 300 | 38 | 85,750 | 2.131 | 16,315 | 0.553 | 0.500 |
+| official numeric placebo event_plus_ai_plus_fundamental_plus_technical | 300 | 7 | 9,025 | 1.582 | 8,587 | 0.429 | 0.429 |
+
+Direct comparison to real labels on the common 300-label cohort:
+
+- real AI pass: 37
+- official-numeric placebo AI pass: 38
+- both pass: 25
+- real-only pass: 12
+- placebo-only pass: 13
+- pass Jaccard: 0.500
+
+Fixed 20 trading session exit by overlap cohort:
+
+| Cohort | Trades | Net PnL | PF | Max DD | Hit Rate | `same_symbol_random_date` percentile |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| both pass | 25 | 72,113 | 2.284 | 20,148 | 0.560 | 0.823 |
+| real-only pass | 12 | 32,434 | 2.680 | 9,610 | 0.500 | 0.797 |
+| official-numeric placebo-only pass | 13 | 13,637 | 1.695 | 7,530 | 0.538 | 0.433 |
+| official-numeric placebo AI pass | 38 | 85,750 | 2.131 | 16,315 | 0.553 | 0.857 |
+
+Prompt section comparison for the 25 both-pass events:
+
+- `event`: identical rate 1.0
+- `official_numeric_summary`: identical rate 0.0
+- `fundamental_features_v0`: identical rate 1.0
+- `valuation_features_v0`: identical rate 1.0
+- `technical_context_v0`: identical rate 1.0
+
+Interpretation:
+
+- Shuffling official disclosure numerics did not collapse the AI selection.
+- The strong AI-pass behavior is therefore not explained by event-specific
+  `official_numeric_summary` alone.
+- Because feature bundles were unchanged and overlap rose to 25 events, the
+  current label rule is likely driven substantially by engineered
+  point-in-time feature bundles and/or event metadata.
+- Confidence still collapsed into the `0.7..1.0` bucket for both real and
+  official-numeric placebo labels, so confidence remains unusable for selection.
+
 ## Semantic Diagnostics
 
 Real fixed_20d label buckets:
@@ -187,7 +253,11 @@ Do not proceed to development-all, validation, or locked OOS from this smoke.
 Reason:
 
 - The real AI arm is promising versus internal shuffled/random placebos.
-- But the bundle placebo remains equally strong, so AI-specific incremental value is not established.
+- But the bundle placebo and the official-numeric placebo both remain strong,
+  so AI-specific incremental value is not established.
+- The official-numeric placebo overlap suggests the current pass rule is
+  substantially explainable by event metadata and/or engineered feature bundles,
+  not by event-specific official disclosure numerics alone.
 - Confidence is not discriminative.
 - Technical-context labels are not semantically aligned with forward performance.
 
@@ -198,8 +268,10 @@ Next work should stay inside development-only diagnostics and should not inspect
 Before any larger LLM run:
 
 1. Investigate why the shared real/placebo pass set is unusually strong.
-2. Run the official-numeric placebo LLM labels before any development-all run.
-3. If official-numeric placebo collapses while real remains strong, the signal
-   may be official-summary driven; if it remains strong, the edge is likely not
-   attributable to event-specific official numerics.
-4. Keep `prompt_version=event_ai_label_v0`, model, temperature, and sample seed frozen for this recorded smoke; any prompt change must be treated as a new pre-registered experiment.
+2. Add a feature-bundle-only deterministic baseline that applies the current
+   AI-pass predicate to synthetic labels derived from feature thresholds.
+3. Add a combined feature-bundle plus official-numeric shuffled placebo if
+   another LLM diagnostic is needed.
+4. Keep `prompt_version=event_ai_label_v0`, model, temperature, and sample seed
+   frozen for this recorded smoke; any prompt change must be treated as a new
+   pre-registered experiment.
