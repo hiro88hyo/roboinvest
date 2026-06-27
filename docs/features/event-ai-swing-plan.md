@@ -295,6 +295,24 @@ The report includes label-shuffled, confidence-shuffled, and random-threshold
 placebos within event type. Numerical-field and bundle-shuffled prompt sets are
 generated as external placebo job files and audited before local LLM execution.
 
+For local LLM smoke results, run the semantic diagnostics before deciding
+whether to continue to a larger development run:
+
+```bash
+uv run python scripts/diagnose-event-ai-smoke.py \
+  --observations out/event-research/observations.jsonl \
+  --labels out/event-ai/labels-balanced100.jsonl \
+  --output-json out/event-ai/smoke-diagnostics-balanced100.json \
+  --output-csv out/event-ai/smoke-diagnostics-balanced100.csv \
+  --split development
+```
+
+The smoke diagnostics checks whether AI selection beats rule-only technical,
+whether positive labels beat negative labels, whether stronger labels beat
+weaker labels, and whether confidence buckets are monotonic. Failing these
+checks blocks full development LLM execution with the current prompt/selection
+rule.
+
 7. Run a local OpenAI-compatible model:
 
 ```bash
