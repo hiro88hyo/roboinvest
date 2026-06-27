@@ -36,6 +36,9 @@ def _job(idx: int) -> EventAiJob:
         prompt=f"prompt {idx}",
         feature_schema_version="event_research_v0",
         feature_cutoff_at=at,
+        dataset_hash="dataset-hash",
+        split_manifest_hash="split-manifest-hash",
+        split_label="train",
         model_provider="fixture",
         model_id="fixture-event-labeler-v0",
         temperature=Decimal("0"),
@@ -162,6 +165,12 @@ def test_event_llm_runner_no_resume_overwrites_labels(
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert len(labels) == 1
     assert labels[0]["job_id"] == "job-0"
+    assert labels[0]["prompt_version"] == "event_ai_v0"
+    assert labels[0]["feature_schema_version"] == "event_research_v0"
+    assert labels[0]["dataset_hash"] == "dataset-hash"
+    assert labels[0]["split_manifest_hash"] == "split-manifest-hash"
+    assert labels[0]["split_label"] == "train"
+    assert labels[0]["temperature"] == "0"
     assert manifest["cached"] == 0
     assert manifest["completed"] == 1
 

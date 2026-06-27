@@ -237,10 +237,18 @@ class EventAiLabeledRecord(BaseModel):
 
     job_id: str
     event_id: str
+    prompt_version: str | None = None
     prompt_hash: str
     cache_key: str | None = None
+    feature_schema_version: str | None = None
+    feature_cutoff_at: datetime | None = None
+    dataset_hash: str | None = None
+    split_manifest_hash: str | None = None
+    split_label: str | None = None
     model_provider: str
     model_id: str
+    temperature: Decimal | None = None
+    seed: int | None = None
     raw_response: str
     label: EventAiLabel
     created_at: datetime
