@@ -486,6 +486,24 @@ report covering label distribution, parse failure rate, confidence buckets,
 exits, and shuffled/placebo comparisons if available. If train supports it,
 pre-register exactly one validation hypothesis before running validation once.
 
+While train labeling is incomplete, use the train-only report as a monitoring
+artifact only:
+
+```bash
+uv run python scripts/report-event-ai-train-labels.py \
+  --observations out/event-research-real-pit/observations.jsonl \
+  --jobs out/event-ai/jobs-earnings-train.jsonl \
+  --labels out/event-ai/labels-earnings-train.jsonl \
+  --failures out/event-ai/failures-earnings-train.jsonl \
+  --output-json out/event-ai/train-report-earnings.json \
+  --output-csv out/event-ai/train-report-earnings.csv
+```
+
+This command only accepts `--split train`. It reports partial train progress,
+label distribution, parse failure rate, confidence buckets, `ai_pass` versus
+`ai_reject`, rule-only versus rule-only+AI, and fixed 2d/5d/10d exits. It must
+not be used as a validation or locked-OOS decision report.
+
 Check train label completion after each chunk:
 
 ```bash
@@ -498,6 +516,22 @@ uv run python scripts/audit-event-llm-label-progress.py \
 
 Use `--require-complete` in automation when the next step must be blocked until
 every train job has a successful label.
+
+Build a retry queue for parser or endpoint failures without changing the
+original prompt/model settings:
+
+```bash
+uv run python scripts/build-event-llm-retry-jobs.py \
+  --jobs out/event-ai/jobs-earnings-train.jsonl \
+  --failures out/event-ai/failures-earnings-train.jsonl \
+  --output out/event-ai/jobs-earnings-train-retry-invalid-json.jsonl \
+  --error-contains EventAiParseError
+```
+
+Run the resulting retry jobs through `run-event-llm-jobs.py` with the same
+provider, model, temperature, seed, and output label/failure files. Successful
+labels are appended/resumed by cache key; failed records remain diagnostics and
+are not treated as completed labels.
 
 For a bounded real-data validity audit before large LLM runs:
 
