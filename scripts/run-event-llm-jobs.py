@@ -46,6 +46,11 @@ def main() -> int:
         action="store_true",
         help="Ignore existing labels and overwrite outputs from scratch.",
     )
+    parser.add_argument(
+        "--skip-preflight",
+        action="store_true",
+        help="Skip /v1/models preflight for openai_compatible provider.",
+    )
     args = parser.parse_args()
     if args.max_jobs is not None and args.max_jobs < 0:
         parser.error("--max-jobs must be non-negative")
@@ -82,10 +87,13 @@ async def _amain(args: argparse.Namespace) -> int:
         pending_jobs.append(job)
 
     client = _build_client(args.provider, pending_jobs) if pending_jobs else None
+    preflight: dict[str, object] = {"enabled": False}
     completed = 0
     max_concurrency = _max_concurrency(args.provider, args.max_concurrency)
     if pending_jobs and client is None:
         raise LLMError("LLM client is not configured")
+    if pending_jobs and args.provider == "openai_compatible" and not args.skip_preflight:
+        preflight = await _preflight_openai_compatible(client)
     semaphore = asyncio.Semaphore(max_concurrency)
     tasks = [
         asyncio.create_task(
@@ -125,6 +133,7 @@ async def _amain(args: argparse.Namespace) -> int:
         "resume_enabled": resume,
         "max_jobs": args.max_jobs,
         "max_concurrency": max_concurrency,
+        "preflight": preflight,
         "start_time": started.isoformat(),
         "end_time": ended.isoformat(),
         "cache_key_example": None
@@ -145,6 +154,21 @@ async def _amain(args: argparse.Namespace) -> int:
         f"cached={cached} labels_total={len(labels)}"
     )
     return 0
+
+
+async def _preflight_openai_compatible(client: Any) -> dict[str, object]:
+    started = datetime.now(tz=UTC)
+    try:
+        result = await client.preflight()
+    except LLMError:
+        raise
+    except Exception as exc:
+        raise LLMError(f"openai-compatible preflight failed: {exc}") from exc
+    return {
+        "enabled": True,
+        **result,
+        "checked_at": started.isoformat(),
+    }
 
 
 async def _run_one_job(

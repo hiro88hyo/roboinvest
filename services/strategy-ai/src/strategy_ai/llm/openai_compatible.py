@@ -36,6 +36,37 @@ class OpenAICompatibleClient:
         async with self._semaphore:
             return await self._complete_with_retries(prompt)
 
+    async def preflight(self) -> dict[str, Any]:
+        if not self.base_url:
+            raise LLMError("LOCAL_LLM_BASE_URL is empty")
+        headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+        timeout = httpx.Timeout(self.timeout_seconds)
+        if self.client_factory is None:
+            client_cm = httpx.AsyncClient(base_url=self.base_url, timeout=timeout)
+        else:
+            client_cm = self.client_factory()
+        async with client_cm as client:
+            try:
+                resp = await client.get("/models", headers=headers)
+            except httpx.TimeoutException as exc:
+                raise LLMError("openai-compatible preflight timeout") from exc
+            except httpx.HTTPError as exc:
+                raise LLMError(f"openai-compatible preflight http error: {exc}") from exc
+        if resp.status_code != 200:
+            raise LLMError(
+                "openai-compatible preflight failed: "
+                f"status={resp.status_code} body={resp.text[:200]}"
+            )
+        body: dict[str, Any] = resp.json()
+        model_ids = _model_ids(body)
+        if self.model and model_ids and self.model not in model_ids:
+            raise LLMError(f"openai-compatible preflight model not listed: {self.model!r}")
+        return {
+            "ok": True,
+            "model_count": len(model_ids),
+            "model_listed": self.model in model_ids if model_ids else None,
+        }
+
     async def _complete_with_retries(self, prompt: str) -> str:
         last_error: Exception | None = None
         for attempt in range(self.max_retries + 1):
@@ -85,3 +116,14 @@ class OpenAICompatibleClient:
         if not isinstance(content, str) or not content.strip():
             raise LLMError("openai-compatible empty content")
         return content
+
+
+def _model_ids(body: dict[str, Any]) -> set[str]:
+    data = body.get("data")
+    if not isinstance(data, list):
+        return set()
+    ids = set()
+    for item in data:
+        if isinstance(item, dict) and isinstance(item.get("id"), str):
+            ids.add(item["id"])
+    return ids

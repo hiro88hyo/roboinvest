@@ -93,7 +93,7 @@ def test_event_ai_evaluator_defaults_to_development_split(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    observations = [_observation(idx) for idx in range(40)]
+    observations = [_observation(idx) for idx in range(200)]
     labels = [_label(idx) for idx in range(40)]
     observations_path = tmp_path / "observations.jsonl"
     labels_path = tmp_path / "labels.jsonl"
@@ -111,6 +111,7 @@ def test_event_ai_evaluator_defaults_to_development_split(
             str(labels_path),
             "--output-dir",
             str(output_dir),
+            "--allow-partial-labels",
         ],
     )
 
@@ -154,6 +155,7 @@ def test_event_ai_evaluator_uses_label_target_population(
             str(labels_path),
             "--output-dir",
             str(output_dir),
+            "--allow-partial-labels",
         ],
     )
 
@@ -196,3 +198,32 @@ def test_event_ai_evaluator_requires_locked_oos_opt_in(
         evaluate_event_ai.main()
 
     assert exc.value.code == 2
+
+
+def test_event_ai_evaluator_rejects_partial_validation_labels_by_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observations = [_observation(idx) for idx in range(200)]
+    observations_path = tmp_path / "observations.jsonl"
+    labels_path = tmp_path / "labels.jsonl"
+    _write_jsonl(observations_path, observations)
+    _write_jsonl(labels_path, [_label(140)])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "evaluate-event-ai.py",
+            "--observations",
+            str(observations_path),
+            "--labels",
+            str(labels_path),
+            "--split",
+            "validation",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        evaluate_event_ai.main()
+
+    assert "partial labels" in str(exc.value)

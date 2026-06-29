@@ -49,6 +49,11 @@ def main() -> int:
         action="store_true",
         help="Required when --split is locked-oos or all.",
     )
+    parser.add_argument(
+        "--allow-partial-labels",
+        action="store_true",
+        help="Allow partial labels outside train split for smoke diagnostics.",
+    )
     args = parser.parse_args()
 
     if args.split in {"locked-oos", "all"} and not args.include_locked_oos:
@@ -59,6 +64,11 @@ def main() -> int:
         args.observations,
         label_event_ids=set(labels),
         split=args.split,
+    )
+    _validate_partial_label_policy(
+        split_info,
+        split=args.split,
+        allow_partial_labels=args.allow_partial_labels,
     )
     rows = _evaluate_ai_rows(observations, labels)
     placebos = _evaluate_placebos(observations, labels)
@@ -122,6 +132,25 @@ def main() -> int:
         f"rows={len(rows)} output={args.output_dir}"
     )
     return 0
+
+
+def _validate_partial_label_policy(
+    split_info: dict[str, Any],
+    *,
+    split: str,
+    allow_partial_labels: bool,
+) -> None:
+    if allow_partial_labels or split == "train":
+        return
+    selected = int(split_info.get("selected_observation_count") or 0)
+    labeled = int(split_info.get("labeled_observation_count") or 0)
+    if labeled < selected:
+        raise SystemExit(
+            "partial labels cannot be evaluated outside train split: "
+            f"split={split} labeled={labeled} selected={selected}. "
+            "Use --split train, complete the labels, or pass --allow-partial-labels "
+            "for an explicit smoke diagnostic."
+        )
 
 
 def _load_labeled_observations_for_split(

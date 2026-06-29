@@ -337,12 +337,16 @@ uv run python scripts/evaluate-event-ai.py \
   --observations out/event-research/observations.jsonl \
   --labels out/event-ai/fixture-labels.jsonl \
   --output-dir out/event-ai \
-  --split development
+  --split development \
+  --allow-partial-labels
 ```
 
 The AI evaluator uses the same split guard as the rule-only event evaluator.
 Locked OOS requires `--split locked-oos --include-locked-oos` after prompt,
 feature schema, model, and thresholds are frozen.
+By default, partial labels are rejected for `development`, `validation`,
+`locked-oos`, and `all`; `--allow-partial-labels` is only for explicit smoke
+diagnostics. Do not use it for validation or locked OOS decision reports.
 The report includes label-shuffled, confidence-shuffled, and random-threshold
 placebos within event type. Numerical-field and bundle-shuffled prompt sets are
 generated as external placebo job files and audited before local LLM execution.
@@ -409,7 +413,8 @@ uv run python scripts/evaluate-event-ai.py \
   --observations out/event-research/observations.jsonl \
   --labels out/event-ai/labels-balanced100-feature-proxy-v0.jsonl \
   --output-dir out/event-ai/eval-balanced100-feature-proxy-v0 \
-  --split development
+  --split development \
+  --allow-partial-labels
 
 uv run python scripts/compare-event-ai-placebo.py \
   --observations out/event-research/observations.jsonl \
@@ -450,6 +455,49 @@ uv run python scripts/run-event-llm-jobs.py \
 using a cache key derived from prompt hash, provider, model, temperature, and
 seed. Use `--no-resume` only when intentionally overwriting a run. Failed jobs
 are not cached and are retried on the next run.
+For `openai_compatible`, the runner calls `/v1/models` before any job is sent.
+If the local endpoint is down, no label is appended and no failed parser record
+is created.
+
+The local LLM is not assumed to be always available. For full train execution,
+run bounded chunks only while the local endpoint is up:
+
+```bash
+LLM_PROVIDER=openai_compatible \
+LOCAL_LLM_BASE_URL=http://127.0.0.1:8000/v1 \
+LOCAL_LLM_API_KEY=local \
+LOCAL_LLM_MODEL=local-model \
+LOCAL_LLM_TIMEOUT_SECONDS=60 \
+LOCAL_LLM_MAX_CONCURRENCY=2 \
+uv run python scripts/run-event-llm-jobs.py \
+  --jobs out/event-ai/jobs-earnings-train.jsonl \
+  --provider openai_compatible \
+  --output-labels out/event-ai/labels-earnings-train.jsonl \
+  --output-failures out/event-ai/failures-earnings-train.jsonl \
+  --output-manifest out/event-ai/run-manifest-earnings-train.json \
+  --max-jobs 500 \
+  --max-concurrency 2
+```
+
+Repeat the same command to resume. Do not evaluate validation or locked OOS
+from partial train labels. After train labels are complete, write a train-only
+report covering label distribution, parse failure rate, confidence buckets,
+`ai_pass` versus `ai_reject`, rule-only versus rule-only+AI, fixed 2d/5d/10d
+exits, and shuffled/placebo comparisons if available. If train supports it,
+pre-register exactly one validation hypothesis before running validation once.
+
+Check train label completion after each chunk:
+
+```bash
+uv run python scripts/audit-event-llm-label-progress.py \
+  --jobs out/event-ai/jobs-earnings-train.jsonl \
+  --labels out/event-ai/labels-earnings-train.jsonl \
+  --failures out/event-ai/failures-earnings-train.jsonl \
+  --output out/event-ai/label-progress-earnings-train.json
+```
+
+Use `--require-complete` in automation when the next step must be blocked until
+every train job has a successful label.
 
 For a bounded real-data validity audit before large LLM runs:
 

@@ -31,6 +31,39 @@ class _BadJsonClient:
         return "not json"
 
 
+class _PreflightOkClient:
+    def __init__(self) -> None:
+        self.completed = 0
+
+    async def preflight(self) -> dict[str, object]:
+        return {"ok": True, "model_count": 1, "model_listed": True}
+
+    async def complete(self, prompt: str) -> str:
+        self.completed += 1
+        return json.dumps(
+            {
+                "event_type": "forecast_revision",
+                "fundamental_direction": "positive",
+                "fundamental_strength": 2,
+                "revision_quality": "medium",
+                "valuation_context": "fair",
+                "technical_context": "neutral",
+                "expected_horizon": "10d",
+                "risk_flags": [],
+                "confidence": 0.7,
+                "rationale": "fixture",
+            }
+        )
+
+
+class _PreflightFailClient:
+    async def preflight(self) -> dict[str, object]:
+        raise run_event_llm_jobs.LLMError("preflight unavailable")
+
+    async def complete(self, prompt: str) -> str:
+        raise AssertionError("complete must not be called after preflight failure")
+
+
 def _job(idx: int) -> EventAiJob:
     at = datetime(2026, 1, 1, 15, 30, tzinfo=UTC)
     return EventAiJob(
@@ -277,3 +310,80 @@ def test_event_llm_runner_preflights_local_llm_env(
         run_event_llm_jobs.main()
 
     assert "LOCAL_LLM_BASE_URL" in str(exc.value)
+
+
+def test_event_llm_runner_records_openai_preflight_success(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    jobs_path = tmp_path / "jobs.jsonl"
+    labels_path = tmp_path / "labels.jsonl"
+    failures_path = tmp_path / "failures.jsonl"
+    manifest_path = tmp_path / "manifest.json"
+    _write_jobs(jobs_path, [_openai_job(0)])
+    client = _PreflightOkClient()
+    monkeypatch.setattr(run_event_llm_jobs, "_build_client", lambda provider, jobs: client)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run-event-llm-jobs.py",
+            "--jobs",
+            str(jobs_path),
+            "--provider",
+            "openai_compatible",
+            "--output-labels",
+            str(labels_path),
+            "--output-failures",
+            str(failures_path),
+            "--output-manifest",
+            str(manifest_path),
+        ],
+    )
+
+    assert run_event_llm_jobs.main() == 0
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert client.completed == 1
+    assert manifest["preflight"]["enabled"] is True
+    assert manifest["preflight"]["model_listed"] is True
+
+
+def test_event_llm_runner_stops_before_jobs_on_preflight_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    jobs_path = tmp_path / "jobs.jsonl"
+    labels_path = tmp_path / "labels.jsonl"
+    failures_path = tmp_path / "failures.jsonl"
+    manifest_path = tmp_path / "manifest.json"
+    _write_jobs(jobs_path, [_openai_job(0)])
+    monkeypatch.setattr(
+        run_event_llm_jobs,
+        "_build_client",
+        lambda provider, jobs: _PreflightFailClient(),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run-event-llm-jobs.py",
+            "--jobs",
+            str(jobs_path),
+            "--provider",
+            "openai_compatible",
+            "--output-labels",
+            str(labels_path),
+            "--output-failures",
+            str(failures_path),
+            "--output-manifest",
+            str(manifest_path),
+        ],
+    )
+
+    with pytest.raises(run_event_llm_jobs.LLMError, match="preflight unavailable"):
+        run_event_llm_jobs.main()
+
+    assert not labels_path.exists()
+    assert failures_path.read_text(encoding="utf-8") == ""
+    assert not manifest_path.exists()

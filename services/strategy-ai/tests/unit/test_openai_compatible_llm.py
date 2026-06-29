@@ -85,3 +85,47 @@ async def test_openai_compatible_invalid_response_fails_closed() -> None:
 
     with pytest.raises(LLMError):
         await client.complete("prompt")
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_preflight_checks_models() -> None:
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            200,
+            json={"data": [{"id": "local-model"}, {"id": "other-model"}]},
+        )
+    )
+    client = OpenAICompatibleClient(
+        base_url="https://local.test",
+        api_key="",
+        model="local-model",
+        client_factory=lambda: httpx.AsyncClient(
+            base_url="https://local.test",
+            transport=transport,
+        ),
+    )
+
+    result = await client.preflight()
+
+    assert result["ok"] is True
+    assert result["model_count"] == 2
+    assert result["model_listed"] is True
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_preflight_rejects_unlisted_model() -> None:
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(200, json={"data": [{"id": "other-model"}]})
+    )
+    client = OpenAICompatibleClient(
+        base_url="https://local.test",
+        api_key="",
+        model="local-model",
+        client_factory=lambda: httpx.AsyncClient(
+            base_url="https://local.test",
+            transport=transport,
+        ),
+    )
+
+    with pytest.raises(LLMError, match="model not listed"):
+        await client.preflight()
