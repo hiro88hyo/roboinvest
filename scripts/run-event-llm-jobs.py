@@ -288,6 +288,7 @@ def _build_client(provider: str, jobs: list[EventAiJob]):
         timeout_seconds=settings.local_llm_timeout_seconds,
         temperature=jobs[0].temperature if jobs else Decimal("0"),
         seed=jobs[0].seed if jobs else None,
+        max_output_tokens=settings.local_llm_max_output_tokens,
         max_concurrency=settings.local_llm_max_concurrency,
     )
 

@@ -24,6 +24,7 @@ class StrategyAiSettings(BaseSettings):
     local_llm_model: str = ""
     local_llm_timeout_seconds: float = 60.0
     local_llm_max_concurrency: int = 2
+    local_llm_max_output_tokens: int = 512
 
     ai_min_interval_seconds: float = 300.0
     ai_temperature: Decimal = Decimal("0.0")

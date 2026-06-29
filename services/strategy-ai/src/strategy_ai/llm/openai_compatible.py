@@ -19,6 +19,7 @@ class OpenAICompatibleClient:
     timeout_seconds: float = 60.0
     temperature: Decimal = Decimal("0")
     seed: int | None = None
+    max_output_tokens: int = 512
     max_concurrency: int = 2
     max_retries: int = 2
     client_factory: Callable[[], httpx.AsyncClient] | None = None
@@ -53,6 +54,7 @@ class OpenAICompatibleClient:
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": float(self.temperature),
+            "max_tokens": self.max_output_tokens,
             "stream": False,
         }
         if self.seed is not None:

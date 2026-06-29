@@ -524,6 +524,338 @@ uv run python scripts/evaluate-event-research.py \
 metrics, not portfolio-level PF/DD. Portfolio sizing, cash reuse, and OMS
 sequencing remain out of scope for this research-only evaluator.
 
+## Research-Continuation Candidate: `event_forecast_revision_fair_value_tech_fixed5_v0_research`
+
+Date: 2026-06-29
+
+Status: research-continuation only. This is not a paper/live candidate and does
+not enable any route to `strategy-signals-b`, Gateway, OMS Paper, or OMS Live.
+
+This candidate is preregistered from the development train/validation
+diagnostic in
+`docs/reports/forecast-revision-rule-diagnostics-2026-06-29.md`.
+
+Fixed definition:
+
+- event type: `forecast_revision`
+- entry mode: `next_open_unconditional`
+- fundamental rule: existing positive revision rule from the event research
+  evaluator
+- valuation filter: `forecast_per_valid == true` and `forecast_per <= 25`
+- technical veto: existing preregistered event research veto
+- exit: `fixed_5d` only
+- cost: `ROUND_TRIP_COST_RATE=0.00298`
+- trade notional for alpha metric: `DEFAULT_TRADE_NOTIONAL=100000`
+- random baseline: true `same_symbol_random_date` from daily OHLCV trading
+  dates, 300 seeds, no self event-date match
+
+The fixed_10d and fixed_20d variants are explicitly not carried forward from
+this diagnostic. Validation fixed_10d had negative net PnL and validation
+fixed_20d was below same-symbol random-date median.
+
+Development split diagnostic:
+
+| Split | Trades | Net PnL | PF | Max DD | same_symbol_random_date percentile |
+|---|---:|---:|---:|---:|---:|
+| train | 358 | 466,421 | 1.634 | 87,924 | 0.997 |
+| validation | 110 | 57,299 | 1.237 | 88,475 | 0.813 |
+| development | 468 | 523,720 | 1.536 | 88,475 | 1.000 |
+
+After this fixed definition was registered, locked OOS was inspected once:
+
+| Split | Trades | Net PnL | PF | Max DD | same_symbol_random_date percentile |
+|---|---:|---:|---:|---:|---:|
+| locked-oos | 157 | 129,233 | 1.282 | 232,707 | 0.923 |
+
+The fixed_5d alpha survived the one-shot locked OOS random-date check, but the
+drawdown here is still an observation-level alpha metric. It is not a
+portfolio-level risk result.
+
+Portfolio-level simulation was then run with 100-share lots, 5 max positions,
+20% max notional per position, fixed 5-session close exits, and no same-day
+exit cash reuse:
+
+| Split | Capital | Opened | Net PnL | PF | Max DD |
+|---|---:|---:|---:|---:|---:|
+| train | 1,000,000 | 146 | 343,829 | 1.698 | 93,313 |
+| validation | 1,000,000 | 31 | 967 | 1.008 | 52,298 |
+| locked-oos | 1,000,000 | 52 | 111,791 | 1.624 | 69,460 |
+| train | 2,000,000 | 208 | 999,861 | 1.649 | 163,624 |
+| validation | 2,000,000 | 60 | -48,579 | 0.897 | 178,095 |
+| locked-oos | 2,000,000 | 69 | 334,775 | 1.832 | 93,070 |
+| train | 5,000,000 | 234 | 2,689,635 | 1.606 | 507,897 |
+| validation | 5,000,000 | 67 | -11,086 | 0.992 | 545,568 |
+| locked-oos | 5,000,000 | 80 | 1,422,778 | 2.001 | 552,047 |
+
+The portfolio simulation weakens the candidate materially. Locked OOS remains
+strong, but validation is near breakeven at 1M and negative at 2M/5M. This
+blocks paper observation until portfolio-level random baselines and same-day
+selection-order stress are reported.
+
+Portfolio-level random baseline and same-day selection-order stress were then
+reported. The result blocks paper observation:
+
+| Split | Capital | Selected PnL | PF | same_symbol_random_date percentile |
+|---|---:|---:|---:|---:|
+| train | 1,000,000 | 343,829 | 1.698 | 0.967 |
+| train | 2,000,000 | 999,861 | 1.649 | 0.983 |
+| train | 5,000,000 | 2,689,635 | 1.606 | 0.990 |
+| validation | 1,000,000 | 967 | 1.008 | 0.393 |
+| validation | 2,000,000 | -48,579 | 0.897 | 0.310 |
+| validation | 5,000,000 | -11,086 | 0.992 | 0.427 |
+| locked-oos | 1,000,000 | 111,791 | 1.624 | 0.823 |
+| locked-oos | 2,000,000 | 334,775 | 1.832 | 0.873 |
+| locked-oos | 5,000,000 | 1,422,778 | 2.001 | 0.963 |
+
+Train and locked OOS are strong, but validation fails the portfolio-level
+random median check for every tested capital level. Same-day order stress does
+not rescue validation. This candidate remains research-continuation only and
+must not be promoted to paper observation.
+
+Next allowed action:
+
+- wait for AI labels to provide an independently preregistered filter, or write
+  a new hypothesis before any further validation/OOS inspection
+
+Disallowed action:
+
+- retune the `forecast_per <= 25` threshold, technical veto thresholds, or exit
+  horizon after looking at validation or locked OOS
+- promote this candidate to paper/live from observation-level alpha metrics
+  alone
+
+## Rejected Rule-Only Candidate: `event_earnings_quality_deep_value_tech_fixed20_v0_research`
+
+Date: 2026-06-29
+
+Status: rejected for paper observation. Locked OOS was not inspected.
+
+Fixed definition before validation:
+
+- event type: `earnings_result`
+- entry mode: `next_open_unconditional`
+- revised forecast EPS is positive
+- forecast PER is valid and <= 15
+- existing preregistered technical veto passes
+- no EPS red flags
+- exit: `fixed_20d`
+- cost: `ROUND_TRIP_COST_RATE=0.00298`
+- random baseline: true `same_symbol_random_date`, 300 seeds
+
+Train looked strong, but validation failed the matched random-date test:
+
+| Split | Trades | Net PnL | PF | Max DD | same_symbol_random_date percentile |
+|---|---:|---:|---:|---:|---:|
+| train | 3,247 | 5,089,212 | 1.638 | 2,154,819 | 0.980 |
+| validation | 979 | 847,618 | 1.360 | 318,752 | 0.270 |
+
+The validation result is profitable but below the random median. Do not retune
+the PER threshold, technical veto, EPS flags, or exit horizon from this
+validation result.
+
+## Rejected Rule-Only Candidate: `event_dividend_increase_yield3_fixed2_v0_research`
+
+Date: 2026-06-29
+
+Status: rejected for paper observation.
+
+Fixed definition before validation:
+
+- event type: `dividend_revision`
+- event subtype: `increase`
+- entry mode: `next_open_unconditional`
+- forecast dividend yield is valid and >= 3%
+- exit: `fixed_2d`
+- cost: `ROUND_TRIP_COST_RATE=0.00298`
+- random baseline: true `same_symbol_random_date`, 300 seeds
+
+Train and validation were strong, but locked OOS failed:
+
+| Split | Trades | Net PnL | PF | Max DD | same_symbol_random_date percentile |
+|---|---:|---:|---:|---:|---:|
+| train | 246 | 103,400 | 1.288 | 88,907 | 0.990 |
+| validation | 122 | 137,970 | 1.920 | 47,116 | 1.000 |
+| locked-oos | 82 | -40,629 | 0.788 | 88,422 | 0.253 |
+
+Portfolio-level locked OOS also failed at 2M and 5M capital, and was only near
+breakeven at 1M. Do not retune the dividend yield threshold or exit horizon
+from locked OOS.
+
+## Research-Continuation Candidate: `event_cluster_earnings_dividend_increase_fixed20_stop_v0_research`
+
+Date: 2026-06-29
+
+Status: research-continuation only. This is not a paper/live candidate and does
+not enable any route to `strategy-signals-b`, Gateway, OMS Paper, or OMS Live.
+
+Fixed definition before validation and locked OOS:
+
+- same trade cluster contains `earnings_result`
+- same trade cluster contains `dividend_revision` subtype `increase`
+- entry mode: `next_open_unconditional`
+- exit: `fixed_20d_plus_catastrophic_stop`
+- cost: `ROUND_TRIP_COST_RATE=0.00298`
+- random baseline: true `same_symbol_random_date`, 300 seeds
+
+Observation-level result:
+
+| Split | Trades | Net PnL | PF | Max DD | same_symbol_random_date percentile |
+|---|---:|---:|---:|---:|---:|
+| train | 67 | 261,661 | 2.866 | 24,796 | 0.990 |
+| validation | 38 | 149,309 | 3.662 | 20,298 | 0.987 |
+| locked-oos | 25 | 91,968 | 1.944 | 68,852 | 0.947 |
+
+Portfolio-level result:
+
+| Split | Capital | Opened | Net PnL | PF | Max DD | same_symbol_random_date percentile |
+|---|---:|---:|---:|---:|---:|---:|
+| train | 1,000,000 | 36 | 292,788 | 3.369 | 31,158 | 0.980 |
+| validation | 1,000,000 | 11 | 74,663 | 4.032 | 22,067 | 0.747 |
+| locked-oos | 1,000,000 | 12 | 40,367 | 1.681 | 57,082 | 0.717 |
+| train | 2,000,000 | 43 | 594,039 | 2.786 | 100,797 | 0.967 |
+| validation | 2,000,000 | 20 | 234,448 | 3.074 | 59,924 | 0.800 |
+| locked-oos | 2,000,000 | 17 | 188,165 | 1.949 | 154,965 | 0.847 |
+| train | 5,000,000 | 47 | 1,567,148 | 2.556 | 288,155 | 0.953 |
+| validation | 5,000,000 | 22 | 685,006 | 3.094 | 150,131 | 0.857 |
+| locked-oos | 5,000,000 | 19 | 787,250 | 2.528 | 192,921 | 0.940 |
+
+This is the first rule-only event candidate in this branch to survive train,
+validation, and locked OOS at observation and portfolio levels. It remains
+research-continuation only because locked OOS has only 25 observation-level
+trades, stressed 1M locked-OOS PF is below 1.5, and low-frequency block
+stability has weak blocks.
+
+Execution stress and block stability diagnostics:
+
+```bash
+uv run python scripts/simulate-event-portfolio.py \
+  --observations out/event-research-real-pit/observations.jsonl \
+  --output-json out/event-research-cluster-rule-diagnostics/locked-oos-fixed20-stop-portfolio-stress-entry10-exit25-random.json \
+  --output-csv out/event-research-cluster-rule-diagnostics/locked-oos-fixed20-stop-portfolio-stress-entry10-exit25-trades.csv \
+  --split locked-oos \
+  --include-locked-oos \
+  --candidate-id event_cluster_earnings_dividend_increase_fixed20_stop_v0_research \
+  --capital 1000000 \
+  --capital 2000000 \
+  --capital 5000000 \
+  --ohlcv data/reference/daily_ohlcv_20210625_20260624_bydate.csv \
+  --random-seeds 300 \
+  --entry-additional-slippage-bps 10 \
+  --exit-additional-slippage-bps 25
+
+uv run python scripts/summarize-event-cluster-portfolio-stability.py \
+  --observations out/event-research-real-pit/observations.jsonl \
+  --ohlcv data/reference/daily_ohlcv_20210625_20260624_bydate.csv \
+  --output-json out/event-research-cluster-rule-diagnostics/fixed20-stop-portfolio-block-stability-60d-random.json \
+  --output-csv out/event-research-cluster-rule-diagnostics/fixed20-stop-portfolio-block-stability-60d-random.csv \
+  --split all \
+  --include-locked-oos \
+  --block-trading-days 60 \
+  --capital 1000000 \
+  --capital 2000000 \
+  --capital 5000000 \
+  --random-seeds 300
+```
+
+Stress result summary:
+
+| Stress | Split | Capital | Opened | Net PnL | PF | Max DD | same_symbol_random_date percentile |
+|---|---|---:|---:|---:|---:|---:|---:|
+| entry10_exit25 | locked-oos | 1,000,000 | 12 | 28,797 | 1.472 | 58,885 | 0.703 |
+| entry10_exit25 | locked-oos | 2,000,000 | 17 | 162,829 | 1.791 | 161,432 | 0.853 |
+| entry10_exit25 | locked-oos | 5,000,000 | 19 | 718,309 | 2.325 | 207,359 | 0.940 |
+| exit50 | locked-oos | 1,000,000 | 12 | 30,397 | 1.484 | 59,576 | 0.720 |
+| exit50 | locked-oos | 2,000,000 | 17 | 159,349 | 1.764 | 163,982 | 0.863 |
+| exit50 | locked-oos | 5,000,000 | 19 | 695,285 | 2.257 | 216,569 | 0.943 |
+
+60 trading-session block stability summary:
+
+| Capital | Active blocks | Positive block ratio | Worst block PnL | Median block PnL | Worst block DD | Median random percentile |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1,000,000 | 16 | 0.875 | -57,081 | 25,716 | 57,081 | 0.793 |
+| 2,000,000 | 18 | 0.778 | -56,863 | 37,449 | 154,965 | 0.788 |
+| 5,000,000 | 18 | 0.778 | -154,880 | 120,187 | 192,921 | 0.780 |
+
+Weak 1M blocks were `2024-04-12` to `2024-07-09` and `2026-04-02` to
+`2026-05-15`; the latter had random percentile 0.030. Do not retune the
+candidate definition, horizon, or stop using these locked-OOS diagnostics.
+
+Adding the already preregistered coarse technical veto is only a diagnostic:
+
+| Split | Trades | Net PnL | PF | Max DD | same_symbol_random_date percentile |
+|---|---:|---:|---:|---:|---:|
+| train | 13 | 51,451 | 2.708 | 18,534 | 0.947 |
+| validation | 14 | 73,429 | 3.749 | 18,257 | 0.967 |
+| locked-oos | 8 | 38,584 | 2.140 | 33,850 | 0.817 |
+
+This plausibly reduces tail risk, but the sample is too small to register as a
+paper/live candidate. Treat it as a hypothesis for a future train-only
+preregistration cycle.
+
+## Research-Continuation Candidate: `event_cluster_earnings_dividend_value_guard_fixed20_stop_v1_research`
+
+Date: 2026-06-29
+
+Status: research-continuation only. This is not a paper/live candidate and does
+not enable any route to `strategy-signals-b`, Gateway, OMS Paper, or OMS Live.
+
+V1 was fixed after train/validation tail-risk profiling and before the single
+locked-OOS run:
+
+- same trade cluster contains `earnings_result`
+- same trade cluster contains `dividend_revision` subtype `increase`
+- if forecast PER is available point-in-time, cluster minimum forecast PER must be <= 15
+- if forecast PER is unavailable point-in-time, the cluster is not rejected only for that absence
+- entry mode: `next_open_unconditional`
+- exit: `fixed_20d_plus_catastrophic_stop`
+- cost: `ROUND_TRIP_COST_RATE=0.00298`
+- random baseline: true `same_symbol_random_date`, 300 seeds
+
+Observation-level result:
+
+| Split | Trades | Net PnL | PF | Max DD | same_symbol_random_date percentile |
+|---|---:|---:|---:|---:|---:|
+| train | 63 | 267,587 | 3.194 | 24,796 | 0.997 |
+| validation | 32 | 155,687 | 4.810 | 13,012 | 0.977 |
+| locked-oos | 22 | 94,922 | 2.089 | 68,852 | 0.933 |
+
+Portfolio-level result:
+
+| Split | Capital | Opened | Net PnL | PF | Max DD | same_symbol_random_date percentile |
+|---|---:|---:|---:|---:|---:|---:|
+| train | 1,000,000 | 35 | 279,626 | 3.262 | 31,158 | 0.977 |
+| validation | 1,000,000 | 11 | 74,663 | 4.032 | 22,067 | 0.793 |
+| locked-oos | 1,000,000 | 9 | 44,936 | 2.036 | 41,194 | 0.737 |
+| train | 2,000,000 | 40 | 588,495 | 2.971 | 100,797 | 0.963 |
+| validation | 2,000,000 | 19 | 322,967 | 5.408 | 44,134 | 0.907 |
+| locked-oos | 2,000,000 | 15 | 197,617 | 2.193 | 117,894 | 0.853 |
+| train | 5,000,000 | 43 | 1,588,206 | 2.831 | 288,155 | 0.960 |
+| validation | 5,000,000 | 20 | 905,446 | 5.510 | 114,616 | 0.907 |
+| locked-oos | 5,000,000 | 17 | 810,179 | 2.904 | 161,253 | 0.927 |
+
+Locked-OOS stress remains positive:
+
+| Stress | Capital | Opened | Net PnL | PF | Max DD | same_symbol_random_date percentile |
+|---|---:|---:|---:|---:|---:|---:|
+| entry10_exit25 | 1,000,000 | 9 | 35,029 | 1.784 | 42,495 | 0.720 |
+| entry10_exit25 | 2,000,000 | 15 | 175,229 | 2.015 | 123,190 | 0.853 |
+| entry10_exit25 | 5,000,000 | 17 | 748,378 | 2.655 | 173,762 | 0.927 |
+| exit50 | 1,000,000 | 9 | 37,334 | 1.808 | 42,994 | 0.760 |
+| exit50 | 2,000,000 | 15 | 171,967 | 1.975 | 125,292 | 0.877 |
+| exit50 | 5,000,000 | 17 | 727,351 | 2.568 | 178,892 | 0.930 |
+
+60 trading-session block stability is improved but still not clean:
+
+| Capital | Active blocks | Positive block ratio | Worst block PnL | Median block PnL | Worst block DD | Median random percentile |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1,000,000 | 16 | 0.875 | -41,194 | 25,716 | 41,194 | 0.800 |
+| 2,000,000 | 18 | 0.833 | -56,863 | 45,948 | 117,894 | 0.795 |
+| 5,000,000 | 18 | 0.833 | -154,880 | 139,009 | 165,204 | 0.780 |
+
+The 2026-04-02 to 2026-05-15 block remains weak at 1M with random percentile
+`0.010`. V1 is the best rule-only event candidate so far, but it does not pass
+paper observation yet.
+
 Until a TOPIX or market-breadth series is available in the point-in-time
 dataset, the per-symbol trend bucket is written as `symbol_regime`.
 `market_regime` is retained only as a backward-compatible alias for older

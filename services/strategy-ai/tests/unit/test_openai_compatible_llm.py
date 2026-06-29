@@ -25,6 +25,7 @@ async def test_openai_compatible_uses_mock_transport_without_network() -> None:
         api_key="secret",
         model="local-model",
         seed=123,
+        max_output_tokens=256,
         client_factory=lambda: httpx.AsyncClient(
             base_url="https://local.test",
             transport=transport,
@@ -34,7 +35,9 @@ async def test_openai_compatible_uses_mock_transport_without_network() -> None:
     assert await client.complete("prompt") == '{"ok": true}'
     assert requests[0].url.path == "/chat/completions"
     assert requests[0].headers["authorization"] == "Bearer secret"
-    assert json.loads(requests[0].content)["seed"] == 123
+    payload = json.loads(requests[0].content)
+    assert payload["seed"] == 123
+    assert payload["max_tokens"] == 256
 
 
 @pytest.mark.asyncio
