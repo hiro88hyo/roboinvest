@@ -938,6 +938,70 @@ The 2026-04-02 to 2026-05-15 block remains weak at 1M with random percentile
 `0.010`. V1 is the best rule-only event candidate so far, but it does not pass
 paper observation yet.
 
+## Train-Only Non-LLM Rule Screen
+
+Date: 2026-06-30
+
+The LLM-free path can still be improved, but only through a new preregistered
+validation cycle. Do not retune rejected candidates or thresholds after looking
+at validation or locked OOS. The following scanner is train-only and exists to
+choose at most one next validation hypothesis:
+
+```bash
+uv run python scripts/scan-event-rule-only-train.py \
+  --observations out/event-research-real-pit/observations.jsonl \
+  --output-json out/event-research-rule-only-train-scan/rule-only-train-scan.json \
+  --output-csv out/event-research-rule-only-train-scan/rule-only-train-scan.csv \
+  --min-trades 30
+```
+
+The first real-data run used 55,555 train observations, 53,257 train clusters,
+and 2,178 multi-event train clusters. This is not a validation result and does
+not promote any route to paper/live.
+
+Top train-only cluster diagnostics:
+
+| Rule | Exit | Trades | Net PnL | PF | Max DD | Positive block ratio |
+|---|---|---:|---:|---:|---:|---:|
+| cluster_earnings_dividend_value_guard | fixed_20d_plus_catastrophic_stop | 63 | 267,587 | 3.194 | 24,796 | 0.667 |
+| cluster_earnings_dividend_value_guard | fixed_20d | 63 | 261,960 | 3.053 | 29,366 | 0.667 |
+| cluster_earnings_dividend_value_guard | fixed_10d | 63 | 205,720 | 2.976 | 24,737 | 0.611 |
+| cluster_earnings_dividend_increase | fixed_20d_plus_catastrophic_stop | 67 | 261,661 | 2.866 | 24,796 | 0.684 |
+
+Top train-only single-event diagnostics:
+
+| Rule | Exit | Trades | Net PnL | PF | Max DD | Positive block ratio |
+|---|---|---:|---:|---:|---:|---:|
+| dividend_increase_yield_3pct_technical | fixed_2d | 41 | 36,554 | 1.722 | 17,747 | 0.522 |
+| earnings_quality_deep_value_technical | fixed_20d | 3,247 | 5,089,212 | 1.638 | 2,154,819 | 0.639 |
+| forecast_revision_quality_value_technical | fixed_5d | 358 | 466,421 | 1.634 | 87,924 | 0.657 |
+| forecast_revision_quality_value_technical | fixed_2d | 358 | 303,364 | 1.544 | 43,967 | 0.543 |
+
+Interpretation:
+
+- The best train-only non-LLM signal is still the earnings + dividend increase
+  cluster with the existing value guard. This reinforces V1 but does not make
+  it paper-ready.
+- A new single-event validation hypothesis, if one is allowed, should probably
+  be `forecast_revision_quality_value_technical` with `fixed_5d`, because it
+  is short horizon, has moderate sample size, and is not just a restatement of
+  the existing cluster candidate.
+- `earnings_quality_deep_value_technical fixed_20d` has a large sample and
+  strong train PF, but it has already failed the validation matched-random
+  check in the earlier preregistered cycle. Do not revive it by renaming it.
+
+Allowed next action:
+
+- preregister exactly one new validation hypothesis from this train-only scan,
+  including rule, exit horizon, cost, random baseline, and portfolio simulation
+  assumptions.
+
+Disallowed action:
+
+- inspect several validation variants and pick the best one
+- change PER/yield/technical thresholds after validation
+- treat train-only PF as evidence for paper observation
+
 Until a TOPIX or market-breadth series is available in the point-in-time
 dataset, the per-symbol trend bucket is written as `symbol_regime`.
 `market_regime` is retained only as a backward-compatible alias for older
