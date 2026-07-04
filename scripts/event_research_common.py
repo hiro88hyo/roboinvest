@@ -827,6 +827,54 @@ def entry_arm_allows(obs: ObservationRecord, arm: EntryArm) -> bool:
     raise ValueError(f"unsupported entry arm: {arm}")
 
 
+def cluster_earnings_dividend_increase_allows(items: list[ObservationRecord]) -> bool:
+    has_earnings = any(obs.event_type == EventType.EARNINGS_RESULT for obs in items)
+    has_dividend_increase = any(
+        obs.event_type == EventType.DIVIDEND_REVISION and obs.event_subtype == "increase"
+        for obs in items
+    )
+    return has_earnings and has_dividend_increase
+
+
+def cluster_forecast_per_missing_or_lte(
+    items: list[ObservationRecord],
+    threshold: Decimal,
+) -> bool:
+    values = [
+        value
+        for obs in items
+        if (
+            value := _decimal_feature_value(
+                obs.valuation_features_v0.forecast_per.value,
+                valid=obs.valuation_features_v0.forecast_per.valid,
+            )
+        )
+        is not None
+        and value > 0
+    ]
+    return not values or min(values) <= threshold
+
+
+def cluster_earnings_dividend_value_guard_allows(
+    items: list[ObservationRecord],
+    *,
+    per_threshold: Decimal = Decimal("15"),
+) -> bool:
+    return cluster_earnings_dividend_increase_allows(items) and cluster_forecast_per_missing_or_lte(
+        items,
+        per_threshold,
+    )
+
+
+def _decimal_feature_value(value: object, *, valid: bool) -> Decimal | None:
+    if not valid or value in (None, ""):
+        return None
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return None
+
+
 def cluster_trade_representatives(
     observations: list[ObservationRecord],
 ) -> list[ObservationRecord]:

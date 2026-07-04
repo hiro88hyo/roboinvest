@@ -71,6 +71,7 @@ def test_models_have_expected_attributes() -> None:
     assert StrategySignal.model_fields["spread_bps"].annotation == Decimal | None
     assert StrategySignal.model_fields["target_price"].annotation == Decimal | None
     assert StrategySignal.model_fields["trailing_stop_pct"].annotation == Decimal | None
+    assert StrategySignal.model_fields["holding_type"].annotation == TradingStyle | None
     assert UnifiedTradeSignal.model_fields["tick_size"].annotation == Decimal | None
     assert UnifiedTradeSignal.model_fields["ask_depth_5"].annotation == int | None
     assert OrderRequest.model_fields["trade_mode"].annotation is TradeMode

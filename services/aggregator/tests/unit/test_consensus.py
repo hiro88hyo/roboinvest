@@ -245,6 +245,18 @@ def test_holding_type_follows_config(signal_factory) -> None:  # type: ignore[no
     assert unified.holding_type is TradingStyle.SWING
 
 
+def test_signal_holding_type_overrides_config(signal_factory) -> None:  # type: ignore[no-untyped-def]
+    rule = signal_factory(
+        source=SignalSource.RULE,
+        action=Action.BUY,
+        confidence=0.8,
+        holding_type=TradingStyle.SWING,
+    )
+    unified = aggregate([rule], config=_cfg(default_holding_type=TradingStyle.DAY))
+    assert unified is not None
+    assert unified.holding_type is TradingStyle.SWING
+
+
 def test_unified_signal_id_is_fresh(signal_factory) -> None:  # type: ignore[no-untyped-def]
     rule = signal_factory(source=SignalSource.RULE, action=Action.BUY, confidence=0.8)
     unified = aggregate([rule], config=_cfg())

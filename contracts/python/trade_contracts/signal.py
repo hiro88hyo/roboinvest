@@ -52,6 +52,7 @@ class StrategySignal(BaseModel):
     action: Action
     confidence: float = Field(ge=0.0, le=1.0)
     reasoning: str | None = None
+    holding_type: TradingStyle | None = None
     stop_loss_price: Decimal | None = None
     target_price: Decimal | None = None
     trailing_stop_pct: Decimal | None = None

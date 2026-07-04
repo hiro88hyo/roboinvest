@@ -10,7 +10,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from trade_contracts.enums import Action, SignalSource
+from trade_contracts.enums import Action, SignalSource, TradingStyle
 from trade_contracts.signal import StrategySignal
 
 SignalFactory = Callable[..., StrategySignal]
@@ -25,6 +25,7 @@ def _make_signal(
     reasoning: str | None = None,
     created_at: datetime | None = None,
     price: Decimal | None = None,
+    holding_type: TradingStyle | None = None,
     stop_loss_price: Decimal | None = None,
     target_price: Decimal | None = None,
     trailing_stop_pct: Decimal | None = None,
@@ -49,6 +50,7 @@ def _make_signal(
         action=action,
         confidence=confidence,
         reasoning=reasoning,
+        holding_type=holding_type,
         stop_loss_price=stop_loss_price,
         target_price=target_price,
         trailing_stop_pct=trailing_stop_pct,
