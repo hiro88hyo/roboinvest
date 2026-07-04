@@ -17,6 +17,7 @@ from event_research_common import (
     entry_arm_allows,
     metrics_for_observations,
     read_jsonl,
+    read_split_manifest,
 )
 from strategy_ai.event.evaluator import (
     ai_arm_allows,
@@ -54,6 +55,11 @@ def main() -> int:
         action="store_true",
         help="Allow partial labels outside train split for smoke diagnostics.",
     )
+    parser.add_argument(
+        "--split-manifest",
+        type=Path,
+        help="Freeze train/validation/locked OOS boundaries from an existing manifest JSON.",
+    )
     args = parser.parse_args()
 
     if args.split in {"locked-oos", "all"} and not args.include_locked_oos:
@@ -64,6 +70,9 @@ def main() -> int:
         args.observations,
         label_event_ids=set(labels),
         split=args.split,
+        fixed_split_manifest=read_split_manifest(args.split_manifest)
+        if args.split_manifest
+        else None,
     )
     _validate_partial_label_policy(
         split_info,
@@ -158,8 +167,9 @@ def _load_labeled_observations_for_split(
     *,
     label_event_ids: set[str],
     split: str,
+    fixed_split_manifest: dict[str, Any] | None = None,
 ) -> tuple[list[ObservationRecord], dict[str, Any]]:
-    manifest = _split_manifest_from_jsonl(path)
+    manifest = _split_manifest_from_jsonl(path, fixed_manifest=fixed_split_manifest)
     if not manifest:
         return [], {"requested_split": split, "selected_observation_count": 0}
 
@@ -193,7 +203,11 @@ def _load_labeled_observations_for_split(
     }
 
 
-def _split_manifest_from_jsonl(path: Path) -> dict[str, Any]:
+def _split_manifest_from_jsonl(
+    path: Path,
+    *,
+    fixed_manifest: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     dates: set[date] = set()
     symbols: set[str] = set()
     count = 0
@@ -214,10 +228,24 @@ def _split_manifest_from_jsonl(path: Path) -> dict[str, Any]:
     if not dates:
         return {}
     ordered_dates = sorted(dates)
-    train_end = ordered_dates[int(len(ordered_dates) * 0.60)]
-    validation_start = _shift_trading_date(ordered_dates, train_end, PURGE_TRADING_DAYS)
-    validation_end = ordered_dates[int(len(ordered_dates) * 0.80)]
-    oos_start = _shift_trading_date(ordered_dates, validation_end, PURGE_TRADING_DAYS)
+    if fixed_manifest is None:
+        train_end = ordered_dates[int(len(ordered_dates) * 0.60)]
+        validation_start = _shift_trading_date(ordered_dates, train_end, PURGE_TRADING_DAYS)
+        validation_end = ordered_dates[int(len(ordered_dates) * 0.80)]
+        oos_start = _shift_trading_date(ordered_dates, validation_end, PURGE_TRADING_DAYS)
+        purge_days = PURGE_TRADING_DAYS
+        fixed_meta: dict[str, Any] = {"fixed_split_manifest": False}
+    else:
+        train_end = date.fromisoformat(str(fixed_manifest["train_end"]))
+        validation_start = date.fromisoformat(str(fixed_manifest["validation_start"]))
+        validation_end = date.fromisoformat(str(fixed_manifest["validation_end"]))
+        oos_start = date.fromisoformat(str(fixed_manifest["locked_oos_start"]))
+        purge_days = int(fixed_manifest.get("purge_days") or PURGE_TRADING_DAYS)
+        fixed_meta = {
+            "fixed_split_manifest": True,
+            "fixed_split_manifest_dataset_hash": fixed_manifest.get("dataset_hash"),
+            "fixed_split_manifest_observation_count": fixed_manifest.get("split_observation_count"),
+        }
     return {
         "train_start": ordered_dates[0].isoformat(),
         "train_end": train_end.isoformat(),
@@ -225,12 +253,13 @@ def _split_manifest_from_jsonl(path: Path) -> dict[str, Any]:
         "validation_end": validation_end.isoformat(),
         "locked_oos_start": oos_start.isoformat(),
         "locked_oos_end": ordered_dates[-1].isoformat(),
-        "purge_days": PURGE_TRADING_DAYS,
+        "purge_days": purge_days,
         "dataset_hash": digest.hexdigest(),
         "dataset_hash_algorithm": "jsonl_stream_sha256_v1",
         "split_observation_count": count,
         "split_symbol_count": len(symbols),
         "feature_schema_version": FEATURE_SCHEMA_VERSION,
+        **fixed_meta,
     }
 
 

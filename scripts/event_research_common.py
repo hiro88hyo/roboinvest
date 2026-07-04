@@ -137,6 +137,22 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
 
 
+def read_split_manifest(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    manifest = payload.get("split_manifest", payload)
+    required = {
+        "train_end",
+        "validation_start",
+        "validation_end",
+        "locked_oos_start",
+        "purge_days",
+    }
+    missing = sorted(required - set(manifest))
+    if missing:
+        raise ValueError(f"split manifest missing required fields: {missing}")
+    return dict(manifest)
+
+
 def write_jsonl(path: Path, rows: list[Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
@@ -1173,10 +1189,11 @@ def select_observations_for_split(
     observations: list[ObservationRecord],
     *,
     split: str,
+    fixed_split_manifest: dict[str, Any] | None = None,
 ) -> tuple[list[ObservationRecord], dict[str, Any]]:
     if split not in EVALUATION_SPLITS:
         raise ValueError(f"unsupported evaluation split: {split}")
-    manifest = split_manifest(observations)
+    manifest = split_manifest(observations, fixed_manifest=fixed_split_manifest)
     if not manifest:
         return [], {"requested_split": split, "selected_observation_count": 0}
     if split == "all":
@@ -1244,14 +1261,32 @@ def _label_exit_date(obs: ObservationRecord, horizon: int) -> date | None:
     return date.fromisoformat(str(raw))
 
 
-def split_manifest(observations: list[ObservationRecord]) -> dict[str, Any]:
+def split_manifest(
+    observations: list[ObservationRecord],
+    *,
+    fixed_manifest: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     dates = sorted({date.fromisoformat(obs.signal_date) for obs in observations})
     if not dates:
         return {}
-    train_end = dates[int(len(dates) * 0.60)]
-    validation_start = _shift_trading_date(dates, train_end, PURGE_TRADING_DAYS)
-    validation_end = dates[int(len(dates) * 0.80)]
-    oos_start = _shift_trading_date(dates, validation_end, PURGE_TRADING_DAYS)
+    if fixed_manifest is None:
+        train_end = dates[int(len(dates) * 0.60)]
+        validation_start = _shift_trading_date(dates, train_end, PURGE_TRADING_DAYS)
+        validation_end = dates[int(len(dates) * 0.80)]
+        oos_start = _shift_trading_date(dates, validation_end, PURGE_TRADING_DAYS)
+        purge_days = PURGE_TRADING_DAYS
+        fixed_meta: dict[str, Any] = {"fixed_split_manifest": False}
+    else:
+        train_end = date.fromisoformat(str(fixed_manifest["train_end"]))
+        validation_start = date.fromisoformat(str(fixed_manifest["validation_start"]))
+        validation_end = date.fromisoformat(str(fixed_manifest["validation_end"]))
+        oos_start = date.fromisoformat(str(fixed_manifest["locked_oos_start"]))
+        purge_days = int(fixed_manifest.get("purge_days") or PURGE_TRADING_DAYS)
+        fixed_meta = {
+            "fixed_split_manifest": True,
+            "fixed_split_manifest_dataset_hash": fixed_manifest.get("dataset_hash"),
+            "fixed_split_manifest_observation_count": fixed_manifest.get("split_observation_count"),
+        }
     dataset_hash = hashlib.sha256(
         "\n".join(sorted(obs.model_dump_json() for obs in observations)).encode("utf-8")
     ).hexdigest()
@@ -1262,11 +1297,12 @@ def split_manifest(observations: list[ObservationRecord]) -> dict[str, Any]:
         "validation_end": validation_end.isoformat(),
         "locked_oos_start": oos_start.isoformat(),
         "locked_oos_end": dates[-1].isoformat(),
-        "purge_days": PURGE_TRADING_DAYS,
+        "purge_days": purge_days,
         "dataset_hash": dataset_hash,
         "split_observation_count": len(observations),
         "split_symbol_count": len({obs.symbol for obs in observations}),
         "feature_schema_version": FEATURE_SCHEMA_VERSION,
+        **fixed_meta,
     }
 
 

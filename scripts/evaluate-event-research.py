@@ -15,6 +15,7 @@ from event_research_common import (
     read_jsonl,
     read_master_csv,
     read_ohlcv_csv,
+    read_split_manifest,
     select_observations_for_split,
 )
 from trade_contracts.event_research import ObservationRecord
@@ -56,6 +57,11 @@ def main() -> int:
         action="store_true",
         help="Required when --split is locked-oos or all.",
     )
+    parser.add_argument(
+        "--split-manifest",
+        type=Path,
+        help="Freeze train/validation/locked OOS boundaries from an existing manifest JSON.",
+    )
     args = parser.parse_args()
 
     if args.split in {"locked-oos", "all"} and not args.include_locked_oos:
@@ -67,7 +73,13 @@ def main() -> int:
         end_date=None if args.end_date is None else date.fromisoformat(args.end_date),
         event_types=None if args.event_type is None else set(args.event_type),
     )
-    observations, split_info = select_observations_for_split(all_observations, split=args.split)
+    observations, split_info = select_observations_for_split(
+        all_observations,
+        split=args.split,
+        fixed_split_manifest=read_split_manifest(args.split_manifest)
+        if args.split_manifest
+        else None,
+    )
     random_date_observations = None
     if args.ohlcv is not None:
         random_date_observations = build_random_date_observations(

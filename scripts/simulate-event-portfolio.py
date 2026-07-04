@@ -19,6 +19,7 @@ from event_research_common import (
     fundamental_rule_allows,
     read_jsonl,
     read_ohlcv_csv,
+    read_split_manifest,
     select_observations_for_split,
     technical_veto_allows,
 )
@@ -158,6 +159,11 @@ def main() -> int:
         help="Required when --split is locked-oos or all.",
     )
     parser.add_argument(
+        "--split-manifest",
+        type=Path,
+        help="Freeze train/validation/locked OOS boundaries from an existing manifest JSON.",
+    )
+    parser.add_argument(
         "--capital",
         action="append",
         default=[],
@@ -226,6 +232,9 @@ def main() -> int:
     split_observations, split_info = select_observations_for_split(
         all_observations,
         split=args.split,
+        fixed_split_manifest=read_split_manifest(args.split_manifest)
+        if args.split_manifest
+        else None,
     )
     spec = candidate_spec(args.candidate_id)
     candidates = selected_observations_for_candidate(split_observations, spec)

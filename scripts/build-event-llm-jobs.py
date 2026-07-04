@@ -12,6 +12,7 @@ from event_research_common import (
     EVALUATION_SPLITS,
     observation_split_label,
     read_jsonl,
+    read_split_manifest,
     select_observations_for_split,
     write_jsonl,
 )
@@ -100,6 +101,11 @@ def main() -> int:
         action="store_true",
         help="Required when --split is locked-oos or all.",
     )
+    parser.add_argument(
+        "--split-manifest",
+        type=Path,
+        help="Freeze train/validation/locked OOS boundaries from an existing manifest JSON.",
+    )
     args = parser.parse_args()
 
     if args.split in {"locked-oos", "all"} and not args.include_locked_oos:
@@ -114,7 +120,13 @@ def main() -> int:
     all_observations = [
         ObservationRecord.model_validate(row) for row in read_jsonl(args.observations)
     ]
-    observations, split_info = select_observations_for_split(all_observations, split=args.split)
+    observations, split_info = select_observations_for_split(
+        all_observations,
+        split=args.split,
+        fixed_split_manifest=read_split_manifest(args.split_manifest)
+        if args.split_manifest
+        else None,
+    )
     observations = _filter_observations(
         observations,
         event_types=set(args.event_type or []),

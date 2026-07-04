@@ -325,6 +325,53 @@ def test_select_observations_for_split_excludes_purge_and_locked_oos() -> None:
     assert all(date.fromisoformat(obs.labels["exit_date_20d"]) < validation_start for obs in train)
 
 
+def test_fixed_split_manifest_keeps_boundaries_when_older_history_is_added() -> None:
+    bars = _bars()
+    events = [
+        _event(_raw(DiscDate=f"2026-01-{day:02d}", DiscNo=f"fixture-{day}"), bars)
+        for day in range(3, 26)
+    ]
+    observations = event_research.build_observations(events, ohlcv_rows=bars)
+    manifest = event_research.split_manifest(observations)
+    older_observations = []
+    for idx in range(8):
+        signal = date(2025, 12, 1) + timedelta(days=idx)
+        older_observations.append(
+            observations[0].model_copy(
+                deep=True,
+                update={
+                    "observation_id": f"older-{idx}",
+                    "event_id": f"older-event-{idx}",
+                    "event_cluster_id": f"older-cluster-{idx}",
+                    "trade_group_id": f"older-trade-{idx}",
+                    "signal_date": signal.isoformat(),
+                    "entry_date": (signal + timedelta(days=1)).isoformat(),
+                    "labels": {
+                        **observations[0].labels,
+                        "exit_date_20d": (signal + timedelta(days=20)).isoformat(),
+                    },
+                },
+            )
+        )
+    expanded = [*older_observations, *observations]
+
+    fixed_train, fixed_info = event_research.select_observations_for_split(
+        expanded,
+        split="train",
+        fixed_split_manifest=manifest,
+    )
+    dynamic_manifest = event_research.split_manifest(expanded)
+
+    assert fixed_info["split_manifest"]["fixed_split_manifest"] is True
+    assert fixed_info["split_manifest"]["train_end"] == manifest["train_end"]
+    assert fixed_info["split_manifest"]["validation_start"] == manifest["validation_start"]
+    assert fixed_info["split_manifest"]["locked_oos_start"] == manifest["locked_oos_start"]
+    assert dynamic_manifest["train_end"] != manifest["train_end"]
+    assert {obs.observation_id for obs in older_observations} <= {
+        obs.observation_id for obs in fixed_train
+    }
+
+
 def test_random_baseline_is_seeded_and_symbol_constrained() -> None:
     bars = _bars() + _bars(symbol="6758", start_close=2000)
     events = [

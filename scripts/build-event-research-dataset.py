@@ -12,6 +12,7 @@ from event_research_common import (
     read_jsonl,
     read_master_csv,
     read_ohlcv_csv,
+    read_split_manifest,
     split_manifest,
     write_jsonl,
 )
@@ -24,6 +25,11 @@ def main() -> int:
     parser.add_argument("--master", type=Path)
     parser.add_argument("--output-dir", type=Path, default=Path("out/event-research"))
     parser.add_argument("--fetched-at", default=None)
+    parser.add_argument(
+        "--split-manifest",
+        type=Path,
+        help="Freeze train/validation/locked OOS boundaries from an existing manifest JSON.",
+    )
     args = parser.parse_args()
 
     fetched_at = (
@@ -50,7 +56,12 @@ def main() -> int:
         "event_count": len(events),
         "observation_count": len(observations),
         "event_type_counts": _event_counts(events),
-        **split_manifest(observations),
+        **split_manifest(
+            observations,
+            fixed_manifest=read_split_manifest(args.split_manifest)
+            if args.split_manifest
+            else None,
+        ),
         "data_limitations": [
             "TOPIX and sector excess are reported only when source series are present.",
             "buyback_announcement is fixture/interface-only unless TDnet/archive rows "
