@@ -104,7 +104,7 @@ class SupabaseClient:
             params={
                 "select": (
                     "symbol,quantity,entry_price,holding_type,"
-                    "target_price,stop_loss_price,max_hold_days,"
+                    "target_price,stop_loss_price,max_hold_days,scheduled_exit_date,"
                     "trailing_stop_pct,opened_at,side"
                 ),
                 "symbol": f"eq.{symbol}",
@@ -132,7 +132,7 @@ class SupabaseClient:
             params={
                 "select": (
                     "symbol,quantity,entry_price,holding_type,"
-                    "target_price,stop_loss_price,max_hold_days,"
+                    "target_price,stop_loss_price,max_hold_days,scheduled_exit_date,"
                     "trailing_stop_pct,opened_at,side"
                 ),
                 "trade_type": "eq.paper",
@@ -336,6 +336,8 @@ def _position_to_insert_row(position: PaperPosition) -> dict[str, Any]:
         row["stop_loss_price"] = str(position.stop_loss_price)
     if position.max_hold_days is not None:
         row["max_hold_days"] = position.max_hold_days
+    if position.scheduled_exit_date is not None:
+        row["scheduled_exit_date"] = position.scheduled_exit_date.isoformat()
     if position.trailing_stop_pct is not None:
         row["trailing_stop_pct"] = str(position.trailing_stop_pct)
     return row

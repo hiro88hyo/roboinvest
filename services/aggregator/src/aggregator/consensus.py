@@ -87,6 +87,11 @@ def _build_unified(
     holding_type: TradingStyle,
     now: datetime,
 ) -> UnifiedTradeSignal:
+    resolved_holding_type = (
+        execution_source.holding_type
+        if execution_source is not None and execution_source.holding_type is not None
+        else holding_type
+    )
     return UnifiedTradeSignal(
         symbol=symbol,
         price=price,
@@ -95,7 +100,7 @@ def _build_unified(
         signal_source=signal_source,
         strategy_signal_id_a=rule.signal_id if rule is not None else None,
         strategy_signal_id_b=ai.signal_id if ai is not None else None,
-        holding_type=holding_type,
+        holding_type=resolved_holding_type,
         **order_fields_from(execution_source),
         **execution_fields_from(execution_source),
         created_at=now,

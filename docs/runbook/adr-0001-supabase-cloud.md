@@ -49,6 +49,8 @@ Cloud project の SQL Editor で `contracts/sql/` を番号順に実行する。
 14. `contracts/sql/013_market_regime.sql`
 15. `contracts/sql/014_service_role_table_grants.sql`
 16. `contracts/sql/015_gateway_kill_switch_rpc.sql`
+17. `contracts/sql/016_gateway_risk_reservations.sql`
+18. `contracts/sql/017_positions_scheduled_exit_date.sql`
 
 各 SQL は `create table if not exists` / `create index if not exists` 形式を基本にしている。途中で失敗した場合は、失敗箇所を直して同じ順番で再実行する。
 
@@ -176,8 +178,13 @@ op run --env-file infra/env.production -- \
 - `watchlist`
 - `master_stocks`
 - `daily_ohlcv`
+- `market_regime`
 
-上記 9 tables が `OK` になること。
+上記 tables が `OK` になること。
+
+`positions.scheduled_exit_date` も `OK` になること。`column positions.scheduled_exit_date
+does not exist` が出る場合は `contracts/sql/017_positions_scheduled_exit_date.sql` が
+Cloud project に未適用であり、swing fixed-hold の operational gate は実行しない。
 
 `401` / `403` の場合は `SUPABASE_SECRET_KEY` が service role key か、1Password field と `infra/env.production` の参照が一致しているかを確認する。
 

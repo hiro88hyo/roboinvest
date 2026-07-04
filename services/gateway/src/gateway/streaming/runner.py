@@ -425,6 +425,23 @@ class StreamRunner:
                 source=order.signal_source.value,
             ),
         )
+        if order.trade_mode is TradeMode.PAPER and order.side.value == "BUY":
+            logger.info(
+                "opening swing exit sequence: buy order published symbol=%s qty=%d signal_id=%s",
+                order.symbol,
+                order.quantity,
+                signal.signal_id,
+                extra=event_extra(
+                    "opening_swing_exit_sequence",
+                    stage="buy_order_published",
+                    trade_mode=order.trade_mode.value,
+                    symbol=order.symbol,
+                    order_id=str(order.order_id),
+                    signal_id=str(signal.signal_id),
+                    quantity=order.quantity,
+                    destination_topic=topic,
+                ),
+            )
         return _Decision(approved=True, kill_switch_fired=False)
 
     def _risk_amount_for_order(
@@ -539,6 +556,25 @@ class StreamRunner:
         )
         exposure = await self.supabase.read_capital_in_use(trade_mode=trade_mode)
         remaining_capital = capital - exposure
+        logger.info(
+            "buy budget recalculated: symbol=%s trade_mode=%s exposure=%s capital=%s "
+            "remaining_capital=%s",
+            signal.symbol,
+            trade_mode.value,
+            exposure,
+            capital,
+            remaining_capital,
+            extra=event_extra(
+                "opening_swing_exit_sequence",
+                stage="capital_in_use_recalculated",
+                symbol=signal.symbol,
+                signal_id=str(signal.signal_id),
+                trade_mode=trade_mode.value,
+                capital=str(capital),
+                capital_in_use=str(exposure),
+                remaining_capital=str(remaining_capital),
+            ),
+        )
         if remaining_capital <= 0:
             logger.warning(
                 "buy budget exhausted: symbol=%s trade_mode=%s exposure=%s capital=%s",

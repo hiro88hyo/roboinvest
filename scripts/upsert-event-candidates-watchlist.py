@@ -1,0 +1,169 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from collections import defaultdict
+from datetime import date
+from pathlib import Path
+from typing import Any
+
+import httpx
+
+EVENT_CAPTURE_SCORE = 0
+DEFAULT_MAX_SYMBOLS = 10
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Add event paper candidates to Supabase watchlist for minute-data capture."
+    )
+    parser.add_argument("--candidates-json", type=Path, required=True)
+    parser.add_argument("--output-json", type=Path, required=True)
+    parser.add_argument("--valid-date", type=date.fromisoformat)
+    parser.add_argument("--max-symbols", type=int, default=DEFAULT_MAX_SYMBOLS)
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--timeout", type=float, default=30.0)
+    args = parser.parse_args()
+
+    payload = json.loads(args.candidates_json.read_text(encoding="utf-8"))
+    rows = build_watchlist_rows(
+        payload,
+        valid_date=args.valid_date,
+        max_symbols=args.max_symbols,
+    )
+    inserted: list[dict[str, Any]] = []
+    skipped_existing: list[dict[str, Any]] = []
+    if not args.dry_run and rows:
+        url = os.environ.get("SUPABASE_URL", "").strip()
+        key = os.environ.get("SUPABASE_SECRET_KEY", "").strip()
+        if not url or not key:
+            print("SUPABASE_URL / SUPABASE_SECRET_KEY missing", file=sys.stderr)
+            return 2
+        with httpx.Client(
+            base_url=url.rstrip("/"),
+            timeout=args.timeout,
+            headers={
+                "apikey": key,
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json",
+            },
+        ) as client:
+            inserted, skipped_existing = upsert_missing_watchlist_rows(client, rows)
+
+    result = {
+        "mode": "dry_run" if args.dry_run else "upsert",
+        "candidate_count": len(payload.get("candidates", [])),
+        "planned_count": len(rows),
+        "inserted_count": len(inserted),
+        "skipped_existing_count": len(skipped_existing),
+        "planned": rows,
+        "inserted": inserted,
+        "skipped_existing": skipped_existing,
+    }
+    args.output_json.parent.mkdir(parents=True, exist_ok=True)
+    args.output_json.write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n")
+    print(
+        "event_candidate_watchlist "
+        f"mode={result['mode']} planned={len(rows)} inserted={len(inserted)} "
+        f"skipped_existing={len(skipped_existing)} output={args.output_json}"
+    )
+    return 0
+
+
+def build_watchlist_rows(
+    payload: dict[str, Any],
+    *,
+    valid_date: date | None,
+    max_symbols: int,
+) -> list[dict[str, Any]]:
+    if max_symbols <= 0:
+        raise ValueError("max_symbols must be positive")
+    by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    for candidate in payload.get("candidates", []):
+        symbol = str(candidate["symbol"])
+        row_valid_date = (
+            valid_date.isoformat()
+            if valid_date is not None
+            else str(candidate.get("entry_date") or candidate.get("signal_date"))
+        )
+        key = (row_valid_date, symbol)
+        by_key.setdefault(
+            key,
+            {
+                "symbol": symbol,
+                "valid_date": row_valid_date,
+                "symbol_name": str(candidate.get("symbol_name") or ""),
+                "score": EVENT_CAPTURE_SCORE,
+                "selected_reasons": {
+                    "reasons": ["event_capture"],
+                    "event_capture": True,
+                    "candidate_id": candidate.get("candidate_id"),
+                    "cluster_id": candidate.get("cluster_id"),
+                    "signal_date": candidate.get("signal_date"),
+                    "entry_date": candidate.get("entry_date"),
+                },
+            },
+        )
+    return sorted(by_key.values(), key=lambda row: (row["valid_date"], row["symbol"]))[:max_symbols]
+
+
+def upsert_missing_watchlist_rows(
+    client: httpx.Client,
+    rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    inserted: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for valid_date, date_rows in _group_by_valid_date(rows).items():
+        existing = fetch_existing_symbols(client, valid_date=valid_date)
+        missing = [row for row in date_rows if row["symbol"] not in existing]
+        skipped.extend([row for row in date_rows if row["symbol"] in existing])
+        if missing:
+            upsert_watchlist_rows(client, missing)
+            inserted.extend(missing)
+    return inserted, skipped
+
+
+def fetch_existing_symbols(client: httpx.Client, *, valid_date: str) -> set[str]:
+    resp = client.get(
+        "/rest/v1/watchlist",
+        params={
+            "select": "symbol",
+            "valid_date": f"eq.{valid_date}",
+        },
+    )
+    _raise_for_status(resp, table="watchlist", action="read")
+    payload = resp.json()
+    if not isinstance(payload, list):
+        raise RuntimeError(f"unexpected watchlist payload: {payload!r}")
+    return {str(row["symbol"]) for row in payload if row.get("symbol")}
+
+
+def upsert_watchlist_rows(client: httpx.Client, rows: list[dict[str, Any]]) -> None:
+    resp = client.post(
+        "/rest/v1/watchlist",
+        params={"on_conflict": "symbol,valid_date"},
+        headers={"Prefer": "resolution=merge-duplicates,return=minimal"},
+        json=rows,
+    )
+    _raise_for_status(resp, table="watchlist", action="upsert")
+
+
+def _group_by_valid_date(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        grouped[str(row["valid_date"])].append(row)
+    return dict(grouped)
+
+
+def _raise_for_status(resp: httpx.Response, *, table: str, action: str) -> None:
+    if resp.status_code >= 300:
+        raise RuntimeError(
+            f"{action} failed: table={table} status={resp.status_code} body={resp.text[:200]}"
+        )
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

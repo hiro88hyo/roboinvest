@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -23,6 +23,7 @@ class OrderRequest(BaseModel):
     target_price: Decimal | None = None
     trailing_stop_pct: Decimal | None = None
     max_hold_days: int | None = Field(default=None, ge=1)
+    scheduled_exit_date: date | None = None
     created_at: datetime
 
 

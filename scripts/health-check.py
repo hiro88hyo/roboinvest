@@ -12,8 +12,8 @@
   1. Pub/Sub: ``infra/pubsub/topics.json`` に列挙された全トピックと
      ``infra/pubsub/subscriptions.json`` に列挙された全サブスクリプションが
      エミュレータ上に存在するか
-  2. Supabase: ``contracts/sql/`` 由来の主要テーブルが PostgREST 経由で
-     可読か (``select=...&limit=0`` で空 200 を期待)
+  2. Supabase: ``contracts/sql/`` 由来の主要テーブルと運用上必須の列が
+     PostgREST 経由で可読か (``select=...&limit=0`` で空 200 を期待)
   3. Services: 各サービスの ``python -m <pkg> --help`` が returncode=0 で
      起動できるか (CLI が壊れていないかの煙テスト)
 
@@ -60,6 +60,8 @@ SUPABASE_TABLES: tuple[str, ...] = (
     "daily_ohlcv",
     "market_regime",
 )
+
+SUPABASE_COLUMN_CHECKS: tuple[tuple[str, str], ...] = (("positions", "scheduled_exit_date"),)
 
 SERVICE_MODULES: tuple[str, ...] = (
     "universe_scanner",
@@ -243,6 +245,21 @@ async def check_supabase(timeout: float, *, quiet: bool) -> CheckResult:
                 detail = f"HTTP {r.status_code} body={r.text[:120]}"
                 _emit("NG", table, detail, quiet=quiet)
                 result.items.append(("NG", table, detail))
+        for table, column in SUPABASE_COLUMN_CHECKS:
+            label = f"{table}.{column}"
+            try:
+                r = await client.get(f"/rest/v1/{table}", params={"select": column, "limit": 0})
+            except httpx.HTTPError as exc:
+                _emit("NG", label, repr(exc), quiet=quiet)
+                result.items.append(("NG", label, repr(exc)))
+                continue
+            if r.status_code == 200:
+                _emit("OK", label, "", quiet=quiet)
+                result.items.append(("OK", label, ""))
+            else:
+                detail = f"HTTP {r.status_code} body={r.text[:120]}"
+                _emit("NG", label, detail, quiet=quiet)
+                result.items.append(("NG", label, detail))
     return result
 
 

@@ -189,3 +189,38 @@ def test_cli_stream_iterations_zero_with_env_runs_no_op(
     monkeypatch.setenv("SUPABASE_SECRET_KEY", "k")
     rc = main(["stream", "--iterations", "0", "--no-closeout"])
     assert rc == 0
+
+
+def test_cli_opening_swing_exits_requires_supabase(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PUBSUB_PROJECT_ID", "trade-ai-dev")
+    monkeypatch.setenv("SUPABASE_URL", "")
+    monkeypatch.setenv("SUPABASE_SECRET_KEY", "")
+    rc = main(["opening-swing-exits", "--book-warmup-batches", "0"])
+    assert rc == 2
+
+
+def test_cli_opening_swing_exits_requires_pubsub_for_book_warmup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PUBSUB_PROJECT_ID", "")
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_SECRET_KEY", "k")
+    rc = main(["opening-swing-exits"])
+    assert rc == 2
+
+
+def test_cli_opening_swing_exits_dispatches_manual_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[int] = []
+
+    async def _fake_cmd(*, book_warmup_batches: int) -> int:
+        calls.append(book_warmup_batches)
+        return 7
+
+    monkeypatch.setattr("oms_paper.__main__._run_opening_swing_exits_cmd", _fake_cmd)
+
+    rc = main(["opening-swing-exits", "--book-warmup-batches", "3"])
+
+    assert rc == 7
+    assert calls == [3]

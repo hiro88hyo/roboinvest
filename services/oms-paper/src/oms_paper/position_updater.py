@@ -10,12 +10,13 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal
 
 from trade_contracts.enums import Side, TradingStyle
 from trade_contracts.order import OrderRequest
 
+from .calendar import nth_tse_business_day_after
 from .models import FillResult, PaperFillRecord, PaperPosition, PositionUpdate
 
 _PRICE_QUANT = Decimal("1")
@@ -63,6 +64,7 @@ def apply_fill(
     stop_loss_price: Decimal | None = None,
     target_price: Decimal | None = None,
     max_hold_days: int | None = None,
+    scheduled_exit_date: date | None = None,
     trailing_stop_pct: Decimal | None = None,
     executed_at: datetime,
 ) -> PositionUpdate:
@@ -89,6 +91,8 @@ def apply_fill(
                 stop_loss_price=stop_loss_price,
                 target_price=target_price,
                 max_hold_days=max_hold_days,
+                scheduled_exit_date=scheduled_exit_date
+                or nth_tse_business_day_after(executed_at.date(), max_hold_days),
                 trailing_stop_pct=trailing_stop_pct,
                 opened_at=executed_at,
             )

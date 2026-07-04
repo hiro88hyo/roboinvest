@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -35,6 +35,7 @@ def make_order_request(
     target_price: Decimal | None = None,
     trailing_stop_pct: Decimal | None = None,
     max_hold_days: int | None = None,
+    scheduled_exit_date: date | None = None,
     created_at: datetime | None = None,
 ) -> OrderRequest:
     return OrderRequest(
@@ -50,6 +51,7 @@ def make_order_request(
         target_price=target_price,
         trailing_stop_pct=trailing_stop_pct,
         max_hold_days=max_hold_days,
+        scheduled_exit_date=scheduled_exit_date,
         created_at=created_at or DEFAULT_TS,
     )
 
@@ -81,6 +83,7 @@ def make_paper_position(
     target_price: Decimal | None = None,
     stop_loss_price: Decimal | None = None,
     max_hold_days: int | None = None,
+    scheduled_exit_date: date | None = None,
     trailing_stop_pct: Decimal | None = None,
     opened_at: datetime | None = None,
 ) -> PaperPosition:
@@ -92,6 +95,7 @@ def make_paper_position(
         target_price=target_price,
         stop_loss_price=stop_loss_price,
         max_hold_days=max_hold_days,
+        scheduled_exit_date=scheduled_exit_date,
         trailing_stop_pct=trailing_stop_pct,
         opened_at=opened_at or DEFAULT_TS,
     )

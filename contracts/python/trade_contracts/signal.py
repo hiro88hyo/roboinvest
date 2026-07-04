@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
@@ -28,6 +28,7 @@ ORDER_FIELD_NAMES = (
     "target_price",
     "trailing_stop_pct",
     "max_hold_days",
+    "scheduled_exit_date",
 )
 
 
@@ -51,10 +52,12 @@ class StrategySignal(BaseModel):
     action: Action
     confidence: float = Field(ge=0.0, le=1.0)
     reasoning: str | None = None
+    holding_type: TradingStyle | None = None
     stop_loss_price: Decimal | None = None
     target_price: Decimal | None = None
     trailing_stop_pct: Decimal | None = None
     max_hold_days: int | None = Field(default=None, ge=1)
+    scheduled_exit_date: date | None = None
     best_bid: Decimal | None = None
     best_ask: Decimal | None = None
     spread_bps: Decimal | None = None
@@ -89,6 +92,7 @@ class UnifiedTradeSignal(BaseModel):
     target_price: Decimal | None = None
     trailing_stop_pct: Decimal | None = None
     max_hold_days: int | None = Field(default=None, ge=1)
+    scheduled_exit_date: date | None = None
     best_bid: Decimal | None = None
     best_ask: Decimal | None = None
     spread_bps: Decimal | None = None

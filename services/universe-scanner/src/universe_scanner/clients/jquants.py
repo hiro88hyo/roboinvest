@@ -153,3 +153,42 @@ class JQuantsClient:
         if self.api_version == JQuantsApiVersion.V1:
             return await self._paginate("/prices/daily_quotes", params, key="daily_quotes")
         return await self._paginate("/equities/bars/daily", params, key="data")
+
+    async def financial_summaries(
+        self,
+        *,
+        target_date: date | None = None,
+        code: str | None = None,
+        from_date: date | None = None,
+        to_date: date | None = None,
+    ) -> list[dict[str, Any]]:
+        """J-Quants financial summary rows.
+
+        v2 uses ``/fins/summary`` and returns rows under ``data``.  Tests pin this
+        shape with sanitized fixtures because this repository must not guess
+        unavailable response fields when credentials are absent.
+        """
+        params: dict[str, Any] = {}
+        if target_date is not None:
+            params["date"] = _fmt_date(target_date)
+        if code is not None:
+            params["code"] = code
+        if from_date is not None:
+            params["from"] = _fmt_date(from_date)
+        if to_date is not None:
+            params["to"] = _fmt_date(to_date)
+        if self.api_version == JQuantsApiVersion.V1:
+            return await self._paginate("/fins/statements", params, key="statements")
+        return await self._paginate("/fins/summary", params, key="data")
+
+    async def financial_summaries_by_date(self, target_date: date) -> list[dict[str, Any]]:
+        return await self.financial_summaries(target_date=target_date)
+
+    async def financial_summaries_by_code(
+        self,
+        code: str,
+        *,
+        from_date: date | None = None,
+        to_date: date | None = None,
+    ) -> list[dict[str, Any]]:
+        return await self.financial_summaries(code=code, from_date=from_date, to_date=to_date)

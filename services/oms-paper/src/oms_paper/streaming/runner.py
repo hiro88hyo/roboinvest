@@ -45,7 +45,7 @@ from ..day_monitor import evaluate_day_exit
 from ..fill_simulator import simulate_fill
 from ..models import PaperPosition
 from ..position_updater import apply_fill, build_fill_record
-from ..swing_monitor import evaluate_swing_exit
+from ..swing_monitor import evaluate_swing_exit, find_max_hold_due_swing_positions
 
 logger = logging.getLogger(__name__)
 JST = ZoneInfo("Asia/Tokyo")
@@ -81,6 +81,15 @@ class CloseoutStats:
     triggered: bool
     skipped_reason: str | None
     positions_seen: int
+    closed: int
+    no_fills: int
+    write_errors: int
+
+
+@dataclass(frozen=True, slots=True)
+class OpeningSwingExitStats:
+    positions_seen: int
+    due_positions: int
     closed: int
     no_fills: int
     write_errors: int
@@ -221,6 +230,11 @@ class StreamRunner:
         self._record_summary(stats)
         return stats
 
+    async def warm_book_cache(self) -> tuple[int, int, int, set[str]]:
+        """Pull raw-market-data only and update the local book cache."""
+
+        return await self._pull_and_consume_books()
+
     async def _pull_and_consume_books(self) -> tuple[int, int, int, set[str]]:
         """Drain raw book batches before order processing so cache freshness catches up."""
         max_batches = max(1, self.settings.raw_book_drain_max_batches)
@@ -351,6 +365,67 @@ class StreamRunner:
             triggered=True,
             skipped_reason=None,
             positions_seen=len(positions),
+            closed=closed,
+            no_fills=no_fills,
+            write_errors=write_errors,
+        )
+
+    async def run_opening_swing_max_hold_exits(self) -> OpeningSwingExitStats:
+        """Paper-only opening batch for fixed-hold swing exits.
+
+        This method is intentionally not wired to the CLI/scheduler yet. It is
+        the explicit operational gate for the backtest assumption that
+        max-hold swing exits can be written before same-day BUY entries.
+        """
+
+        try:
+            positions = await self.supabase.list_paper_positions()
+        except SupabaseError:
+            logger.exception("opening swing max-hold exit: list positions failed")
+            return OpeningSwingExitStats(
+                positions_seen=0,
+                due_positions=0,
+                closed=0,
+                no_fills=0,
+                write_errors=1,
+            )
+
+        now = self.wall_clock()
+        due_positions = find_max_hold_due_swing_positions(positions=positions, now=now)
+        closed = 0
+        no_fills = 0
+        write_errors = 0
+        for position in due_positions:
+            book = self.book_cache.get(position.symbol)
+            if book is None or not book.bids:
+                logger.warning(
+                    "opening swing max-hold exit no_fill: no bids symbol=%s",
+                    position.symbol,
+                )
+                no_fills += 1
+                continue
+            try:
+                outcome = await self._run_swing_exit(
+                    position=position,
+                    book=book,
+                    reason="opening_max_hold_days",
+                    now=now,
+                )
+            except SupabaseError:
+                logger.exception(
+                    "opening swing max-hold exit write failed: symbol=%s",
+                    position.symbol,
+                )
+                write_errors += 1
+                continue
+            if outcome == "exit":
+                closed += 1
+            else:
+                no_fills += 1
+
+        return OpeningSwingExitStats(
+            positions_seen=len(positions),
+            due_positions=len(due_positions),
             closed=closed,
             no_fills=no_fills,
             write_errors=write_errors,
@@ -655,8 +730,25 @@ class StreamRunner:
             return "no_fill"
 
         await self.supabase.insert_trade_paper(record)
+        logger.info(
+            "opening swing exit sequence: sell fill written symbol=%s qty=%d price=%s reason=%s",
+            record.symbol,
+            record.quantity,
+            record.price,
+            reason,
+            extra=event_extra(
+                "opening_swing_exit_sequence",
+                stage="sell_fill",
+                symbol=record.symbol,
+                quantity=record.quantity,
+                price=str(record.price),
+                reason=reason,
+                executed_at=record.executed_at.isoformat(),
+            ),
+        )
         if update.delete:
             await self.supabase.delete_paper_position(symbol=position.symbol)
+            sequence_stage = "position_delete"
         elif update.position is not None:
             # 部分約定 (paper では稀): 残量を PATCH
             await self.supabase.update_paper_position_quantity(
@@ -664,6 +756,23 @@ class StreamRunner:
                 quantity=update.position.quantity,
                 entry_price=str(update.position.entry_price),
             )
+            sequence_stage = "position_update"
+        else:
+            sequence_stage = "position_unchanged"
+        logger.info(
+            "opening swing exit sequence: position write committed symbol=%s stage=%s reason=%s",
+            position.symbol,
+            sequence_stage,
+            reason,
+            extra=event_extra(
+                "opening_swing_exit_sequence",
+                stage=sequence_stage,
+                symbol=position.symbol,
+                reason=reason,
+                remaining_quantity=None if update.position is None else update.position.quantity,
+                executed_at=now.isoformat(),
+            ),
+        )
         self._sync_position_caches(
             symbol=position.symbol,
             position=update.position,
@@ -959,6 +1068,7 @@ class StreamRunner:
             stop_loss_price=order.stop_loss_price,
             target_price=order.target_price,
             max_hold_days=order.max_hold_days,
+            scheduled_exit_date=order.scheduled_exit_date,
             trailing_stop_pct=order.trailing_stop_pct,
             executed_at=order.created_at,
         )

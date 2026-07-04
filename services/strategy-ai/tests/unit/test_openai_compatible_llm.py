@@ -1,0 +1,131 @@
+from __future__ import annotations
+
+import json
+
+import httpx
+import pytest
+from strategy_ai.llm.base import LLMError
+from strategy_ai.llm.openai_compatible import OpenAICompatibleClient
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_uses_mock_transport_without_network() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": '{"ok": true}'}}]},
+        )
+
+    transport = httpx.MockTransport(handler)
+    client = OpenAICompatibleClient(
+        base_url="https://local.test",
+        api_key="secret",
+        model="local-model",
+        seed=123,
+        max_output_tokens=256,
+        client_factory=lambda: httpx.AsyncClient(
+            base_url="https://local.test",
+            transport=transport,
+        ),
+    )
+
+    assert await client.complete("prompt") == '{"ok": true}'
+    assert requests[0].url.path == "/chat/completions"
+    assert requests[0].headers["authorization"] == "Bearer secret"
+    payload = json.loads(requests[0].content)
+    assert payload["seed"] == 123
+    assert payload["max_tokens"] == 256
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_retries_transient_status() -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(500, json={"error": "temporary"})
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": '{"ok": true}'}}]},
+        )
+
+    transport = httpx.MockTransport(handler)
+    client = OpenAICompatibleClient(
+        base_url="https://local.test",
+        api_key="",
+        model="local-model",
+        max_retries=1,
+        client_factory=lambda: httpx.AsyncClient(
+            base_url="https://local.test",
+            transport=transport,
+        ),
+    )
+
+    assert await client.complete("prompt") == '{"ok": true}'
+    assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_invalid_response_fails_closed() -> None:
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json={"choices": []}))
+    client = OpenAICompatibleClient(
+        base_url="https://local.test",
+        api_key="",
+        model="local-model",
+        client_factory=lambda: httpx.AsyncClient(
+            base_url="https://local.test",
+            transport=transport,
+        ),
+    )
+
+    with pytest.raises(LLMError):
+        await client.complete("prompt")
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_preflight_checks_models() -> None:
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            200,
+            json={"data": [{"id": "local-model"}, {"id": "other-model"}]},
+        )
+    )
+    client = OpenAICompatibleClient(
+        base_url="https://local.test",
+        api_key="",
+        model="local-model",
+        client_factory=lambda: httpx.AsyncClient(
+            base_url="https://local.test",
+            transport=transport,
+        ),
+    )
+
+    result = await client.preflight()
+
+    assert result["ok"] is True
+    assert result["model_count"] == 2
+    assert result["model_listed"] is True
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_preflight_rejects_unlisted_model() -> None:
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(200, json={"data": [{"id": "other-model"}]})
+    )
+    client = OpenAICompatibleClient(
+        base_url="https://local.test",
+        api_key="",
+        model="local-model",
+        client_factory=lambda: httpx.AsyncClient(
+            base_url="https://local.test",
+            transport=transport,
+        ),
+    )
+
+    with pytest.raises(LLMError, match="model not listed"):
+        await client.preflight()
