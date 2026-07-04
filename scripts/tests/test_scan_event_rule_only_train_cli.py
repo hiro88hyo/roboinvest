@@ -144,7 +144,14 @@ def test_rule_only_train_scan_reports_train_rules(
         and row["exit_arm"] == "fixed_20d"
     )
     assert cluster_fixed20["trade_count"] == 1
-    assert "validation" not in output_csv.read_text(encoding="utf-8")
+    assert cluster_fixed20["inspected_family"] == "cluster_v1"
+    assert cluster_fixed20["inspected_family_status"] == "locked_oos_inspected"
+    assert cluster_fixed20["portfolio_1000000_opened"] == 1
+    assert cluster_fixed20["portfolio_1000000_net_pnl"] is not None
+    csv_text = output_csv.read_text(encoding="utf-8")
+    assert "portfolio_1000000_net_pnl" in csv_text
+    assert "inspected_family_status" in csv_text
+    assert "validation" not in csv_text
 
 
 def test_raw_observation_split_purges_train_boundary_overlap(tmp_path: Path) -> None:

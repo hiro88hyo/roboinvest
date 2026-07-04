@@ -980,8 +980,18 @@ uv run python scripts/scan-event-rule-only-train.py \
   --observations out/event-research-real-pit/observations.jsonl \
   --output-json out/event-research-rule-only-train-scan/rule-only-train-scan.json \
   --output-csv out/event-research-rule-only-train-scan/rule-only-train-scan.csv \
+  --ohlcv data/reference/daily_ohlcv_20210625_20260624_bydate.csv \
   --min-trades 30
 ```
+
+The scanner also reports train-only portfolio metrics for 1M/2M/5M capital
+using the existing `simulate-event-portfolio.py` logic. Pass
+`--portfolio-capital` one or more times to narrow the capital set when runtime
+matters. When `--ohlcv` is supplied, each row includes train-only portfolio
+`same_symbol_random_date` percentiles with the existing 300-seed default.
+Families already viewed in validation or locked OOS are marked from
+[ADR-0005](../adr/0005-locked-oos-inspection-freeze.md) so they are not
+accidentally re-registered as fresh hypotheses.
 
 The first real-data run used 55,555 train observations, 53,257 train clusters,
 and 2,178 multi-event train clusters. This is not a validation result and does
