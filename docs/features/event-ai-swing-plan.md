@@ -1059,3 +1059,12 @@ It does not synthesize unavailable TOPIX or sector time series.
 
 No event strategy is connected to `strategy-signals-b`, Gateway, OMS Paper, or
 OMS Live. This is a research-only pipeline.
+
+## Locked OOS Freeze
+
+[ADR-0005](../adr/0005-locked-oos-inspection-freeze.md) records the locked OOS
+inspection history for forecast revision, dividend revision, earnings deep
+value, cluster v0, and cluster v1 candidates. The current locked OOS window is
+frozen for this research cycle. Future promotion evidence must come from new
+forward data and paper observation, unless the user explicitly approves a named
+locked OOS inspection before it is run.
