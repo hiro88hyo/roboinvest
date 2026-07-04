@@ -18,14 +18,44 @@ This is not a live procedure and does not change the live gate.
 
 ## Dry Run
 
+First append the latest J-Quants data to the local research archives. Keep
+`SIGNAL_DATE` on the latest available TSE business day, not on a weekend or
+holiday.
+
 ```bash
 cd /home/hiroyuki/workspaces/roboinvest
+SIGNAL_DATE=YYYY-MM-DD
+set -a && . infra/.op.service-account.env && set +a
+op run --env-file infra/env.production -- \
+  uv run python scripts/export-jquants-financial-summaries-jsonl.py \
+    --start-date YYYY-MM-DD \
+    --end-date "$SIGNAL_DATE" \
+    --output out/event-research/financial-summaries-20210628-20260624-clean.jsonl \
+    --resume \
+    --log-every-dates 1 \
+    --concurrency 1 \
+    --sleep-seconds 0.2
+op run --env-file infra/env.production -- \
+  uv run python scripts/export-jquants-daily-ohlcv-csv.py \
+    --start-date YYYY-MM-DD \
+    --end-date "$SIGNAL_DATE" \
+    --output data/reference/daily_ohlcv_20210625_20260624_bydate.csv \
+    --resume \
+    --concurrency 1 \
+    --sleep-seconds 0.2
+```
+
+Then run detection without publish flags:
+
+```bash
+cd /home/hiroyuki/workspaces/roboinvest
+SIGNAL_DATE=YYYY-MM-DD
 uv run python scripts/detect-event-cluster-paper-candidates.py \
-  --financial-summary-jsonl out/event-research-real-pit/financial-summaries.jsonl \
+  --financial-summary-jsonl out/event-research/financial-summaries-20210628-20260624-clean.jsonl \
   --ohlcv data/reference/daily_ohlcv_20210625_20260624_bydate.csv \
-  --output-json out/event-paper-observation/candidates.json \
-  --output-csv out/event-paper-observation/candidates.csv \
-  --signal-date YYYY-MM-DD
+  --output-json "out/event-paper-observation/candidates-${SIGNAL_DATE}.json" \
+  --output-csv "out/event-paper-observation/candidates-${SIGNAL_DATE}.csv" \
+  --signal-date "$SIGNAL_DATE"
 ```
 
 Confirm `publish_enabled=false` and inspect candidates/exclusions before any
@@ -59,7 +89,7 @@ set -a && . infra/.op.service-account.env && set +a
 op run --env-file infra/env.production -- \
   env EVENT_CLUSTER_PAPER_PUBLISH_ENABLED=true \
   uv run python scripts/detect-event-cluster-paper-candidates.py \
-    --financial-summary-jsonl out/event-research-real-pit/financial-summaries.jsonl \
+    --financial-summary-jsonl out/event-research/financial-summaries-20210628-20260624-clean.jsonl \
     --ohlcv data/reference/daily_ohlcv_20210625_20260624_bydate.csv \
     --output-json out/event-paper-observation/published-candidates.json \
     --output-csv out/event-paper-observation/published-candidates.csv \

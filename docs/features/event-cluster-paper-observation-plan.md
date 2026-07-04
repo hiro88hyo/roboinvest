@@ -292,7 +292,7 @@ Dry-run command:
 
 ```bash
 uv run python scripts/detect-event-cluster-paper-candidates.py \
-  --financial-summary-jsonl out/event-research-real-pit/financial-summaries.jsonl \
+  --financial-summary-jsonl out/event-research/financial-summaries-20210628-20260624-clean.jsonl \
   --ohlcv data/reference/daily_ohlcv_20210625_20260624_bydate.csv \
   --output-json out/event-paper-observation/candidates.json \
   --output-csv out/event-paper-observation/candidates.csv \
