@@ -35,7 +35,14 @@ def _load_module():
 report_event_ai_train_labels = _load_module()
 
 
-def _observation(idx: int) -> ObservationRecord:
+def _observation(
+    idx: int,
+    *,
+    forward_return_2d: float = 0.01,
+    forward_return_5d: float = 0.02,
+    forward_return_10d: float = 0.03,
+    forward_return_20d: float = 0.04,
+) -> ObservationRecord:
     at = datetime(2026, 1, 1, 15, 30, tzinfo=UTC) + timedelta(days=idx)
     return ObservationRecord(
         observation_id=f"obs-{idx}",
@@ -62,12 +69,12 @@ def _observation(idx: int) -> ObservationRecord:
             market_regime=FeatureValue(value="broad_uptrend", valid=True),
         ),
         labels={
-            "forward_return_2d": 0.01,
-            "forward_return_5d": 0.02,
-            "forward_return_10d": 0.03,
-            "forward_return_20d": 0.04,
-            "catastrophic_stop_return_10d": 0.03,
-            "catastrophic_stop_return_20d": 0.04,
+            "forward_return_2d": forward_return_2d,
+            "forward_return_5d": forward_return_5d,
+            "forward_return_10d": forward_return_10d,
+            "forward_return_20d": forward_return_20d,
+            "catastrophic_stop_return_10d": forward_return_10d,
+            "catastrophic_stop_return_20d": forward_return_20d,
         },
     )
 
@@ -190,6 +197,8 @@ def test_train_report_is_train_only_and_reports_ai_filter(
     }
     assert report["ai_selection"]["ai_pass"] == 1
     assert report["ai_selection"]["ai_reject"] == 1
+    assert report["train_minimum_effect_gate"]["status"] == "INSUFFICIENT_LABELS"
+    assert report["train_minimum_effect_gate"]["reason"] == "train_labels_not_100pct_complete"
 
     fixed_2d_rule_ai = next(
         row
@@ -199,7 +208,69 @@ def test_train_report_is_train_only_and_reports_ai_filter(
     )
     assert fixed_2d_rule_ai["trade_count"] == 1
     assert "labels_shuffled_within_event_type" in report["placebos"]
-    assert "fixed_20d" not in output_csv.read_text(encoding="utf-8")
+    csv_text = output_csv.read_text(encoding="utf-8")
+    assert "fixed_20d" not in csv_text
+    assert "train_minimum_effect_gate" in csv_text
+
+
+def test_train_minimum_effect_gate_passes_on_complete_train_labels(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observations_path = tmp_path / "observations.jsonl"
+    labels_path = tmp_path / "labels.jsonl"
+    jobs_path = tmp_path / "jobs.jsonl"
+    output_json = tmp_path / "train-report.json"
+    output_csv = tmp_path / "train-report.csv"
+    _write_jsonl(
+        observations_path,
+        [
+            _observation(0, forward_return_2d=0.03, forward_return_5d=0.03),
+            _observation(1, forward_return_2d=-0.005, forward_return_5d=-0.005),
+            _observation(2, forward_return_2d=-0.02, forward_return_5d=-0.02),
+            _observation(3, forward_return_2d=-0.03, forward_return_5d=-0.03),
+        ],
+    )
+    _write_jsonl(
+        labels_path,
+        [
+            _label(0, confidence=0.8),
+            _label(1, confidence=0.8),
+            _label(2, confidence=0.4),
+            _label(3, confidence=0.4),
+        ],
+    )
+    _write_jsonl(jobs_path, [_job(idx) for idx in range(4)])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "report-event-ai-train-labels.py",
+            "--observations",
+            str(observations_path),
+            "--labels",
+            str(labels_path),
+            "--jobs",
+            str(jobs_path),
+            "--output-json",
+            str(output_json),
+            "--output-csv",
+            str(output_csv),
+        ],
+    )
+
+    assert report_event_ai_train_labels.main() == 0
+
+    report = json.loads(output_json.read_text(encoding="utf-8"))
+    gate = report["train_minimum_effect_gate"]
+    assert gate["status"] == "PASS"
+    assert gate["candidate_exit"] == "fixed_2d"
+    fixed_2d = next(row for row in gate["exit_checks"] if row["exit_arm"] == "fixed_2d")
+    assert fixed_2d["pf_improvement_pass"] is True
+    assert fixed_2d["net_pnl_not_below_rule_pass"] is True
+    assert fixed_2d["ai_rejected_pf_below_1_pass"] is True
+    assert fixed_2d["ai_rejected_rule_pass"]["profit_factor"] == 0.0
+    assert "PASS" in output_csv.read_text(encoding="utf-8")
 
 
 def test_train_report_rejects_non_train_split(

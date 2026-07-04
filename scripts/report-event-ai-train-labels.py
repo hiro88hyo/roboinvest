@@ -26,6 +26,9 @@ from trade_contracts.event_research import (
 )
 
 FIXED_SHORT_EXITS = (ExitArm.FIXED_2D, ExitArm.FIXED_5D, ExitArm.FIXED_10D)
+TRAIN_MINIMUM_EFFECT_GATE_EXITS = (ExitArm.FIXED_2D, ExitArm.FIXED_5D)
+TRAIN_MINIMUM_EFFECT_GATE_RULE_ARM = EntryArm.EVENT_PLUS_FUNDAMENTAL_PLUS_TECHNICAL
+TRAIN_MINIMUM_EFFECT_GATE_AI_ARM = EntryArm.EVENT_PLUS_AI_PLUS_FUNDAMENTAL_PLUS_TECHNICAL
 REPORT_ARMS = (
     EntryArm.EVENT_ONLY,
     EntryArm.EVENT_PLUS_FUNDAMENTAL,
@@ -77,6 +80,11 @@ def main() -> int:
         shuffle_labels_within_event_type(labels, labeled_observations, seed=1),
         prefix="labels_shuffled_",
     )
+    gate = _train_minimum_effect_gate(
+        labeled_observations,
+        labels,
+        jobs=jobs if args.jobs else None,
+    )
     result = {
         "summary": {
             "split": args.split,
@@ -98,6 +106,7 @@ def main() -> int:
         "label_distribution": _label_distribution(labels.values()),
         "confidence_buckets": _confidence_bucket_distribution(labels.values()),
         "ai_selection": _ai_selection(labeled_observations, labels),
+        "train_minimum_effect_gate": gate,
         "rows": rows,
         "placebos": {
             "labels_shuffled_within_event_type": shuffled_rows,
@@ -108,12 +117,13 @@ def main() -> int:
         json.dumps(result, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
-    _write_csv(args.output_csv, rows, shuffled_rows)
+    _write_csv(args.output_csv, rows, shuffled_rows, gate)
     train_count = len(train_event_ids) if args.jobs else "unknown"
     print(
         "event_ai_train_report "
         f"train_observations={train_count} labels={len(labels)} "
-        f"matched={len(labeled_observations)} rows={len(rows)} output={args.output_json}"
+        f"matched={len(labeled_observations)} rows={len(rows)} "
+        f"train_minimum_effect_gate={gate['status']} output={args.output_json}"
     )
     return 0
 
@@ -240,6 +250,151 @@ def _ai_selection(
     }
 
 
+def _train_minimum_effect_gate(
+    observations: list[ObservationRecord],
+    labels: dict[str, EventAiLabel],
+    *,
+    jobs: dict[str, str] | None,
+) -> dict[str, Any]:
+    """Train-only pre-registered gate for continuing the AI arm.
+
+    The gate is intentionally unavailable for partial train labels. It compares
+    rule-only `fundamental_and_technical` with the second-stage AI filter on
+    the same train-only labeled cohort, and checks whether AI rejects genuinely
+    bad rule-pass trades.
+    """
+
+    if not jobs:
+        return {
+            "status": "INSUFFICIENT_LABELS",
+            "reason": "jobs_required_to_confirm_100pct_train_completion",
+            "required_completion_rate": 1.0,
+            "completion_rate": None,
+            "candidate_exit": None,
+            "exit_checks": [],
+        }
+
+    train_event_ids = set(jobs.values())
+    completed_event_ids = set(labels) & train_event_ids
+    matched_observation_event_ids = {obs.event_id for obs in observations}
+    completion_rate = None if not jobs else len(completed_event_ids) / len(jobs)
+    all_jobs_completed = all(event_id in labels for event_id in jobs.values())
+    all_completed_labels_matched = completed_event_ids <= matched_observation_event_ids
+    if not all_jobs_completed or not all_completed_labels_matched:
+        return {
+            "status": "INSUFFICIENT_LABELS",
+            "reason": "train_labels_not_100pct_complete",
+            "required_completion_rate": 1.0,
+            "completion_rate": completion_rate,
+            "train_jobs": len(jobs),
+            "completed_train_jobs": sum(1 for event_id in jobs.values() if event_id in labels),
+            "matched_labeled_observations": len(observations),
+            "candidate_exit": None,
+            "exit_checks": [],
+        }
+
+    rule_selected = _select_for_arm(observations, labels, TRAIN_MINIMUM_EFFECT_GATE_RULE_ARM)
+    ai_selected = _select_for_arm(observations, labels, TRAIN_MINIMUM_EFFECT_GATE_AI_ARM)
+    excluded = [
+        obs
+        for obs in rule_selected
+        if not ai_arm_allows(obs, labels.get(obs.event_id), EntryArm.EVENT_PLUS_AI)
+    ]
+
+    checks: list[dict[str, Any]] = []
+    passing_exits: list[dict[str, Any]] = []
+    for exit_arm in TRAIN_MINIMUM_EFFECT_GATE_EXITS:
+        rule_metrics = metrics_for_observations(
+            rule_selected,
+            exit_arm=exit_arm,
+            include_bootstrap_ci=False,
+        )
+        ai_metrics = metrics_for_observations(
+            ai_selected,
+            exit_arm=exit_arm,
+            include_bootstrap_ci=False,
+        )
+        excluded_metrics = metrics_for_observations(
+            excluded,
+            exit_arm=exit_arm,
+            include_bootstrap_ci=False,
+        )
+        pf_improvement = _float_diff(
+            ai_metrics.get("profit_factor"),
+            rule_metrics.get("profit_factor"),
+        )
+        net_not_below_rule = _net_not_below_rule(ai_metrics, rule_metrics)
+        excluded_pf_below_one = _pf_below_one(excluded_metrics.get("profit_factor"))
+        check = {
+            "exit_arm": exit_arm.value,
+            "rule_only": _gate_metric_summary(rule_metrics),
+            "rule_plus_ai": _gate_metric_summary(ai_metrics),
+            "ai_rejected_rule_pass": _gate_metric_summary(excluded_metrics),
+            "pf_improvement": pf_improvement,
+            "pf_improvement_required": 0.10,
+            "pf_improvement_pass": pf_improvement is not None and pf_improvement >= 0.10,
+            "net_pnl_not_below_rule_pass": net_not_below_rule,
+            "ai_rejected_pf_below_1_pass": excluded_pf_below_one,
+        }
+        check["pass"] = (
+            check["pf_improvement_pass"]
+            and check["net_pnl_not_below_rule_pass"]
+            and check["ai_rejected_pf_below_1_pass"]
+        )
+        checks.append(check)
+        if check["pass"]:
+            passing_exits.append(check)
+
+    if passing_exits:
+        candidate = passing_exits[0]
+        return {
+            "status": "PASS",
+            "reason": "fixed_2d_or_fixed_5d_meets_minimum_effect",
+            "required_completion_rate": 1.0,
+            "completion_rate": completion_rate,
+            "candidate_exit": candidate["exit_arm"],
+            "exit_checks": checks,
+        }
+
+    return {
+        "status": "FAIL",
+        "reason": "no_fixed_2d_or_fixed_5d_exit_meets_minimum_effect",
+        "required_completion_rate": 1.0,
+        "completion_rate": completion_rate,
+        "candidate_exit": None,
+        "exit_checks": checks,
+    }
+
+
+def _gate_metric_summary(metrics: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "trade_count": metrics.get("trade_count"),
+        "net_pnl": metrics.get("net_pnl"),
+        "profit_factor": metrics.get("profit_factor"),
+        "max_drawdown": metrics.get("max_drawdown"),
+    }
+
+
+def _float_diff(left: Any, right: Any) -> float | None:
+    if left is None or right is None:
+        return None
+    return float(left) - float(right)
+
+
+def _net_not_below_rule(ai_metrics: dict[str, Any], rule_metrics: dict[str, Any]) -> bool:
+    ai_net = ai_metrics.get("net_pnl")
+    rule_net = rule_metrics.get("net_pnl")
+    if ai_net is None or rule_net is None:
+        return False
+    return float(ai_net) >= float(rule_net)
+
+
+def _pf_below_one(value: Any) -> bool:
+    if value is None:
+        return False
+    return float(value) < 1.0
+
+
 def _evaluation_rows(
     observations: list[ObservationRecord],
     labels: dict[str, EventAiLabel],
@@ -283,6 +438,7 @@ def _write_csv(
     path: Path,
     rows: list[dict[str, Any]],
     shuffled_rows: list[dict[str, Any]],
+    gate: dict[str, Any],
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fields = (
@@ -297,12 +453,23 @@ def _write_csv(
         "average_return",
         "median_return",
         "hit_rate",
+        "train_minimum_effect_gate",
+        "train_minimum_effect_gate_exit",
+        "train_minimum_effect_gate_reason",
     )
+    annotated_rows = [
+        {
+            **row,
+            "train_minimum_effect_gate": gate.get("status"),
+            "train_minimum_effect_gate_exit": gate.get("candidate_exit"),
+            "train_minimum_effect_gate_reason": gate.get("reason"),
+        }
+        for row in [*rows, *shuffled_rows]
+    ]
     with path.open("w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
         writer.writeheader()
-        writer.writerows(rows)
-        writer.writerows(shuffled_rows)
+        writer.writerows(annotated_rows)
 
 
 if __name__ == "__main__":

@@ -504,6 +504,34 @@ label distribution, parse failure rate, confidence buckets, `ai_pass` versus
 `ai_reject`, rule-only versus rule-only+AI, and fixed 2d/5d/10d exits. It must
 not be used as a validation or locked-OOS decision report.
 
+### Train Minimum Effect Gate
+
+The earnings AI arm has a train-only minimum effect gate. It is evaluated only
+when all earnings train jobs have successful labels. If train labeling is not
+100% complete, `scripts/report-event-ai-train-labels.py` must report
+`train_minimum_effect_gate.status = INSUFFICIENT_LABELS`.
+
+Target comparison:
+
+- AI arm: `ai_fundamental_and_technical`, implemented as
+  `event_plus_ai_plus_fundamental_plus_technical`
+- Rule-only arm: `fundamental_and_technical`, implemented as
+  `event_plus_fundamental_plus_technical`
+- Split: train only
+- Exit choices for the gate: `fixed_2d` or `fixed_5d`
+
+Continuation requires all of the following on the same exit arm:
+
+- PF improvement `AI - rule-only >= +0.10`
+- net PnL is not below the rule-only arm
+- excluded trades (`rule pass` and `AI reject`) have PF `< 1.0`
+
+If no `fixed_2d` or `fixed_5d` exit satisfies all three conditions after train
+labels are complete, freeze the AI arm and write a freeze report under
+`docs/reports/` without viewing validation or locked OOS. This gate is a
+train-only sunk-cost guard; it does not promote any strategy to validation,
+paper, or live by itself.
+
 Check train label completion after each chunk:
 
 ```bash
