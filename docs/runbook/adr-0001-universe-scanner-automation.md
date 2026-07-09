@@ -24,7 +24,9 @@ LAN host の production compose 構成で `universe-scanner` を日次実行す�
 役割:
 
 - `infra/.op.service-account.env` の自動読込
-- `infra/env.production` と `infra/secrets/gcp-pubsub-sa.json` の存在確認
+- `infra/env.production` と
+  `${GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH:-/dev/shm/roboinvest/gcp-pubsub-sa.json}`
+  の存在確認
 - `docker compose ... --profile batch config` の事前検証
 - batch 実行後に当日 `watchlist` から `infra/env.production` の `OMS_LIVE_ALLOWED_SYMBOLS` を同期
 - `oms-live` が稼働中なら、同期後に `oms-live` だけ再作成して env を反映
@@ -36,6 +38,15 @@ LAN host の production compose 構成で `universe-scanner` を日次実行す�
 ```bash
 cd /home/hiroyuki/workspaces/roboinvest
 bash scripts/run-production-universe-scanner.sh
+```
+
+`/dev/shm/roboinvest/gcp-pubsub-sa.json` が実ファイルとして使えない host では、
+代替 credential を `GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH` で指定して実行する。
+ラッパーは Docker Compose 呼び出し時にその値を明示的に渡す。
+
+```bash
+GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH=/tmp/roboinvest-gcp-pubsub-sa.json \
+  bash scripts/run-production-universe-scanner.sh
 ```
 
 特定日の再実行:

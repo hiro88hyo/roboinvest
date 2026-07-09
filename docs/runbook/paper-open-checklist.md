@@ -14,13 +14,30 @@ production compose / Cloud Supabase / managed Pub/Sub を前提に、寄り付�
 - `infra/env.production` が J-Quants API v2 / Supabase / kabu / GCP secrets を参照していること
 - GCP Pub/Sub service account JSON は通常 tmpfs の
   `/dev/shm/roboinvest/gcp-pubsub-sa.json` を使う。host 側から読めない場合、
-  `production-preopen-check.py` は 1Password から一時 credential を作って自己修復する
+  `production-preopen-check.py` は 1Password から一時 credential を作って自己修復する。
+  compose / Universe Scanner のように bind mount が必要なコマンドでは、
+  読める実ファイルを `GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH` で明示する
 
 確認:
 
 ```bash
 set -a && . infra/.op.service-account.env && set +a
 op run --env-file infra/env.production -- docker compose --env-file infra/env.production -f infra/docker-compose.prod.yml config >/dev/null
+```
+
+`/dev/shm/roboinvest/gcp-pubsub-sa.json` が root-owned directory などで
+実ファイルとして使えない場合は、代替 credential を materialize して使う。
+`op run --env-file infra/env.production` は env file の値で shell 側の
+`GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH` を上書きするため、compose コマンドでは
+`op run ... -- env GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH=... docker compose ...`
+の形で渡す。
+
+```bash
+op read --out-file /tmp/roboinvest-gcp-pubsub-sa.json --force \
+  op://roboinvest/production/GOOGLE_APPLICATION_CREDENTIALS_JSON
+chmod 600 /tmp/roboinvest-gcp-pubsub-sa.json
+uv run python -m json.tool /tmp/roboinvest-gcp-pubsub-sa.json >/dev/null
+export GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH=/tmp/roboinvest-gcp-pubsub-sa.json
 ```
 
 ## 2. Run Universe Scanner
@@ -77,7 +94,19 @@ op run --env-file infra/env.production -- \
     --expected-trade-mode paper
 ```
 
-host 側の `/dev/shm/roboinvest/gcp-pubsub-sa.json` が root-owned などで読めない場合は、
+前日や休日に翌営業日分を準備する場合は、当日ではなく検証対象日を明示する。
+
+```bash
+op run --env-file infra/env.production -- \
+  uv run python scripts/production-preopen-check.py \
+    --timeout 30 \
+    --expected-trade-mode paper \
+    --target-date YYYY-MM-DD \
+    --kabu-offline
+```
+
+host 側の `/dev/shm/roboinvest/gcp-pubsub-sa.json` が root-owned、directory、
+または missing などで読めない場合は、
 スクリプトが 1Password の `production/GOOGLE_APPLICATION_CREDENTIALS_JSON` から
 一時 credential を作って Pub/Sub check を継続し、終了時に削除する。
 別の credential を使う特殊ケースだけ `--gcp-credentials <readable-host-path>` を追加する。
@@ -90,6 +119,14 @@ paper mode のまま compose services を起動する。
 ```bash
 set -a && . infra/.op.service-account.env && set +a
 op run --env-file infra/env.production --   docker compose -f infra/docker-compose.prod.yml up -d --build
+```
+
+代替 credential path を使う場合:
+
+```bash
+op run --env-file infra/env.production -- \
+  env GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH="$GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH" \
+    docker compose --env-file infra/env.production -f infra/docker-compose.prod.yml up -d --build
 ```
 
 確認:

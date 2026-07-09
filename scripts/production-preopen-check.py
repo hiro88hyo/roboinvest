@@ -17,6 +17,10 @@ Run this under resolved production env, for example:
 Use ``--kabu-offline`` outside market/pre-open hours when kabu station or the
 Windows proxy is intentionally stopped. In that mode feeder restart / kabu 502
 is reported as WARN instead of failing the whole check.
+
+Use ``--target-date YYYY-MM-DD`` when preparing a future trading day from the
+previous evening or a holiday. Date-scoped checks such as watchlist validation
+use the target date instead of today's JST date.
 """
 
 from __future__ import annotations
@@ -29,7 +33,7 @@ import sys
 import tempfile
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from datetime import time as datetime_time
 from decimal import Decimal
 from pathlib import Path
@@ -50,6 +54,8 @@ DEFAULT_HOST_GCP_CREDENTIALS = Path("/dev/shm/roboinvest/gcp-pubsub-sa.json")
 GCP_CREDENTIALS_OP_REF = "op://roboinvest/production/GOOGLE_APPLICATION_CREDENTIALS_JSON"
 SMOKE_TOPIC = "adr-0001-smoke-test"
 SMOKE_SUBSCRIPTION = "adr-0001-smoke-test-sub"
+EVENT_CLUSTER_CANDIDATE_ID = "event_cluster_earnings_dividend_value_guard_fixed20_stop_v1_research"
+EVENT_CLUSTER_MAX_HOLD_DAYS = 20
 
 SUPABASE_TABLES = (
     "system_status",
@@ -77,7 +83,7 @@ CORE_SERVICES = (
 
 EXPECTED_ENV = {
     "AI_MAX_OUTPUT_TOKENS": "2048",
-    "STRATEGIES_ENABLED": "",
+    "STRATEGIES_ENABLED": "relative_momentum",
     "LIVE_DAY_NEW_BUY_START_TIME": "09:15",
     "MAX_HOLD_MINUTES": "15",
     "MIN_CONFIDENCE_RULE_ONLY": "0.45",
@@ -160,6 +166,12 @@ def parse_args() -> argparse.Namespace:
         help="Host path to the GCP service account JSON for managed Pub/Sub checks.",
     )
     parser.add_argument("--timeout", type=float, default=30.0)
+    parser.add_argument(
+        "--target-date",
+        type=date.fromisoformat,
+        default=None,
+        help="JST trading date to validate for date-scoped checks such as watchlist.",
+    )
     parser.add_argument("--no-pubsub-smoke", action="store_true")
     parser.add_argument(
         "--expected-trade-mode",
@@ -188,6 +200,19 @@ def parse_args() -> argparse.Namespace:
             "Treat feeder/kabu connectivity failures as WARN because "
             "kabu station is intentionally stopped."
         ),
+    )
+    parser.add_argument(
+        "--swing-candidates-json",
+        type=Path,
+        help=(
+            "Validate an event-cluster paper candidate artifact so a swing "
+            "observation day cannot be treated as ready without checking it."
+        ),
+    )
+    parser.add_argument(
+        "--require-swing-candidates",
+        action="store_true",
+        help="Fail when --swing-candidates-json exists but contains zero candidates.",
     )
     parser.add_argument("--quiet", action="store_true")
     return parser.parse_args()
@@ -287,10 +312,12 @@ def _resolve_gcp_credentials(
 ) -> tuple[Path | None, Path | None]:
     credentials = args.gcp_credentials
     is_default = credentials == DEFAULT_HOST_GCP_CREDENTIALS
-    if credentials.exists() and os.access(credentials, os.R_OK):
+    if credentials.is_file() and os.access(credentials, os.R_OK):
         return credentials, None
 
-    if credentials.exists():
+    if credentials.exists() and not credentials.is_file():
+        reason = f"not a regular file: {credentials}"
+    elif credentials.exists():
         reason = f"not readable: {credentials}"
     else:
         reason = f"missing host file: {credentials}"
@@ -583,7 +610,8 @@ def check_supabase(reporter: Reporter, args: argparse.Namespace) -> None:
 def _check_watchlist_gate(
     reporter: Reporter, args: argparse.Namespace, client: httpx.Client
 ) -> None:
-    valid_date = datetime.now(ZoneInfo("Asia/Tokyo")).date()
+    valid_date = args.target_date or datetime.now(ZoneInfo("Asia/Tokyo")).date()
+    label = "watchlist target-date" if args.target_date is not None else "watchlist today"
     resp = client.get(
         "/rest/v1/watchlist",
         params={
@@ -593,18 +621,18 @@ def _check_watchlist_gate(
         },
     )
     if resp.status_code != 200:
-        reporter.emit("NG", "watchlist today", f"HTTP {resp.status_code} {resp.text[:120]}")
+        reporter.emit("NG", label, f"HTTP {resp.status_code} {resp.text[:120]}")
         return
 
     rows = resp.json()
     if not isinstance(rows, list):
-        reporter.emit("NG", "watchlist today", f"unexpected payload={type(rows).__name__}")
+        reporter.emit("NG", label, f"unexpected payload={type(rows).__name__}")
         return
     if not rows:
-        reporter.emit("NG", "watchlist today", f"empty valid_date={valid_date.isoformat()}")
+        reporter.emit("NG", label, f"empty valid_date={valid_date.isoformat()}")
         return
 
-    reporter.emit("OK", "watchlist today", f"{len(rows)} rows valid_date={valid_date.isoformat()}")
+    reporter.emit("OK", label, f"{len(rows)} rows valid_date={valid_date.isoformat()}")
 
     pass_symbols: list[str] = []
     fail_counts: dict[str, int] = {}
@@ -672,6 +700,106 @@ def _check_oms_live_allowed_symbols(
     if extra:
         detail_parts.append(f"extra={','.join(extra[:8])}")
     reporter.emit("NG", "oms-live allowed scanner gate", " ".join(detail_parts))
+
+
+def check_swing_paper_candidates(reporter: Reporter, args: argparse.Namespace) -> None:
+    path_arg = args.swing_candidates_json
+    if path_arg is None:
+        return
+
+    reporter.section("swing paper candidates")
+    path = path_arg if path_arg.is_absolute() else REPO_ROOT / path_arg
+    if not path.is_file():
+        reporter.emit("NG", "swing candidates json", f"missing {path}")
+        return
+
+    try:
+        payload = _load_json(path)
+    except (OSError, json.JSONDecodeError) as exc:
+        reporter.emit("NG", "swing candidates json", f"{type(exc).__name__}: {exc}")
+        return
+
+    if not isinstance(payload, dict):
+        reporter.emit("NG", "swing candidates json", f"payload={type(payload).__name__}")
+        return
+
+    candidate_id = str(payload.get("candidate_id", ""))
+    if candidate_id == EVENT_CLUSTER_CANDIDATE_ID:
+        reporter.emit("OK", "candidate_id", candidate_id)
+    else:
+        reporter.emit(
+            "NG",
+            "candidate_id",
+            f"actual={candidate_id or '<missing>'} expected={EVENT_CLUSTER_CANDIDATE_ID}",
+        )
+
+    mode = str(payload.get("mode", ""))
+    if mode in {"dry_run", "paper_publish"}:
+        reporter.emit("OK", "candidate mode", mode)
+    else:
+        reporter.emit("NG", "candidate mode", mode or "missing")
+
+    if payload.get("paper_live_enabled") is False:
+        reporter.emit("OK", "paper_live_enabled", "false")
+    else:
+        reporter.emit("NG", "paper_live_enabled", str(payload.get("paper_live_enabled")))
+
+    rule = payload.get("rule") if isinstance(payload.get("rule"), dict) else {}
+    rule_max_hold = rule.get("max_hold_days")
+    if rule_max_hold == EVENT_CLUSTER_MAX_HOLD_DAYS:
+        reporter.emit("OK", "rule max_hold_days", str(rule_max_hold))
+    else:
+        reporter.emit(
+            "NG",
+            "rule max_hold_days",
+            f"actual={rule_max_hold!r} expected={EVENT_CLUSTER_MAX_HOLD_DAYS}",
+        )
+
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    candidates = payload.get("candidates") if isinstance(payload.get("candidates"), list) else []
+    candidate_count = _coerce_int(summary.get("candidate_count"), default=len(candidates))
+    published_count = _coerce_int(summary.get("published_count"), default=0)
+    signal_date = payload.get("signal_date") or "<all>"
+    detail = (
+        f"signal_date={signal_date} candidates={candidate_count} "
+        f"published={published_count} path={path}"
+    )
+    if candidate_count > 0:
+        reporter.emit("OK", "swing candidate count", detail)
+    elif args.require_swing_candidates:
+        reporter.emit("NG", "swing candidate count", detail)
+    else:
+        reporter.emit("WARN", "swing candidate count", detail)
+
+    bad_candidates = [
+        str(item.get("symbol", "<missing>"))
+        for item in candidates
+        if isinstance(item, dict) and item.get("max_hold_days") != EVENT_CLUSTER_MAX_HOLD_DAYS
+    ]
+    if bad_candidates:
+        reporter.emit(
+            "NG",
+            "candidate max_hold_days",
+            f"bad={','.join(bad_candidates[:8])}",
+        )
+    elif candidates:
+        reporter.emit("OK", "candidate max_hold_days", str(EVENT_CLUSTER_MAX_HOLD_DAYS))
+
+    if mode == "paper_publish" and published_count != candidate_count:
+        reporter.emit(
+            "NG",
+            "published count",
+            f"published={published_count} candidates={candidate_count}",
+        )
+    elif mode == "paper_publish":
+        reporter.emit("OK", "published count", str(published_count))
+
+
+def _coerce_int(value: Any, *, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _scanner_gate_thresholds_from_env() -> ScannerGateThresholds:
@@ -863,6 +991,7 @@ def main() -> int:
     check_compose(reporter, args)
     check_container_env(reporter, args)
     check_supabase(reporter, args)
+    check_swing_paper_candidates(reporter, args)
     check_pubsub(reporter, args)
     check_feeder_logs(reporter, args)
     reporter.summary()

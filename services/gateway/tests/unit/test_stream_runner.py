@@ -1048,7 +1048,7 @@ async def test_paper_swing_buy_rebudgets_after_opening_exit_removed_positions(
     sequence_stages = [
         getattr(record, "stage", None)
         for record in caplog.records
-        if getattr(record, "event", None) == "opening_swing_exit_sequence"
+        if getattr(record, "event", None) == "paper_buy_order_sequence"
     ]
     assert sequence_stages == ["capital_in_use_recalculated", "buy_order_published"]
 

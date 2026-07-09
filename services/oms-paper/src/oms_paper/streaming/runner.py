@@ -1074,13 +1074,13 @@ class StreamRunner:
         )
         if update.error is not None:
             logger.warning(
-                "order apply_fill error: symbol=%s error=%s signal_id=%s",
+                "order position update skipped: symbol=%s reason=%s signal_id=%s",
                 order.symbol,
                 update.error,
                 order.unified_signal_id,
                 extra=event_extra(
                     "paper_order_no_fill",
-                    reason="apply_fill_error",
+                    reason=update.error,
                     symbol=order.symbol,
                     side=order.side.value,
                     quantity=order.quantity,

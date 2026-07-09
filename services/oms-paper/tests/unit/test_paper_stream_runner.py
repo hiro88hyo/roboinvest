@@ -655,6 +655,33 @@ async def test_oversell_is_no_fill_and_acked_without_writes() -> None:
     assert all(r.method == "GET" for r in supabase.requests)
 
 
+async def test_sell_without_position_logs_specific_no_fill_reason(caplog: Any) -> None:
+    caplog.set_level(logging.WARNING)
+    book = make_order_book(symbol="7203", bids=(("1100", 500),))
+    order = make_order_request(symbol="7203", side=Side.SELL, quantity=100)
+    pubsub = _PubSubRouter(
+        order_batches=[_pull_response([("ord-1", order.model_dump_json().encode("utf-8"))])],
+        book_batches=[_pull_response([("bk-1", book.model_dump_json().encode("utf-8"))])],
+    )
+    supabase = _SupabaseRouter(
+        paper_position_rows=[[]],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+
+    assert stats.no_fills == 1
+    assert all(r.method == "GET" for r in supabase.requests)
+    no_fill_reasons = [
+        getattr(record, "reason", None)
+        for record in caplog.records
+        if getattr(record, "event", None) == "paper_order_no_fill"
+    ]
+    assert no_fill_reasons == ["no_position_for_sell"]
+
+
 async def test_book_with_no_liquidity_is_no_fill() -> None:
     # asks empty
     book = make_order_book(symbol="7203", asks=())

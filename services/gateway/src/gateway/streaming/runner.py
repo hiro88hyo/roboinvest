@@ -427,12 +427,12 @@ class StreamRunner:
         )
         if order.trade_mode is TradeMode.PAPER and order.side.value == "BUY":
             logger.info(
-                "opening swing exit sequence: buy order published symbol=%s qty=%d signal_id=%s",
+                "paper buy order sequence: buy order published symbol=%s qty=%d signal_id=%s",
                 order.symbol,
                 order.quantity,
                 signal.signal_id,
                 extra=event_extra(
-                    "opening_swing_exit_sequence",
+                    "paper_buy_order_sequence",
                     stage="buy_order_published",
                     trade_mode=order.trade_mode.value,
                     symbol=order.symbol,
@@ -565,7 +565,7 @@ class StreamRunner:
             capital,
             remaining_capital,
             extra=event_extra(
-                "opening_swing_exit_sequence",
+                "paper_buy_order_sequence",
                 stage="capital_in_use_recalculated",
                 symbol=signal.symbol,
                 signal_id=str(signal.signal_id),

@@ -1,6 +1,6 @@
 # Handoff Memo (for coding AIs)
 
-最終更新: 2026-06-24 / branch: `main`
+最終更新: 2026-07-08 / branch: `main`
 
 このファイルは、次の coding AI が最初に読むための短い索引です。日次の長い運用ログはここに積まず、必要な詳細だけリンク先で確認してください。
 
@@ -19,9 +19,24 @@
 
 ## 2. Current State
 
-2026-06-23 時点の要点:
+2026-07-05 時点の要点:
 
 - 全 9 サービス + Dashboard は実装済み。
+- 2026-07-09 JST の最優先目的は swing paper observation。
+  手順と合格条件は [2026-07-09 Swing Paper Plan](handoff/2026-07-09-swing-paper-plan.md)。
+  day `relative_momentum` の損益を swing 検証の代替にしない。
+- 2026-07-08 は `STRATEGIES_ENABLED` no-op のまま paper 観測を始めたため、
+  スイング検証日としては失敗。`STRATEGIES_ENABLED=relative_momentum` に戻し、
+  `production-preopen-check.py` は no-op を NG とする。
+- 2026-07-06 JST paper observation の前日準備は完了。
+  `production-preopen-check.py --expected-trade-mode paper --target-date 2026-07-06 --kabu-offline`
+  で `OK 127 / WARN 2 / NG 0`。WARN は kabu station / Windows proxy 停止前提の
+  feeder/kabu だけ。明朝は kabu station 起動後に `--kabu-offline` なし、
+  可能なら `--refresh-kabu-token` 付きで再確認する。
+- `/dev/shm/roboinvest/gcp-pubsub-sa.json` が root-owned directory だったため、
+  現在の compose は `/tmp/roboinvest-gcp-pubsub-sa.json` を
+  `GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH` として mount している。
+  詳細は [2026-07-05 Paper Ready Handoff](handoff/2026-07-05-paper-ready.md)。
 - production compose / Cloud Supabase / managed Pub/Sub / Vercel Dashboard は一通り稼働済み。
 - 2026-06-23 の paper 結果と直近日次成績を受け、既存 intraday
   RULE/AI judge stack は live 候補から降格。小手先の gate 追加ではなく
@@ -49,6 +64,7 @@
 - [docs/handoff/2026-06-17-paper-hardening-handoff.md](handoff/2026-06-17-paper-hardening-handoff.md)
 - [docs/handoff/2026-06-23-strategy-reset.md](handoff/2026-06-23-strategy-reset.md)
 - [docs/handoff/2026-06-24-relative-momentum-failure.md](handoff/2026-06-24-relative-momentum-failure.md)
+- [docs/handoff/2026-07-05-paper-ready.md](handoff/2026-07-05-paper-ready.md)
 - [docs/adr/0003-strategy-layer-rebuild.md](adr/0003-strategy-layer-rebuild.md)
 
 5月成績レビュー:
@@ -102,8 +118,10 @@
      strict `300 bps` は 6/24 feature 診断で candidates `5`、avg 30m return
      `-95.399 bps`、positive 30m `0.0%`。実注文 replay も net
      `-5,713.332`、PF `0`、gate `FAIL`。
-   - production は `STRATEGIES_ENABLED=` に変更し、`strategy-rule` は no-op
-     stream として稼働中。preopen check は `OK 130 / WARN 0 / NG 0 / SKIP 0`。
+   - 2026-07-08 に `STRATEGIES_ENABLED=` の no-op のまま paper observation を走らせ、
+     シグナル検証にならない運用ミスを確認。paper 検証日は
+     `STRATEGIES_ENABLED=relative_momentum` を前提にし、preopen check も no-op を
+     NG として扱う。
    - 2026-06-24 に `vwap_reclaim` と `oversold_reclaim` を一時的な
      non-default plugin として検証。`oversold_reclaim` は feature-level
      forward return は momentum 系より良いが、OMS Paper + コスト後は不合格。

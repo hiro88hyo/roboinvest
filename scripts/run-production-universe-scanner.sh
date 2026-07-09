@@ -81,12 +81,18 @@ sync_oms_live_allowed_symbols() {
 
   echo "[post] validate production compose config after OMS live sync..."
   op run --env-file infra/env.production -- \
-    docker compose -f infra/docker-compose.prod.yml --profile batch config >/dev/null
+    env GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH="$GCP_CREDENTIALS_HOST_PATH" \
+      docker compose -f infra/docker-compose.prod.yml --profile batch config >/dev/null
 
-  if [ -n "$(op run --env-file infra/env.production -- docker compose -f infra/docker-compose.prod.yml ps --status running -q oms-live)" ]; then
+  if [ -n "$(
+    op run --env-file infra/env.production -- \
+      env GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH="$GCP_CREDENTIALS_HOST_PATH" \
+        docker compose -f infra/docker-compose.prod.yml ps --status running -q oms-live
+  )" ]; then
     echo "[post] recreate running oms-live to apply OMS_LIVE_ALLOWED_SYMBOLS..."
     op run --env-file infra/env.production -- \
-      docker compose -f infra/docker-compose.prod.yml up -d --no-deps oms-live
+      env GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH="$GCP_CREDENTIALS_HOST_PATH" \
+        docker compose -f infra/docker-compose.prod.yml up -d --no-deps oms-live
   else
     echo "[post] skip oms-live recreate: service is not running"
   fi
@@ -113,8 +119,11 @@ if [ ! -f infra/env.production ]; then
   exit 1
 fi
 
-if [ ! -f /dev/shm/roboinvest/gcp-pubsub-sa.json ]; then
-  echo "missing /dev/shm/roboinvest/gcp-pubsub-sa.json" >&2
+GCP_CREDENTIALS_HOST_PATH="${GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH:-/dev/shm/roboinvest/gcp-pubsub-sa.json}"
+export GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH="$GCP_CREDENTIALS_HOST_PATH"
+
+if [ ! -f "$GCP_CREDENTIALS_HOST_PATH" ]; then
+  echo "missing $GCP_CREDENTIALS_HOST_PATH" >&2
   exit 1
 fi
 
@@ -125,7 +134,8 @@ echo "=== ${STARTED_AT} run-production-universe-scanner ==="
 
 echo "[1/4] validate production compose config..."
 op run --env-file infra/env.production -- \
-  docker compose -f infra/docker-compose.prod.yml --profile batch config >/dev/null
+  env GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH="$GCP_CREDENTIALS_HOST_PATH" \
+    docker compose -f infra/docker-compose.prod.yml --profile batch config >/dev/null
 
 echo "[2/4] validate production supabase connectivity..."
 op run --env-file infra/env.production -- \
@@ -134,7 +144,8 @@ op run --env-file infra/env.production -- \
 if [ "$RUN_BUILD" -eq 1 ]; then
   echo "[3/4] build universe-scanner image..."
   op run --env-file infra/env.production -- \
-    docker compose -f infra/docker-compose.prod.yml --profile batch build universe-scanner
+    env GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH="$GCP_CREDENTIALS_HOST_PATH" \
+      docker compose -f infra/docker-compose.prod.yml --profile batch build universe-scanner
 else
   echo "[3/4] skip image build (--build not set)..."
 fi
@@ -142,6 +153,7 @@ fi
 echo "[4/4] run universe-scanner batch..."
 run_args=(
   op run --env-file infra/env.production --
+  env "GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH=$GCP_CREDENTIALS_HOST_PATH"
   docker compose -f infra/docker-compose.prod.yml --profile batch run --rm universe-scanner
 )
 if [ -n "$TARGET_DATE" ]; then
