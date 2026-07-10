@@ -20,7 +20,7 @@ from oms_paper.clients.pubsub import PubSubSubscriber
 from oms_paper.clients.supabase import SupabaseClient
 from oms_paper.config import OmsPaperSettings
 from oms_paper.streaming.runner import StreamRunner
-from trade_contracts.enums import Side, TradingStyle
+from trade_contracts.enums import RoutingIntent, Side, TradeMode, TradingStyle
 
 Handler = Callable[[httpx.Request], Coroutine[None, None, httpx.Response]]
 
@@ -363,6 +363,42 @@ async def test_day_stop_loss_breach_triggers_exit() -> None:
     assert len(deletes) == 1
 
 
+async def test_day_stop_monitor_rejects_stale_received_book() -> None:
+    book = make_order_book(
+        symbol="7203",
+        bids=(("950", 500),),
+        timestamp=DEFAULT_TS,
+        received_at=DEFAULT_TS - timedelta(seconds=11),
+    )
+    pubsub = _PubSubRouter(
+        book_batches=[_pull_response([("bk-1", book.model_dump_json().encode("utf-8"))])],
+    )
+    supabase = _SupabaseRouter(
+        list_position_rows=[
+            [
+                _position_row(
+                    quantity=100,
+                    entry_price="1000",
+                    stop_loss_price="950",
+                    target_price="1100",
+                )
+            ]
+        ],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+
+    assert stats.day_stop_exits == 0
+    assert stats.day_stop_no_fills == 1
+    writes = [
+        request for request in supabase.requests if request.method in {"POST", "PATCH", "DELETE"}
+    ]
+    assert writes == []
+
+
 async def test_day_stop_stale_cached_position_does_not_emit_phantom_sell() -> None:
     book = make_order_book(symbol="7203", bids=(("950", 500),))
     pubsub = _PubSubRouter(
@@ -476,7 +512,13 @@ async def test_order_with_stale_book_is_no_fill_and_acked() -> None:
         asks=(("1000", 200),),
         timestamp=DEFAULT_TS - timedelta(seconds=11),
     )
-    order = make_order_request(symbol="7203", side=Side.BUY, quantity=100, created_at=DEFAULT_TS)
+    # An order timestamp copied from the stale book must not make the book look fresh.
+    order = make_order_request(
+        symbol="7203",
+        side=Side.BUY,
+        quantity=100,
+        created_at=old_book.timestamp,
+    )
     pubsub = _PubSubRouter(
         order_batches=[_pull_response([("ord-1", order.model_dump_json().encode("utf-8"))])],
         book_batches=[_pull_response([("bk-1", old_book.model_dump_json().encode("utf-8"))])],
@@ -494,6 +536,225 @@ async def test_order_with_stale_book_is_no_fill_and_acked() -> None:
     writes = [r for r in supabase.requests if r.method in {"POST", "PATCH", "DELETE"}]
     assert writes == []
     assert any(PAPER_ORDERS_SUB in r.url.path for r in pubsub.acked)
+
+
+async def test_order_with_future_skewed_book_is_no_fill_and_acked(caplog: Any) -> None:
+    future_book = make_order_book(
+        symbol="7203",
+        asks=(("1000", 200),),
+        timestamp=DEFAULT_TS - timedelta(hours=1),
+        received_at=DEFAULT_TS + timedelta(seconds=6),
+    )
+    order = make_order_request(symbol="7203", side=Side.BUY, quantity=100)
+    pubsub = _PubSubRouter(
+        order_batches=[_pull_response([("ord-1", order.model_dump_json().encode("utf-8"))])],
+        book_batches=[_pull_response([("bk-1", future_book.model_dump_json().encode("utf-8"))])],
+    )
+    supabase = _SupabaseRouter()
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    caplog.set_level(logging.WARNING, logger="oms_paper.streaming.runner")
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        settings=_settings(order_book_max_future_skew_seconds=5),
+        run_body=_body,
+    )
+
+    assert stats.no_fills == 1
+    assert stats.filled == 0
+    writes = [r for r in supabase.requests if r.method in {"POST", "PATCH", "DELETE"}]
+    assert writes == []
+    assert any(PAPER_ORDERS_SUB in r.url.path for r in pubsub.acked)
+    record = next(
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "paper_order_no_fill"
+    )
+    assert record.reason == "future_book"
+    assert record.book_age_seconds == -6.0
+    assert record.freshness_timestamp_source == "received_at"
+
+
+async def test_fresh_book_uses_wall_clock_instead_of_order_timestamp() -> None:
+    fresh_book = make_order_book(
+        symbol="7203",
+        asks=(("1000", 200),),
+        # CurrentPriceTime may be old even when this exact board payload was just
+        # received. Freshness therefore prefers the separate receipt timestamp.
+        timestamp=DEFAULT_TS - timedelta(hours=2),
+        received_at=DEFAULT_TS - timedelta(seconds=5),
+    )
+    # A delayed order timestamp is not the freshness clock; the currently cached
+    # book is only five seconds old at processing time and remains eligible.
+    order = make_order_request(
+        symbol="7203",
+        side=Side.BUY,
+        quantity=100,
+        created_at=DEFAULT_TS - timedelta(hours=1),
+    )
+    pubsub = _PubSubRouter(
+        order_batches=[_pull_response([("ord-1", order.model_dump_json().encode("utf-8"))])],
+        book_batches=[_pull_response([("bk-1", fresh_book.model_dump_json().encode("utf-8"))])],
+    )
+    supabase = _SupabaseRouter(paper_position_rows=[[]])
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+
+    assert stats.filled == 1
+    assert stats.no_fills == 0
+
+
+async def test_strict_received_at_mode_rejects_legacy_book_and_acks(caplog: Any) -> None:
+    book = make_order_book(symbol="7203", asks=(("1000", 200),))
+    order = make_order_request(symbol="7203", side=Side.BUY, quantity=100)
+    pubsub = _PubSubRouter(
+        order_batches=[_pull_response([("ord-1", order.model_dump_json().encode("utf-8"))])],
+        book_batches=[_pull_response([("bk-1", book.model_dump_json().encode("utf-8"))])],
+    )
+    supabase = _SupabaseRouter()
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    caplog.set_level(logging.WARNING, logger="oms_paper.streaming.runner")
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        settings=_settings(order_book_require_received_at=True),
+        run_body=_body,
+    )
+
+    assert stats.no_fills == 1
+    assert stats.filled == 0
+    assert any(PAPER_ORDERS_SUB in r.url.path for r in pubsub.acked)
+    record = next(
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "paper_order_no_fill"
+    )
+    assert record.reason == "missing_book_received_at"
+    assert record.freshness_timestamp_source == "received_at"
+
+
+async def test_paper_only_order_requires_received_at_even_when_global_strict_is_off(
+    caplog: Any,
+) -> None:
+    book = make_order_book(symbol="7203", asks=(("1000", 200),))
+    order = make_order_request(
+        symbol="7203",
+        side=Side.BUY,
+        quantity=100,
+        routing_intent=RoutingIntent.PAPER_ONLY,
+        strategy_key="event-cluster-v1",
+        candidate_id="cluster-1",
+    )
+    pubsub = _PubSubRouter(
+        order_batches=[_pull_response([("ord-1", order.model_dump_json().encode("utf-8"))])],
+        book_batches=[_pull_response([("bk-1", book.model_dump_json().encode("utf-8"))])],
+    )
+    supabase = _SupabaseRouter()
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    caplog.set_level(logging.WARNING, logger="oms_paper.streaming.runner")
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        settings=_settings(order_book_require_received_at=False),
+        run_body=_body,
+    )
+
+    assert stats.no_fills == 1
+    assert stats.filled == 0
+    assert any(PAPER_ORDERS_SUB in request.url.path for request in pubsub.acked)
+    record = next(
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "paper_order_no_fill"
+    )
+    assert record.reason == "missing_book_received_at"
+
+
+async def test_paper_only_order_rejects_disabled_freshness_thresholds(caplog: Any) -> None:
+    book = make_order_book(
+        symbol="7203",
+        asks=(("1000", 200),),
+        received_at=DEFAULT_TS,
+    )
+    order = make_order_request(
+        symbol="7203",
+        side=Side.BUY,
+        quantity=100,
+        routing_intent=RoutingIntent.PAPER_ONLY,
+        strategy_key="event-cluster-v1",
+        candidate_id="cluster-1",
+    )
+    pubsub = _PubSubRouter(
+        order_batches=[_pull_response([("ord-1", order.model_dump_json().encode("utf-8"))])],
+        book_batches=[_pull_response([("bk-1", book.model_dump_json().encode("utf-8"))])],
+    )
+    supabase = _SupabaseRouter()
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    caplog.set_level(logging.WARNING, logger="oms_paper.streaming.runner")
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        settings=_settings(order_book_max_age_seconds=None),
+        run_body=_body,
+    )
+
+    assert stats.no_fills == 1
+    record = next(
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "paper_order_no_fill"
+    )
+    assert record.reason == "invalid_book_freshness_config"
+
+
+async def test_live_order_on_paper_subscription_is_rejected_and_safe_acked(
+    caplog: Any,
+) -> None:
+    order = make_order_request(
+        symbol="7203",
+        side=Side.BUY,
+        quantity=100,
+        trade_mode=TradeMode.LIVE,
+    )
+    pubsub = _PubSubRouter(
+        order_batches=[_pull_response([("ord-1", order.model_dump_json().encode("utf-8"))])],
+    )
+    supabase = _SupabaseRouter()
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    caplog.set_level(logging.ERROR, logger="oms_paper.streaming.runner")
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+
+    assert stats.rejected == 1
+    assert stats.no_fills == 0
+    assert stats.filled == 0
+    # Mode rejection happens before idempotency and position reads.
+    assert supabase.requests == []
+    assert any(PAPER_ORDERS_SUB in r.url.path for r in pubsub.acked)
+    record = next(
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "paper_order_rejected"
+    )
+    assert record.reason == "wrong_trade_mode"
+    assert record.trade_mode == "live"
 
 
 async def test_raw_books_are_drained_before_order_processing() -> None:
@@ -572,6 +833,49 @@ async def test_older_book_does_not_overwrite_newer_cache() -> None:
     assert stats.filled == 1
     insert_trade = next(
         r for r in supabase.requests if r.method == "POST" and r.url.path == "/rest/v1/trades_paper"
+    )
+    body = json.loads(insert_trade.content.decode())
+    assert body[0]["price"] == "1000"
+
+
+async def test_older_receive_does_not_overwrite_newer_when_market_times_disagree() -> None:
+    newer_receive = make_order_book(
+        symbol="7203",
+        asks=(("1000", 200),),
+        timestamp=DEFAULT_TS - timedelta(hours=1),
+        received_at=DEFAULT_TS,
+    )
+    older_receive = make_order_book(
+        symbol="7203",
+        asks=(("900", 200),),
+        timestamp=DEFAULT_TS,
+        received_at=DEFAULT_TS - timedelta(seconds=1),
+    )
+    order = make_order_request(symbol="7203", side=Side.BUY, quantity=100)
+    pubsub = _PubSubRouter(
+        order_batches=[_pull_response([("ord-1", order.model_dump_json().encode("utf-8"))])],
+        book_batches=[
+            _pull_response(
+                [
+                    ("bk-new-receive", newer_receive.model_dump_json().encode("utf-8")),
+                    ("bk-old-receive", older_receive.model_dump_json().encode("utf-8")),
+                ]
+            )
+        ],
+    )
+    supabase = _SupabaseRouter(paper_position_rows=[[]])
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+
+    assert stats.books_applied == 1
+    assert stats.filled == 1
+    insert_trade = next(
+        request
+        for request in supabase.requests
+        if request.method == "POST" and request.url.path == "/rest/v1/trades_paper"
     )
     body = json.loads(insert_trade.content.decode())
     assert body[0]["price"] == "1000"
@@ -1053,6 +1357,42 @@ async def test_swing_stop_loss_breach_triggers_exit() -> None:
     deletes = [r for r in supabase.requests if r.method == "DELETE"]
     assert len(deletes) == 1
     assert deletes[0].url.params.get("symbol") == "eq.7203"
+
+
+async def test_swing_monitor_rejects_stale_received_book() -> None:
+    book = make_order_book(
+        symbol="7203",
+        bids=(("950", 500),),
+        timestamp=DEFAULT_TS,
+        received_at=DEFAULT_TS - timedelta(seconds=11),
+    )
+    pubsub = _PubSubRouter(
+        book_batches=[_pull_response([("bk-1", book.model_dump_json().encode("utf-8"))])],
+    )
+    supabase = _SupabaseRouter(
+        list_position_rows=[
+            [
+                _swing_position_row(
+                    quantity=100,
+                    entry_price="1000",
+                    stop_loss_price="950",
+                    target_price="1100",
+                )
+            ]
+        ],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+
+    assert stats.swing_exits == 0
+    assert stats.swing_no_fills == 1
+    writes = [
+        request for request in supabase.requests if request.method in {"POST", "PATCH", "DELETE"}
+    ]
+    assert writes == []
 
 
 async def test_swing_target_hit_triggers_exit() -> None:

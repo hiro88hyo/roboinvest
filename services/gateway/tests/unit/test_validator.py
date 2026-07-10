@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from gateway import validator
 from gateway.config import RiskConfig
-from trade_contracts.enums import Action, TradeMode
+from trade_contracts.enums import Action, RoutingIntent, TradeMode
 
 
 def _risk_cfg() -> RiskConfig:
@@ -84,6 +84,44 @@ def test_relative_stop_buy_is_rejected_in_live(  # type: ignore[no-untyped-def]
     )
     assert result.passed is False
     assert result.reason == "relative_stop_live_unsupported"
+
+
+def test_paper_only_signal_is_rejected_when_runtime_mode_is_live(  # type: ignore[no-untyped-def]
+    unified_signal_factory, kill_switch_state_factory
+) -> None:
+    signal = unified_signal_factory(
+        action=Action.BUY,
+        routing_intent=RoutingIntent.PAPER_ONLY,
+        strategy_key="event-cluster-v1",
+        candidate_id="cluster-1",
+    )
+    result = validator.validate(
+        signal=signal,
+        state=kill_switch_state_factory(trade_mode=TradeMode.LIVE),
+        risk_config=_risk_cfg(),
+        entry_price=Decimal("1000"),
+    )
+    assert result.passed is False
+    assert result.reason == "paper_only_signal_in_live_mode"
+
+
+def test_paper_only_signal_is_allowed_when_runtime_mode_is_paper(  # type: ignore[no-untyped-def]
+    unified_signal_factory, kill_switch_state_factory
+) -> None:
+    signal = unified_signal_factory(
+        action=Action.BUY,
+        routing_intent=RoutingIntent.PAPER_ONLY,
+        strategy_key="event-cluster-v1",
+        candidate_id="cluster-1",
+        stop_loss_price=Decimal("950"),
+    )
+    result = validator.validate(
+        signal=signal,
+        state=kill_switch_state_factory(trade_mode=TradeMode.PAPER),
+        risk_config=_risk_cfg(),
+        entry_price=Decimal("1000"),
+    )
+    assert result.passed is True
 
 
 def test_buy_with_existing_long_rejects(  # type: ignore[no-untyped-def]

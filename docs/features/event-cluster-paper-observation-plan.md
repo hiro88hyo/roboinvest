@@ -5,10 +5,10 @@ Created: 2026-07-04
 Status: Phase 0 was approved on 2026-07-04. On 2026-07-10 an external audit
 found that operational detection depended on T+1 OHLCV and copied the future
 open into the signal price and absolute stop. Phase 1 is now causal dry-run
-detection only. The relative-stop execution contract and actual-fill anchoring
-have been implemented, but Phase 2 paper publication remains blocked regardless
-of environment flags until the remaining quote provenance, routing,
-idempotency, persistence, and end-to-end safety requirements are complete.
+detection only. The relative-stop/fill contract, paper-only routing identity,
+and truthful live-book receive timestamp are implemented, but Phase 2 paper
+publication remains blocked regardless of environment flags until the publisher,
+atomic persistence, and end-to-end safety requirements are complete.
 
 This plan covers paper observation for
 `event_cluster_earnings_dividend_value_guard_fixed20_stop_v1_research`.
@@ -164,26 +164,31 @@ stop for a new BUY from the actual paper fill as
 holding and exit metadata on an add-on fill. The 14:50 day closeout now creates
 orders only for `holding_type=day`; swing positions are not closed by that job.
 
+Identity-bearing event signals also carry `routing_intent=PAPER_ONLY`, a stable
+`strategy_key`, and a per-occurrence `candidate_id` (the detector cluster or
+observation identity, not the strategy definition ID). Those fields isolate the
+Aggregator pairing bucket. Strategy, unified, and order IDs are deterministic
+under redelivery. Gateway rejects PAPER_ONLY in live mode, and the OrderRequest
+contract cannot represent PAPER_ONLY with `trade_mode=live`.
+
+Live Feeder books carry `OrderBookSnapshot.received_at` separately from kabu's
+`CurrentPriceTime`. OMS Paper evaluates freshness against its wall clock,
+rejects excessive future skew, and requires `received_at` unconditionally for
+PAPER_ONLY orders. `event-paper-raw-books` is defined as a dedicated filtered
+subscription so a future publisher does not consume another service's stream.
+
 The candidate artifact is intentionally non-executable. It contains the
 valuation reference and frozen `CAT_STOP_PCT=-0.10`, but contains neither an
 entry-price assumption nor an absolute `stop_loss_price`. When the path is
 eventually enabled, that frozen strategy value maps to the contract's positive
 loss-distance representation `stop_loss_pct=0.10`.
 
-These contract changes do not authorize publication. Paper publication may be
-restored only after a separate implementation:
+These changes do not authorize publication. Paper publication may be restored
+only after a separate implementation:
 
-- records truthful fresh-quote receive provenance and reads it through a
-  dedicated raw-book subscription that cannot steal messages from another
-  consumer;
-- carries an explicit `PAPER_ONLY` routing intent and enforces it again in
-  Gateway, so a trade-mode change between publisher preflight and routing cannot
-  send the event to live;
-- isolates this candidate from unrelated RULE/AI signals with a strategy key
-  and uses deterministic StrategySignal and UnifiedTradeSignal IDs under
-  Pub/Sub redelivery;
-- rejects missing or stale books against OMS Paper wall-clock time, not only by
-  comparing order and market timestamps;
+- consumes the dedicated subscription, chooses a fresh observed entry quote,
+  performs the paper-mode preflight, and emits the implemented identity/routing
+  contract without reintroducing a future-price assumption;
 - persists the paper trade and resulting position mutation atomically and
   idempotently; and
 - passes the complete event-to-fill path in the Pub/Sub emulator while leaving
@@ -238,10 +243,11 @@ position's `holding_type` from `OrderRequest`, resolves an absolute stop from th
 actual BUY fill, and carries `max_hold_days` and `scheduled_exit_date`. Its 14:50
 day closeout ignores swing positions.
 
-Before publication can be restored, OMS Paper still must reject books stale
-against wall-clock receive time, persist `trades_paper` and the corresponding
-`positions` mutation in one idempotent transaction, and pass an emulator E2E
-covering new entry, redelivery, and scheduled exit ordering.
+Before publication can be restored, OMS Paper still must persist
+`trades_paper` and the corresponding `positions` mutation in one idempotent
+transaction and pass an emulator E2E covering new entry, redelivery, and
+scheduled exit ordering. Its PAPER_ONLY path already requires a fresh
+wall-clock-checked `received_at`.
 
 ## Operational Timeline
 
@@ -329,11 +335,11 @@ Phase 2:
 - Blocked on 2026-07-10. `--publish-paper` fails closed before any Supabase or
   Pub/Sub side effect.
 - The relative-stop contract, `OrderRequest` holding metadata, fill-anchored
-  paper stop, and day/swing closeout isolation are implemented.
-- Restore only after fresh quote provenance with a dedicated subscription,
-  end-to-end `PAPER_ONLY` enforcement, deterministic IDs and strategy
-  isolation, OMS wall-clock stale-book rejection, atomic trade/position
-  persistence, and Pub/Sub emulator E2E are complete.
+  paper stop, day/swing closeout isolation, receive provenance, PAPER_ONLY
+  enforcement, deterministic IDs, and strategy isolation are implemented.
+- Restore only after a publisher consumes the dedicated fresh-book
+  subscription, atomic trade/position persistence is complete, and the Pub/Sub
+  emulator E2E passes.
 - Runbook: [Event Cluster Paper Publish](../runbook/event-cluster-paper-publish.md).
 - Live routes remain untouched.
 

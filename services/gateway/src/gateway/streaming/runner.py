@@ -44,7 +44,13 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
-from trade_contracts.enums import Action, SignalSource, TradeMode, TradingStyle
+from trade_contracts.enums import (
+    Action,
+    RoutingIntent,
+    SignalSource,
+    TradeMode,
+    TradingStyle,
+)
 from trade_contracts.logging import event_extra
 from trade_contracts.order import OrderRequest
 from trade_contracts.risk import KillSwitchState
@@ -178,6 +184,13 @@ class StreamRunner:
                 approved=False,
                 kill_switch_fired=kill_switch_decision.disabled,
             )
+
+        # A preflight mode check can race with a system_status change. The
+        # signal's immutable routing ceiling is therefore enforced again at
+        # the final routing boundary.
+        if signal.routing_intent is RoutingIntent.PAPER_ONLY and trade_mode is not TradeMode.PAPER:
+            self._log_reject(signal, "paper_only_signal_in_live_mode", trade_mode)
+            return _Decision(approved=False, kill_switch_fired=False)
 
         if self._is_stale_signal(signal=signal, now=now):
             self._log_reject(signal, "stale_signal", trade_mode)
@@ -380,6 +393,9 @@ class StreamRunner:
                     "side": order.side.value,
                     "trade_mode": order.trade_mode.value,
                     "signal_source": order.signal_source.value,
+                    "routing_intent": order.routing_intent.value,
+                    "strategy_key": order.strategy_key or "",
+                    "candidate_id": order.candidate_id or "",
                 },
             )
         except Exception:
@@ -423,6 +439,9 @@ class StreamRunner:
                 quantity=order.quantity,
                 destination_topic=topic,
                 source=order.signal_source.value,
+                routing_intent=order.routing_intent.value,
+                strategy_key=order.strategy_key,
+                candidate_id=order.candidate_id,
             ),
         )
         if order.trade_mode is TradeMode.PAPER and order.side.value == "BUY":
@@ -972,6 +991,9 @@ class StreamRunner:
                     if signal.strategy_signal_id_b is not None
                     else None
                 ),
+                routing_intent=signal.routing_intent.value,
+                strategy_key=signal.strategy_key,
+                candidate_id=signal.candidate_id,
                 has_price=signal.price is not None,
             ),
         )

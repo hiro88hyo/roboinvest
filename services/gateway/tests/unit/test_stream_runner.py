@@ -19,7 +19,13 @@ from gateway.config import GatewaySettings, RiskConfig
 from gateway.order_archive import OrderArchiveWriter
 from gateway.router import TopicRouting
 from gateway.streaming.runner import StreamRunner
-from trade_contracts.enums import Action, SignalSource, TradeMode, TradingStyle
+from trade_contracts.enums import (
+    Action,
+    RoutingIntent,
+    SignalSource,
+    TradeMode,
+    TradingStyle,
+)
 from trade_contracts.order import OrderRequest
 from trade_contracts.signal import UnifiedTradeSignal
 
@@ -54,6 +60,9 @@ def _unified_payload(
     action: Action = Action.BUY,
     confidence: float = 0.8,
     signal_source: SignalSource = SignalSource.CONSENSUS,
+    routing_intent: RoutingIntent = RoutingIntent.SYSTEM,
+    strategy_key: str | None = None,
+    candidate_id: str | None = None,
     holding_type: TradingStyle = TradingStyle.DAY,
     stop_loss_price: str | None = None,
     signal_id: UUID | None = None,
@@ -71,6 +80,9 @@ def _unified_payload(
         "action": action.value,
         "confidence": confidence,
         "signal_source": signal_source.value,
+        "routing_intent": routing_intent.value,
+        "strategy_key": strategy_key,
+        "candidate_id": candidate_id,
         "strategy_signal_id_a": str(strategy_signal_id_a) if strategy_signal_id_a else None,
         "strategy_signal_id_b": str(strategy_signal_id_b) if strategy_signal_id_b else None,
         "holding_type": holding_type.value,
@@ -387,6 +399,9 @@ async def test_buy_with_no_existing_position_publishes_to_live_orders() -> None:
         "side": "BUY",
         "trade_mode": "live",
         "signal_source": "CONSENSUS",
+        "routing_intent": "SYSTEM",
+        "strategy_key": "",
+        "candidate_id": "",
     }
     order = json.loads(base64.b64decode(msg["data"]).decode("utf-8"))
     assert order["symbol"] == "7203"
@@ -989,6 +1004,103 @@ async def test_paper_mode_publishes_to_paper_orders(tmp_path: Path) -> None:
     archived = OrderRequest.model_validate_json(rows[0])
     assert archived.trade_mode is TradeMode.PAPER
     assert archived.symbol == "7203"
+
+
+async def test_paper_only_signal_is_rejected_if_system_status_changed_to_live(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response(
+                [
+                    (
+                        "a1",
+                        _unified_payload(
+                            action=Action.BUY,
+                            price="2500",
+                            stop_loss_price="2400",
+                            routing_intent=RoutingIntent.PAPER_ONLY,
+                            strategy_key="event-cluster-v1",
+                            candidate_id="cluster-1",
+                        ),
+                    )
+                ]
+            )
+        ]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trade_mode="live")],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    caplog.set_level(logging.INFO, logger="gateway.streaming.runner")
+    stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+
+    assert stats.approved == 0
+    assert stats.rejected == 1
+    assert pubsub.published == []
+    assert not any(req.url.path == "/rest/v1/positions" for req in supabase.requests)
+    rejected = [
+        record for record in caplog.records if getattr(record, "event", None) == "signal_rejected"
+    ]
+    assert len(rejected) == 1
+    record: Any = rejected[0]
+    assert record.reason == "paper_only_signal_in_live_mode"
+    assert record.routing_intent == "PAPER_ONLY"
+    assert record.strategy_key == "event-cluster-v1"
+    assert record.candidate_id == "cluster-1"
+
+
+async def test_paper_only_signal_preserves_identity_on_paper_order() -> None:
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            _pull_response(
+                [
+                    (
+                        "a1",
+                        _unified_payload(
+                            action=Action.BUY,
+                            price="2500",
+                            stop_loss_price="2400",
+                            routing_intent=RoutingIntent.PAPER_ONLY,
+                            strategy_key="event-cluster-v1",
+                            candidate_id="cluster-1",
+                        ),
+                    )
+                ]
+            )
+        ]
+    )
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trade_mode="paper")],
+        positions_quantity_rows=[[]],
+        positions_price_rows=[[]],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        settings=_settings(liquidity_sizing_enabled=False),
+        run_body=_body,
+    )
+
+    assert stats.approved == 1
+    assert len(pubsub.published) == 1
+    body = json.loads(pubsub.published[0].content.decode())
+    message = body["messages"][0]
+    assert message["attributes"]["routing_intent"] == "PAPER_ONLY"
+    assert message["attributes"]["strategy_key"] == "event-cluster-v1"
+    assert message["attributes"]["candidate_id"] == "cluster-1"
+    order = json.loads(base64.b64decode(message["data"]).decode())
+    assert order["trade_mode"] == "paper"
+    assert order["routing_intent"] == "PAPER_ONLY"
+    assert order["strategy_key"] == "event-cluster-v1"
+    assert order["candidate_id"] == "cluster-1"
 
 
 async def test_paper_swing_buy_rebudgets_after_opening_exit_removed_positions(

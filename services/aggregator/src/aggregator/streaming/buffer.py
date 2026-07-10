@@ -1,8 +1,9 @@
 """Time-window pairing buffer for streaming aggregation.
 
 Holds `StrategySignal` from the RULE and AI subscriptions keyed by
-`(symbol, bucket)` where bucket is derived from `created_at`. A bucket is
-considered *ready* to emit when either:
+`(symbol, bucket, strategy_key, candidate_id)` where bucket is derived from
+`created_at`. The identity fields keep an event candidate from pairing with
+an unrelated RULE/AI decision. A bucket is considered *ready* to emit when:
 
   - both RULE and AI signals are present (fast path), or
   - the wall-clock time since the first signal landed in the bucket has

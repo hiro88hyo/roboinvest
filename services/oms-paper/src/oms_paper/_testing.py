@@ -12,7 +12,14 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
 
-from trade_contracts.enums import OrderType, Side, SignalSource, TradeMode, TradingStyle
+from trade_contracts.enums import (
+    OrderType,
+    RoutingIntent,
+    Side,
+    SignalSource,
+    TradeMode,
+    TradingStyle,
+)
 from trade_contracts.market import OrderBookSnapshot, PriceLevel
 from trade_contracts.order import OrderRequest
 
@@ -31,6 +38,9 @@ def make_order_request(
     trade_mode: TradeMode = TradeMode.PAPER,
     signal_source: SignalSource = SignalSource.CONSENSUS,
     unified_signal_id: UUID | None = None,
+    routing_intent: RoutingIntent = RoutingIntent.SYSTEM,
+    strategy_key: str | None = None,
+    candidate_id: str | None = None,
     holding_type: TradingStyle | None = None,
     stop_loss_price: Decimal | None = None,
     stop_loss_pct: Decimal | None = None,
@@ -49,6 +59,9 @@ def make_order_request(
         limit_price=limit_price,
         trade_mode=trade_mode,
         signal_source=signal_source,
+        routing_intent=routing_intent,
+        strategy_key=strategy_key,
+        candidate_id=candidate_id,
         holding_type=holding_type,
         stop_loss_price=stop_loss_price,
         stop_loss_pct=stop_loss_pct,
@@ -66,6 +79,7 @@ def make_order_book(
     bids: Sequence[tuple[Decimal | str | int, int]] = (("999", 200), ("998", 500)),
     asks: Sequence[tuple[Decimal | str | int, int]] = (("1000", 200), ("1001", 500)),
     timestamp: datetime | None = None,
+    received_at: datetime | None = None,
 ) -> OrderBookSnapshot:
     def _to_levels(raw: Sequence[tuple[Decimal | str | int, int]]) -> list[PriceLevel]:
         return [PriceLevel(price=Decimal(str(p)), quantity=q) for p, q in raw]
@@ -73,6 +87,7 @@ def make_order_book(
     return OrderBookSnapshot(
         symbol=symbol,
         timestamp=timestamp or DEFAULT_TS,
+        received_at=received_at,
         bids=_to_levels(bids),
         asks=_to_levels(asks),
     )

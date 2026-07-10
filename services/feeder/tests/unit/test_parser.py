@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
 
 from feeder._testing import make_book_payload, make_tick_payload
@@ -38,6 +38,19 @@ def test_parse_book_only() -> None:
     assert [level.price for level in book.bids] == [Decimal("999.0"), Decimal("998.0")]
     assert [level.quantity for level in book.bids] == [200, 500]
     assert [level.price for level in book.asks] == [Decimal("1000.0"), Decimal("1001.0")]
+
+
+def test_parse_book_preserves_separate_receive_timestamp() -> None:
+    payload = make_book_payload(symbol="9984")
+    payload.pop("CurrentPrice", None)
+    received_at = datetime(2026, 4, 25, 0, 0, 2, tzinfo=UTC)
+
+    results = parse_push_message(payload, received_at=received_at)
+
+    book = results[0]
+    assert isinstance(book, OrderBookSnapshot)
+    assert book.timestamp == datetime(2026, 4, 25, 9, 0, tzinfo=JST)
+    assert book.received_at == received_at
 
 
 def test_parse_combined_message_returns_both() -> None:

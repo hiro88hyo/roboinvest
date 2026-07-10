@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from trade_contracts.enums import Action, SignalSource, TradingStyle
+from trade_contracts.enums import Action, RoutingIntent, SignalSource, TradingStyle
 from trade_contracts.signal import (
     StrategySignal,
     UnifiedTradeSignal,
@@ -87,6 +87,8 @@ def _build_unified(
     holding_type: TradingStyle,
     now: datetime,
 ) -> UnifiedTradeSignal:
+    contributors = [signal for signal in (rule, ai) if signal is not None]
+    identity_source = contributors[0]
     resolved_holding_type = (
         execution_source.holding_type
         if execution_source is not None and execution_source.holding_type is not None
@@ -100,6 +102,13 @@ def _build_unified(
         signal_source=signal_source,
         strategy_signal_id_a=rule.signal_id if rule is not None else None,
         strategy_signal_id_b=ai.signal_id if ai is not None else None,
+        routing_intent=(
+            RoutingIntent.PAPER_ONLY
+            if any(signal.routing_intent is RoutingIntent.PAPER_ONLY for signal in contributors)
+            else RoutingIntent.SYSTEM
+        ),
+        strategy_key=identity_source.strategy_key,
+        candidate_id=identity_source.candidate_id,
         holding_type=resolved_holding_type,
         **order_fields_from(execution_source),
         **execution_fields_from(execution_source),
@@ -130,6 +139,16 @@ def aggregate(
     if len(symbols) != 1:
         raise ValueError(f"aggregate() requires same-symbol signals, got: {symbols}")
     symbol = symbols.pop()
+
+    consumable = [
+        signal for signal in signals if signal.source in (SignalSource.RULE, SignalSource.AI)
+    ]
+    identities = {(signal.strategy_key, signal.candidate_id) for signal in consumable}
+    if len(identities) > 1:
+        raise ValueError(
+            "aggregate() requires one strategy candidate identity, "
+            f"got: {sorted(identities, key=lambda value: (value[0] or '', value[1] or ''))}"
+        )
 
     rule, ai = _bucket_by_source(signals)
     if rule is None and ai is None:

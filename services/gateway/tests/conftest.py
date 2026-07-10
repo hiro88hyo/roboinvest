@@ -10,7 +10,13 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from trade_contracts.enums import Action, SignalSource, TradeMode, TradingStyle
+from trade_contracts.enums import (
+    Action,
+    RoutingIntent,
+    SignalSource,
+    TradeMode,
+    TradingStyle,
+)
 from trade_contracts.risk import KillSwitchState
 from trade_contracts.signal import UnifiedTradeSignal
 
@@ -25,6 +31,9 @@ def _make_unified_signal(
     action: Action = Action.BUY,
     confidence: float = 0.7,
     signal_source: SignalSource = SignalSource.CONSENSUS,
+    routing_intent: RoutingIntent = RoutingIntent.SYSTEM,
+    strategy_key: str | None = None,
+    candidate_id: str | None = None,
     holding_type: TradingStyle = TradingStyle.DAY,
     stop_loss_price: Decimal | None = None,
     stop_loss_pct: Decimal | None = None,
@@ -44,6 +53,9 @@ def _make_unified_signal(
         action=action,
         confidence=confidence,
         signal_source=signal_source,
+        routing_intent=routing_intent,
+        strategy_key=strategy_key,
+        candidate_id=candidate_id,
         holding_type=holding_type,
         stop_loss_price=stop_loss_price,
         stop_loss_pct=stop_loss_pct,

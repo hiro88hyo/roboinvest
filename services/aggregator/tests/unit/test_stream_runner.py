@@ -13,7 +13,7 @@ from aggregator.clients.supabase import SupabaseWriter
 from aggregator.config import AggregatorSettings
 from aggregator.consensus import ConsensusConfig
 from aggregator.streaming.runner import StreamRunner
-from trade_contracts.enums import Action, SignalSource
+from trade_contracts.enums import Action, RoutingIntent, SignalSource
 from trade_contracts.signal import StrategySignal
 
 Handler = Callable[[httpx.Request], Coroutine[None, None, httpx.Response]]
@@ -47,6 +47,9 @@ def _strategy_signal_payload(
     symbol: str = "7203",
     action: Action = Action.BUY,
     confidence: float = 0.7,
+    routing_intent: RoutingIntent = RoutingIntent.SYSTEM,
+    strategy_key: str | None = None,
+    candidate_id: str | None = None,
     created_at: str = "2026-04-20T09:00:00+00:00",
     signal_id: UUID | None = None,
 ) -> bytes:
@@ -54,6 +57,9 @@ def _strategy_signal_payload(
         {
             "signal_id": str(signal_id or uuid4()),
             "source": source.value,
+            "routing_intent": routing_intent.value,
+            "strategy_key": strategy_key,
+            "candidate_id": candidate_id,
             "symbol": symbol,
             "action": action.value,
             "confidence": confidence,
@@ -231,7 +237,13 @@ async def test_paired_a_and_b_emit_consensus_unified_signal() -> None:
     decoded = json.loads(base64.b64decode(msg["data"]).decode("utf-8"))
     assert decoded["symbol"] == "7203"
     assert decoded["signal_source"] == "CONSENSUS"
-    assert msg["attributes"] == {"symbol": "7203", "signal_source": "CONSENSUS"}
+    assert msg["attributes"] == {
+        "symbol": "7203",
+        "signal_source": "CONSENSUS",
+        "routing_intent": "SYSTEM",
+        "strategy_key": "",
+        "candidate_id": "",
+    }
 
     log_posts = [
         r

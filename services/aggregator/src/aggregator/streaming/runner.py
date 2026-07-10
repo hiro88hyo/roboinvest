@@ -2,8 +2,9 @@
 
 Pulls `StrategySignal` messages from both `strategy-signals-a` (RULE) and
 `strategy-signals-b` (AI) subscriptions, buffers them into
-`(symbol, bucket)` pairs, and emits `UnifiedTradeSignal` via the consensus
-function once a bucket is ready. Emissions are published to the
+`(symbol, bucket, strategy_key, candidate_id)` groups, and emits
+`UnifiedTradeSignal` via the consensus function once a bucket is ready.
+Emissions are published to the
 `trade-signals` topic and written to Supabase `aggregator_logs` in that
 order (Pub/Sub first — Supabase is the durable record for dashboards).
 
@@ -188,6 +189,9 @@ class StreamRunner:
                 attributes={
                     "symbol": unified.symbol,
                     "signal_source": unified.signal_source.value,
+                    "routing_intent": unified.routing_intent.value,
+                    "strategy_key": unified.strategy_key or "",
+                    "candidate_id": unified.candidate_id or "",
                 },
             )
         if unified_batch:

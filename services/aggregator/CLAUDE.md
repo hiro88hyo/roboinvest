@@ -99,12 +99,16 @@ services/aggregator/
   - `MIN_CONFIDENCE_CONSENSUS`: RULE + AI 一致採用の下限（デフォルト 0.3）
 - 矛盾時フォールバック: `CONFLICT_POLICY` (`skip` | `prefer_rule` | `prefer_ai`、デフォルト `skip`)
 - `strategy_signal_id_a` / `strategy_signal_id_b` は入力 `StrategySignal.signal_id` をそのまま入れる
-- Aggregator は **新しい `signal_id` (UUIDv4) を自分で生成**し、`UnifiedTradeSignal.signal_id` に入れる
+- `UnifiedTradeSignal.signal_id` は入力 signal id と action / symbol から UUIDv5 で
+  決定的に生成する。同じ Pub/Sub payload の再配信で別 ID を作らない
+- 片方でも `routing_intent=PAPER_ONLY` なら、合議結果も `PAPER_ONLY` とする
 
 ## ペアリング（Phase 2 / 3）の規約
 
-- **Phase 2 (バックテスト)**: `(symbol, created_at_bucket)` の bucket は `PAIRING_BUCKET_MS` (env、デフォルト 1000ms) 単位で丸める
+- **Phase 2 (バックテスト)**: `(symbol, created_at_bucket, strategy_key, candidate_id)` の bucket は `PAIRING_BUCKET_MS` (env、デフォルト 1000ms) 単位で丸める
 - **Phase 3 (ストリーミング)**: 到着時刻ではなく `StrategySignal.created_at` でウィンドウを判定
+- `strategy_key` / `candidate_id` が異なる RULE / AI は同じ symbol・時刻でも
+  ペアリングしない。両フィールドがない従来 signal 同士は従来どおりペアリングする
 - ウィンドウタイムアウト後に片方しか来ていなければ、その片方だけで合議ロジックを呼ぶ (Phase 1 の「片方のみ」ルール)
 - 遅延到着は遅れた方の新しいウィンドウに入る（過去に遡ってペアリングしない）
 

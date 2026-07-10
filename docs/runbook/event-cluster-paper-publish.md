@@ -120,8 +120,8 @@ missing event symbols and does not overwrite Universe Scanner rows.
 There is currently no supported publish command. Passing `--publish-paper`
 exits before writing an artifact, inserting `strategy_logs`, or calling Pub/Sub.
 
-Publication may be restored only after a separate implementation carries all
-of the following through tests:
+The completed and remaining safety work is tracked separately below. Completed
+items do not authorize publication by themselves.
 
 Already implemented while publication remains blocked:
 
@@ -131,21 +131,34 @@ Already implemented while publication remains blocked:
   and rejects a live BUY carrying that stop intent;
 - OMS Paper fixes a new BUY's absolute stop to its actual fill and carries
   `holding_type=swing`, `max_hold_days`, and `scheduled_exit_date`; and
-- the 14:50 day closeout ignores swing positions.
+- the 14:50 day closeout ignores swing positions;
+- live Feeder books carry a separate `received_at`, and OMS Paper uses its wall
+  clock for stale/future checks while requiring that provenance for PAPER_ONLY;
+- `routing_intent=PAPER_ONLY` is preserved through Aggregator/Gateway/Order and
+  rejected at every live boundary; and
+- `strategy_key` plus per-occurrence `candidate_id` isolates pairing, while
+  StrategySignal/UnifiedTradeSignal/Order IDs are deterministic on redelivery.
+
+Locally defined but not yet wired into an event publisher:
+
+- `event-paper-raw-books` is a dedicated filtered subscription in
+  `infra/pubsub/subscriptions.json`; deploying the resource alone does not
+  satisfy freshness or authorize publication.
 
 Still required before publication can be restored:
 
-- truthful fresh best-ask/next-open receive provenance through a dedicated
-  raw-book subscription that cannot steal another consumer's messages;
-- an explicit `PAPER_ONLY` intent enforced end to end, including Gateway routing
-  after the publisher's trade-mode preflight;
-- deterministic StrategySignal and UnifiedTradeSignal IDs plus candidate
-  strategy-key isolation from unrelated RULE/AI signals;
-- OMS Paper wall-clock stale/missing-book rejection;
+- an event publisher that consumes `event-paper-raw-books`, selects a fresh
+  observed ask, performs paper-mode preflight, and emits the implemented
+  PAPER_ONLY identity contract;
 - atomic, idempotent persistence of each `trades_paper` fill and its resulting
   `positions` mutation; and
 - Pub/Sub emulator E2E covering publication, aggregation, Gateway, OMS Paper,
   redelivery, and position creation.
+
+For identity, `strategy_key` is the frozen strategy/version and `candidate_id`
+must be unique to the concrete cluster/observation occurrence. Do not copy the
+strategy definition ID into both fields, or repeated candidates for one symbol
+would share a deterministic signal ID.
 
 ## Observation Report
 

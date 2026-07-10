@@ -50,6 +50,13 @@ class TradeMode(StrEnum):
     PAPER = "paper"
 
 
+class RoutingIntent(StrEnum):
+    """A signal-level upper bound on where an order may be routed."""
+
+    SYSTEM = "SYSTEM"
+    PAPER_ONLY = "PAPER_ONLY"
+
+
 class TradingStyle(StrEnum):
     """system_status.trading_style / positions.holding_type"""
 

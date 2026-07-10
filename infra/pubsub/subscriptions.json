@@ -38,6 +38,11 @@
       "filter": "attributes.kind = \"book\""
     },
     {
+      "name": "event-paper-raw-books",
+      "topic": "raw-market-data",
+      "filter": "attributes.kind = \"book\""
+    },
+    {
       "name": "oms-live-live-orders",
       "topic": "live-orders"
     },

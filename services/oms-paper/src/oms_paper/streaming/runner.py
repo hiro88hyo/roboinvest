@@ -12,6 +12,8 @@ paper-orders と raw-market-data の 2 本の subscription を pull し、
 * 板未受信のシンボルへの注文・板枯渇による不約定・apply_fill エラー
   (oversell 等) は **業務上の no_fill** として ack する (再配信しても
   状況が変わらないため、redelivery hell を避ける)。
+* ``trade_mode != paper`` の誤配送は約定せず、deterministic poison message
+  として structured rejection log を残して ack する。
 * スキーマ不正・JSON パース失敗の poison message は ack する。
 
 擬似約定の純関数 (simulate_fill / apply_fill / build_fill_record) は
@@ -32,7 +34,14 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
-from trade_contracts.enums import OrderType, Side, SignalSource, TradeMode, TradingStyle
+from trade_contracts.enums import (
+    OrderType,
+    RoutingIntent,
+    Side,
+    SignalSource,
+    TradeMode,
+    TradingStyle,
+)
 from trade_contracts.logging import event_extra
 from trade_contracts.market import OrderBookSnapshot
 from trade_contracts.order import OrderRequest
@@ -65,6 +74,7 @@ class BatchStats:
     no_fills: int
     write_errors: int
     acked: int
+    rejected: int = 0
     skipped_duplicate: int = 0
     swing_exits: int = 0
     swing_trails: int = 0
@@ -119,6 +129,7 @@ class StreamRunner:
     _summary_parse_errors: int = field(default=0, init=False)
     _summary_filled: int = field(default=0, init=False)
     _summary_no_fills: int = field(default=0, init=False)
+    _summary_rejected: int = field(default=0, init=False)
     _summary_write_errors: int = field(default=0, init=False)
     _latest_book_timestamp: datetime | None = field(default=None, init=False)
     _market_data_is_stale: bool = field(default=False, init=False)
@@ -173,6 +184,7 @@ class StreamRunner:
         parse_errors = 0
         filled = 0
         no_fills = 0
+        rejected = 0
         write_errors = 0
         skipped_duplicate = 0
         order_acks: list[str] = []
@@ -199,6 +211,8 @@ class StreamRunner:
                 filled += 1
             elif outcome == "skipped_duplicate":
                 skipped_duplicate += 1
+            elif outcome == "rejected":
+                rejected += 1
             else:
                 no_fills += 1
             order_acks.append(msg.ack_id)
@@ -217,6 +231,7 @@ class StreamRunner:
             no_fills=no_fills,
             write_errors=write_errors,
             acked=books_acked + len(order_acks),
+            rejected=rejected,
             skipped_duplicate=skipped_duplicate,
             swing_exits=swing_exits,
             swing_trails=swing_trails,
@@ -315,6 +330,19 @@ class StreamRunner:
                 logger.warning("closeout no_fill: no book in cache symbol=%s", order.symbol)
                 no_fills += 1
                 continue
+            freshness_rejection = self._book_freshness_rejection(
+                book=book,
+                order=order,
+                checked_at=order.created_at,
+            )
+            if freshness_rejection is not None:
+                logger.warning(
+                    "closeout no_fill: unusable book symbol=%s reason=%s",
+                    order.symbol,
+                    freshness_rejection[0],
+                )
+                no_fills += 1
+                continue
             fill = simulate_fill(order=order, book=book)
             if fill.filled_quantity == 0 or fill.fill_price is None:
                 logger.warning(
@@ -403,6 +431,19 @@ class StreamRunner:
                 )
                 no_fills += 1
                 continue
+            freshness_rejection = self._book_freshness_rejection(
+                book=book,
+                order=None,
+                checked_at=now,
+            )
+            if freshness_rejection is not None:
+                logger.warning(
+                    "opening swing max-hold exit no_fill: unusable book symbol=%s reason=%s",
+                    position.symbol,
+                    freshness_rejection[0],
+                )
+                no_fills += 1
+                continue
             try:
                 outcome = await self._run_swing_exit(
                     position=position,
@@ -440,17 +481,47 @@ class StreamRunner:
             if book is None:
                 continue
             existing = self.book_cache.get(book.symbol)
-            if existing is not None and book.timestamp < existing.timestamp:
-                logger.info(
-                    "book skipped: stale update symbol=%s incoming=%s cached=%s",
-                    book.symbol,
-                    book.timestamp.isoformat(),
-                    existing.timestamp.isoformat(),
+            if existing is not None:
+                checked_at = self.wall_clock()
+                incoming_rejection = self._book_freshness_rejection(
+                    book=book,
+                    order=None,
+                    checked_at=checked_at,
                 )
-                continue
+                existing_rejection = self._book_freshness_rejection(
+                    book=existing,
+                    order=None,
+                    checked_at=checked_at,
+                )
+                incoming_at = _book_observed_at(book)
+                existing_at = _book_observed_at(existing)
+                prefer_incoming = incoming_rejection is None and existing_rejection is not None
+                incoming_is_older = False
+                if not prefer_incoming:
+                    try:
+                        incoming_is_older = incoming_at < existing_at
+                    except TypeError:
+                        logger.warning(
+                            "book skipped: incomparable timestamp symbol=%s incoming=%s cached=%s",
+                            book.symbol,
+                            incoming_at.isoformat(),
+                            existing_at.isoformat(),
+                        )
+                        continue
+                if (incoming_rejection is not None and existing_rejection is None) or (
+                    not prefer_incoming and incoming_is_older
+                ):
+                    logger.info(
+                        "book skipped: older/unusable update symbol=%s incoming=%s cached=%s",
+                        book.symbol,
+                        incoming_at.isoformat(),
+                        existing_at.isoformat(),
+                    )
+                    continue
             self.book_cache[book.symbol] = book
-            if self._latest_book_timestamp is None or book.timestamp > self._latest_book_timestamp:
-                self._latest_book_timestamp = book.timestamp
+            observed_at = _book_observed_at(book)
+            if self._latest_book_timestamp is None or observed_at > self._latest_book_timestamp:
+                self._latest_book_timestamp = observed_at
             updated.add(book.symbol)
             applied += 1
         return applied, acks, updated
@@ -465,6 +536,7 @@ class StreamRunner:
         self._summary_parse_errors += stats.parse_errors
         self._summary_filled += stats.filled
         self._summary_no_fills += stats.no_fills
+        self._summary_rejected += stats.rejected
         self._summary_write_errors += stats.write_errors
 
         elapsed = now - self._summary_started_at
@@ -478,13 +550,14 @@ class StreamRunner:
 
         logger.info(
             "market data summary: books_pulled=%d books_applied=%d orders=%d "
-            "filled=%d no_fills=%d parse_errors=%d write_errors=%d "
+            "filled=%d no_fills=%d rejected=%d parse_errors=%d write_errors=%d "
             "latest_book_age_seconds=%s",
             self._summary_books_pulled,
             self._summary_books_applied,
             self._summary_orders_pulled,
             self._summary_filled,
             self._summary_no_fills,
+            self._summary_rejected,
             self._summary_parse_errors,
             self._summary_write_errors,
             latest_book_age_seconds,
@@ -495,6 +568,7 @@ class StreamRunner:
                 orders_pulled=self._summary_orders_pulled,
                 filled=self._summary_filled,
                 no_fills=self._summary_no_fills,
+                rejected=self._summary_rejected,
                 parse_errors=self._summary_parse_errors,
                 write_errors=self._summary_write_errors,
                 latest_book_age_seconds=latest_book_age_seconds,
@@ -509,6 +583,7 @@ class StreamRunner:
         self._summary_parse_errors = 0
         self._summary_filled = 0
         self._summary_no_fills = 0
+        self._summary_rejected = 0
         self._summary_write_errors = 0
 
     def _log_stale_market_data_if_needed(self, latest_book_age_seconds: float | None) -> None:
@@ -629,6 +704,28 @@ class StreamRunner:
             book = self.book_cache.get(symbol)
             if book is None or not book.bids:
                 logger.info("swing skip: no bids for symbol=%s", symbol)
+                no_fills += 1
+                continue
+            freshness_rejection = self._book_freshness_rejection(
+                book=book,
+                order=None,
+                checked_at=now,
+            )
+            if freshness_rejection is not None:
+                reason, age_seconds, timestamp_source, _ = freshness_rejection
+                logger.warning(
+                    "swing skip: unusable book symbol=%s reason=%s",
+                    symbol,
+                    reason,
+                    extra=event_extra(
+                        "paper_monitor_book_rejected",
+                        monitor="swing",
+                        symbol=symbol,
+                        reason=reason,
+                        freshness_timestamp_source=timestamp_source,
+                        book_age_seconds=age_seconds,
+                    ),
+                )
                 no_fills += 1
                 continue
             latest_price = book.bids[0].price
@@ -818,6 +915,28 @@ class StreamRunner:
                 logger.info("day stop skip: no bids for symbol=%s", symbol)
                 no_fills += 1
                 continue
+            freshness_rejection = self._book_freshness_rejection(
+                book=book,
+                order=None,
+                checked_at=now,
+            )
+            if freshness_rejection is not None:
+                reason, age_seconds, timestamp_source, _ = freshness_rejection
+                logger.warning(
+                    "day stop skip: unusable book symbol=%s reason=%s",
+                    symbol,
+                    reason,
+                    extra=event_extra(
+                        "paper_monitor_book_rejected",
+                        monitor="day",
+                        symbol=symbol,
+                        reason=reason,
+                        freshness_timestamp_source=timestamp_source,
+                        book_age_seconds=age_seconds,
+                    ),
+                )
+                no_fills += 1
+                continue
             latest_price = book.bids[0].price
             decision = evaluate_day_exit(position=position, latest_price=latest_price, now=now)
             if decision.action == "hold":
@@ -955,10 +1074,36 @@ class StreamRunner:
         )
 
     async def _process_order(self, order: OrderRequest) -> str:
-        """Returns 'filled', 'no_fill', or 'skipped_duplicate'.
+        """Returns 'filled', 'no_fill', 'rejected', or 'skipped_duplicate'.
 
         Raises SupabaseError on write failure.
         """
+        # paper-orders への live 注文誤配送は決して約定させない。payload 自体は
+        # valid かつ再配信で変化しないため、rejected として caller が safe-ack する。
+        if order.trade_mode is not TradeMode.PAPER:
+            logger.error(
+                "paper order rejected: wrong trade mode symbol=%s trade_mode=%s signal_id=%s",
+                order.symbol,
+                order.trade_mode.value,
+                order.unified_signal_id,
+                extra=event_extra(
+                    "paper_order_rejected",
+                    reason="wrong_trade_mode",
+                    symbol=order.symbol,
+                    side=order.side.value,
+                    quantity=order.quantity,
+                    trade_mode=order.trade_mode.value,
+                    signal_id=(
+                        str(order.unified_signal_id)
+                        if order.unified_signal_id is not None
+                        else None
+                    ),
+                    signal_source=order.signal_source.value,
+                    created_at=order.created_at.isoformat(),
+                ),
+            )
+            return "rejected"
+
         # 0) idempotency: 同一 signal_id が再配信された場合は skip して ack
         if (
             order.unified_signal_id is not None
@@ -1002,17 +1147,20 @@ class StreamRunner:
                 ),
             )
             return "no_fill"
-        if self._is_book_too_old_for_order(book=book, order=order):
-            book_age_seconds = (order.created_at - book.timestamp).total_seconds()
+        freshness_rejection = self._book_freshness_rejection(book=book, order=order)
+        if freshness_rejection is not None:
+            reason, book_age_seconds, timestamp_source, checked_at = freshness_rejection
             logger.warning(
-                "order no_fill: stale book symbol=%s book_ts=%s order_ts=%s signal_id=%s",
+                "order no_fill: unusable book symbol=%s reason=%s book_ts=%s "
+                "checked_at=%s signal_id=%s",
                 order.symbol,
+                reason,
                 book.timestamp.isoformat(),
-                order.created_at.isoformat(),
+                checked_at.isoformat(),
                 order.unified_signal_id,
                 extra=event_extra(
                     "paper_order_no_fill",
-                    reason="stale_book",
+                    reason=reason,
                     symbol=order.symbol,
                     side=order.side.value,
                     quantity=order.quantity,
@@ -1024,8 +1172,13 @@ class StreamRunner:
                     signal_source=order.signal_source.value,
                     created_at=order.created_at.isoformat(),
                     book_timestamp=book.timestamp.isoformat(),
-                    book_age_seconds=round(book_age_seconds, 3),
+                    freshness_timestamp_source=timestamp_source,
+                    checked_at=checked_at.isoformat(),
+                    book_age_seconds=(
+                        round(book_age_seconds, 3) if book_age_seconds is not None else None
+                    ),
                     max_book_age_seconds=self.settings.order_book_max_age_seconds,
+                    max_future_skew_seconds=(self.settings.order_book_max_future_skew_seconds),
                 ),
             )
             return "no_fill"
@@ -1133,12 +1286,62 @@ class StreamRunner:
         )
         return "filled"
 
-    def _is_book_too_old_for_order(self, *, book: OrderBookSnapshot, order: OrderRequest) -> bool:
+    def _book_freshness_rejection(
+        self,
+        *,
+        book: OrderBookSnapshot,
+        order: OrderRequest | None,
+        checked_at: datetime | None = None,
+    ) -> tuple[str, float | None, str, datetime] | None:
+        """Return a fail-closed reason when ``book`` is unusable for an order.
+
+        Feeder's live path supplies truthful ``received_at`` provenance. Legacy
+        and replay books may omit it and can use the market-time proxy only for
+        ordinary SYSTEM orders. PAPER_ONLY orders always require ``received_at``
+        regardless of the process-wide compatibility setting.
+        """
+        checked_at = checked_at or self.wall_clock()
+        received_at = getattr(book, "received_at", None)
+        require_received_at = self.settings.order_book_require_received_at or (
+            order is not None and order.routing_intent is RoutingIntent.PAPER_ONLY
+        )
+        if received_at is None:
+            if require_received_at:
+                return "missing_book_received_at", None, "received_at", checked_at
+            freshness_timestamp = book.timestamp
+            timestamp_source = "market_timestamp"
+        elif isinstance(received_at, datetime):
+            freshness_timestamp = received_at
+            timestamp_source = "received_at"
+        else:
+            return "invalid_book_received_at", None, "received_at", checked_at
+
+        try:
+            age_seconds = (checked_at - freshness_timestamp).total_seconds()
+        except TypeError:
+            # aware/naive mismatch is malformed timing provenance; never fill.
+            return "invalid_book_timestamp", None, timestamp_source, checked_at
+
+        max_future_skew = self.settings.order_book_max_future_skew_seconds
+        if (
+            order is not None
+            and order.routing_intent is RoutingIntent.PAPER_ONLY
+            and (max_future_skew is None or max_future_skew < 0)
+        ):
+            return "invalid_book_freshness_config", age_seconds, timestamp_source, checked_at
+        if max_future_skew is not None and max_future_skew >= 0 and age_seconds < -max_future_skew:
+            return "future_book", age_seconds, timestamp_source, checked_at
+
         max_age = self.settings.order_book_max_age_seconds
-        if max_age is None or max_age <= 0:
-            return False
-        age = (order.created_at - book.timestamp).total_seconds()
-        return age > max_age
+        if (
+            order is not None
+            and order.routing_intent is RoutingIntent.PAPER_ONLY
+            and (max_age is None or max_age <= 0)
+        ):
+            return "invalid_book_freshness_config", age_seconds, timestamp_source, checked_at
+        if max_age is not None and max_age > 0 and age_seconds > max_age:
+            return "stale_book", age_seconds, timestamp_source, checked_at
+        return None
 
     async def _write_position_change(
         self,
@@ -1163,6 +1366,12 @@ class StreamRunner:
                 entry_price=str(update_position.entry_price),
             )
         self._sync_position_caches(symbol=symbol, position=update_position, delete=False)
+
+
+def _book_observed_at(book: OrderBookSnapshot) -> datetime:
+    """Return the best available timestamp for cache ordering and age summaries."""
+
+    return book.received_at or book.timestamp
 
 
 def _parse_order(msg: PulledMessage) -> OrderRequest | None:

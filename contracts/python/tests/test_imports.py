@@ -17,6 +17,7 @@ from trade_contracts import (
     PriceLevel,
     ProcessedFeatures,
     RiskCheck,
+    RoutingIntent,
     ScannerGateThresholds,
     Side,
     SignalSource,
@@ -39,6 +40,7 @@ def test_enums_present() -> None:
     assert OrderStatus.PENDING.value == "PENDING"
     assert OrderType.MARKET.value == "MARKET"
     assert TradeMode.PAPER.value == "paper"
+    assert RoutingIntent.PAPER_ONLY.value == "PAPER_ONLY"
     assert TradeType.LIVE.value == "live"
     assert TradingStyle.SWING.value == "swing"
 
@@ -83,6 +85,7 @@ def test_models_have_expected_attributes() -> None:
     assert OrderRequest.model_fields["stop_loss_pct"].annotation == Decimal | None
     assert OrderResult.model_fields["status"].annotation is OrderStatus
     assert OrderBookSnapshot.model_fields["bids"].annotation is not None
+    assert OrderBookSnapshot.model_fields["received_at"].annotation == datetime | None
     assert StrategySignal.model_fields["source"].annotation is SignalSource
     assert RiskCheck(passed=True).passed is True
     assert KillSwitchState.model_fields["daily_pnl"].annotation is Decimal
@@ -103,6 +106,80 @@ def test_relative_stop_intent_roundtrip() -> None:
     roundtrip = StrategySignal.model_validate_json(signal.model_dump_json())
     assert roundtrip.stop_loss_pct == Decimal("0.10")
     assert roundtrip.stop_loss_price is None
+
+
+def test_event_identity_makes_signal_chain_ids_deterministic() -> None:
+    stamp = datetime(2026, 7, 10, 0, 30, tzinfo=UTC)
+    strategy_payload = {
+        "source": SignalSource.RULE,
+        "routing_intent": RoutingIntent.PAPER_ONLY,
+        "strategy_key": "event-cluster-v1",
+        "candidate_id": "cluster:7203:2026-07-10",
+        "symbol": "7203",
+        "action": Action.BUY,
+        "confidence": 0.8,
+        "created_at": stamp,
+    }
+    first = StrategySignal.model_validate(strategy_payload)
+    redelivered = StrategySignal.model_validate(strategy_payload)
+    assert first.signal_id == redelivered.signal_id
+
+    unified_payload = {
+        "symbol": "7203",
+        "action": Action.BUY,
+        "confidence": 0.8,
+        "signal_source": SignalSource.RULE,
+        "strategy_signal_id_a": first.signal_id,
+        "routing_intent": RoutingIntent.PAPER_ONLY,
+        "strategy_key": first.strategy_key,
+        "candidate_id": first.candidate_id,
+        "holding_type": TradingStyle.SWING,
+        "created_at": stamp,
+    }
+    unified = UnifiedTradeSignal.model_validate(unified_payload)
+    unified_redelivery = UnifiedTradeSignal.model_validate(unified_payload)
+    assert unified.signal_id == unified_redelivery.signal_id
+
+    order_payload = {
+        "unified_signal_id": unified.signal_id,
+        "symbol": "7203",
+        "side": Side.BUY,
+        "quantity": 100,
+        "trade_mode": TradeMode.PAPER,
+        "signal_source": SignalSource.RULE,
+        "routing_intent": RoutingIntent.PAPER_ONLY,
+        "strategy_key": first.strategy_key,
+        "candidate_id": first.candidate_id,
+        "created_at": stamp,
+    }
+    order = OrderRequest.model_validate(order_payload)
+    order_redelivery = OrderRequest.model_validate(order_payload)
+    assert order.order_id == order_redelivery.order_id
+
+
+def test_strategy_identity_is_all_or_nothing() -> None:
+    with pytest.raises(ValidationError, match="must be provided together"):
+        StrategySignal(
+            source=SignalSource.RULE,
+            strategy_key="event-cluster-v1",
+            symbol="7203",
+            action=Action.BUY,
+            confidence=0.8,
+            created_at=datetime.now(UTC),
+        )
+
+
+def test_paper_only_order_cannot_be_constructed_for_live() -> None:
+    with pytest.raises(ValidationError, match="require trade_mode=paper"):
+        OrderRequest(
+            symbol="7203",
+            side=Side.BUY,
+            quantity=100,
+            trade_mode=TradeMode.LIVE,
+            signal_source=SignalSource.RULE,
+            routing_intent=RoutingIntent.PAPER_ONLY,
+            created_at=datetime.now(UTC),
+        )
 
 
 def test_stop_loss_price_and_pct_are_mutually_exclusive() -> None:

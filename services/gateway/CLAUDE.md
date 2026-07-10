@@ -42,11 +42,16 @@ aggregator / strategy-rule と同じ 3 フェーズパターン。段階コミ�
 - **relative stop の routing guard**: `stop_loss_pct` を持つ live BUY は
   `relative_stop_live_unsupported` で reject。relative-stop BUY は paper mode
   だけで許可
+- **paper-only routing guard**: `routing_intent=PAPER_ONLY` を持つ signal は、
+  `system_status.trade_mode=live` なら `paper_only_signal_in_live_mode` で reject。
+  preflight 後に mode が変わっても live topic へは送らない
 - **action → side 変換**: `BUY → BUY`、`SELL → SELL`、`HOLD` は reject（Gateway では建玉しない）
 - **ルーティング**: `trade_mode=live` → `live-orders` / `trade_mode=paper` → `paper-orders`
 - **OrderRequest 組み立て**: `UnifiedTradeSignal.signal_id` を
   `unified_signal_id` に、`signal_source` / `symbol` / `holding_type` /
-  `stop_loss_pct` / `max_hold_days` / `scheduled_exit_date` を継承、
+  `routing_intent` / `strategy_key` / `candidate_id` / `stop_loss_pct` /
+  `max_hold_days` / `scheduled_exit_date` を継承し、`order_id` は
+  unified signal / trade mode / side から決定的に生成、
   `order_type=MARKET` 固定（Phase 1）。relative stop がある場合、Gateway の
   risk sizing 値を絶対 stop として注文へ固定しない
 - I/O・時刻・DB・Pub/Sub を持ち込まない純関数だけで構成する

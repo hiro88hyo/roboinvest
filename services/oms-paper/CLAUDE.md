@@ -162,8 +162,10 @@ services/oms-paper/
 - `ack` は Supabase 書き込み成功後のみ（書き込み失敗時は `nack` して再配信）
 - `OrderRequest.order_id` の重複 trade は検出するが、trade と position の
   atomicity は未解決。上記 transactional RPC と emulator E2E が必要
-- event publication では板 timestamp 同士の比較だけでなく、受信 provenance
-  を含む wall-clock stale-book 判定を追加するまで fail closed
+- `trade_mode != paper` の誤配送は DB read 前に structured reject し safe-ack
+- 通常注文の板鮮度は OMS wall clock から評価し、`received_at` があれば exchange
+  timestamp より優先する。PAPER_ONLY は設定値に関係なく `received_at` 必須で、
+  stale / future skew / freshness check 無効化を fail-closed にする
 
 ## 設定（env）
 
@@ -173,6 +175,11 @@ services/oms-paper/
 - `PUBSUB_PROJECT_ID` / `PUBSUB_EMULATOR_HOST`
 - `PUBSUB_SUBSCRIPTION_PAPER_ORDERS`: `oms-paper-paper-orders`
 - `PUBSUB_SUBSCRIPTION_RAW_MARKET_DATA`: `oms-paper-raw-market-data`
+- `ORDER_BOOK_MAX_AGE_SECONDS`: 通常 `10`、production default `45`
+- `ORDER_BOOK_MAX_FUTURE_SKEW_SECONDS`: デフォルト `5`
+- `ORDER_BOOK_REQUIRE_RECEIVED_AT`: 全体 strict toggle。production は `true`、
+  legacy/replay 互換の local だけ `false` を許容。PAPER_ONLY はこの値に関係なく
+  常に required
 - `PAPER_DAY_STOP_MONITOR_ENABLED`: `true` で day position の `stop_loss_price` / `target_price` / `trailing_stop_pct` を raw book 更新ごとに評価する。paper 観測用の safety path
 - `DAY_CLOSEOUT_TIME`: デフォルト `14:50`
 - `DAY_CLOSEOUT_TIMEZONE`: デフォルト `Asia/Tokyo`
