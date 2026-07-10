@@ -1,26 +1,29 @@
 # Event Cluster Paper Publish
 
-Purpose: publish paper-only `StrategySignal` messages for
+Status: **paper publication is blocked as of 2026-07-10**. This runbook currently
+covers causal dry-run detection and watchlist capture only for
 `event_cluster_earnings_dividend_value_guard_fixed20_stop_v1_research`.
-This is not a live procedure and does not change the live gate.
+
+The old publisher used the future T+1 open as `StrategySignal.price` and as the
+basis of an absolute stop. `--publish-paper` now fails closed until a fresh,
+timestamped observed-price path exists and OMS Paper anchors the 10% stop to the
+actual fill. This does not change the candidate parameters or the live gate.
 
 ## Preconditions
 
-- Phase 0 paper observation exception is approved.
-- `system_status.trade_mode = paper`.
-- Gateway, Aggregator, and OMS Paper are running against the same Pub/Sub and
-  Supabase environment.
-- Due swing exits have already been processed with
-  `oms-paper opening-swing-exits` for the session.
-- `EVENT_CLUSTER_PAPER_PUBLISH_ENABLED=true` is set only for the publish
-  command. Keep it unset for dry-run detection.
-- Do not set or use any `live-orders` topic for this run.
+- Use the latest available TSE signal date.
+- Do not pass `--publish-paper`; the option is intentionally blocked.
+- Do not interpret a candidate artifact as an executable order or a
+  profitability result.
 
 ## Dry Run
 
 First append the latest J-Quants data to the local research archives. Keep
 `SIGNAL_DATE` on the latest available TSE business day, not on a weekend or
-holiday.
+holiday. The final financial-summary fetch used for an operational artifact
+must run after `SIGNAL_DATE` has ended in JST and before 09:00 JST on the next
+TSE business day. This prevents a complete-but-early HTTP response from being
+mistaken for complete coverage of the disclosure date.
 
 ```bash
 cd /home/hiroyuki/workspaces/roboinvest
@@ -28,10 +31,9 @@ SIGNAL_DATE=YYYY-MM-DD
 set -a && . infra/.op.service-account.env && set +a
 op run --env-file infra/env.production -- \
   uv run python scripts/export-jquants-financial-summaries-jsonl.py \
-    --start-date YYYY-MM-DD \
+    --start-date "$SIGNAL_DATE" \
     --end-date "$SIGNAL_DATE" \
     --output out/event-research/financial-summaries-20210628-20260624-clean.jsonl \
-    --resume \
     --log-every-dates 1 \
     --concurrency 1 \
     --sleep-seconds 0.2
@@ -58,8 +60,40 @@ uv run python scripts/detect-event-cluster-paper-candidates.py \
   --signal-date "$SIGNAL_DATE"
 ```
 
-Confirm `publish_enabled=false` and inspect candidates/exclusions before any
-publish run.
+Confirm `causality_verified=true`, `publish_enabled=false`, and
+`causality.candidate_artifact_contains_entry_price=false`. A candidate may now
+be detected with OHLCV ending on `SIGNAL_DATE`; T+1 OHLCV is not required and,
+even if present in the CSV, is not consulted for candidate features.
+
+The financial-summary exporter records `_roboinvest_fetched_at` on each source
+row and writes a fetch-metadata row, including for a date with zero disclosures.
+The detector preserves that source-receipt provenance instead of substituting
+its own execution time. Confirm the artifact reports
+`causality.receipt_provenance=export_metadata` and
+`causality.fetch_completion_verified=true`, and
+`causality.source_coverage_window_verified=true`. A fetch before the signal
+date ends is incomplete coverage; a fetch at or after 09:00 JST on the intended
+entry date is late. Neither artifact is operationally valid. Late event rows
+are recorded as `late_data_receipt` instead of being backdated into the cohort.
+
+Before changing the watchlist, run the canonical production pre-open check on
+the artifact:
+
+```bash
+cd /home/hiroyuki/workspaces/roboinvest
+SIGNAL_DATE=YYYY-MM-DD
+TARGET_DATE=YYYY-MM-DD
+set -a && . infra/.op.service-account.env && set +a
+op run --env-file infra/env.production -- \
+  uv run python scripts/production-preopen-check.py \
+    --timeout 30 \
+    --expected-trade-mode paper \
+    --target-date "$TARGET_DATE" \
+    --gcp-credentials /tmp/roboinvest-gcp-pubsub-sa.json \
+    --swing-candidates-json "out/event-paper-observation/candidates-${SIGNAL_DATE}.json"
+```
+
+Do not continue to watchlist capture if candidate-artifact validation is `NG`.
 
 ## Watchlist Capture
 
@@ -68,107 +102,50 @@ them and Feature Engine can capture 1-minute data:
 
 ```bash
 cd /home/hiroyuki/workspaces/roboinvest
+SIGNAL_DATE=YYYY-MM-DD
 set -a && . infra/.op.service-account.env && set +a
 op run --env-file infra/env.production -- \
   uv run python scripts/upsert-event-candidates-watchlist.py \
-    --candidates-json out/event-paper-observation/candidates.json \
+    --candidates-json "out/event-paper-observation/candidates-${SIGNAL_DATE}.json" \
     --output-json out/event-paper-observation/event-watchlist-upsert.json
 ```
 
 Run this before Feeder's pre-open watchlist poll. The script inserts only
 missing event symbols and does not overwrite Universe Scanner rows.
 
-## Paper Publish
+## Paper Publish Block
 
-The publish command still runs the same detector first. It only publishes if the
-environment flag is enabled and Supabase preflight reads `trade_mode=paper`.
+There is currently no supported publish command. Passing `--publish-paper`
+exits before writing an artifact, inserting `strategy_logs`, or calling Pub/Sub.
 
-```bash
-cd /home/hiroyuki/workspaces/roboinvest
-set -a && . infra/.op.service-account.env && set +a
-op run --env-file infra/env.production -- \
-  env EVENT_CLUSTER_PAPER_PUBLISH_ENABLED=true \
-  uv run python scripts/detect-event-cluster-paper-candidates.py \
-    --financial-summary-jsonl out/event-research/financial-summaries-20210628-20260624-clean.jsonl \
-    --ohlcv data/reference/daily_ohlcv_20210625_20260624_bydate.csv \
-    --output-json out/event-paper-observation/published-candidates.json \
-    --output-csv out/event-paper-observation/published-candidates.csv \
-    --signal-date YYYY-MM-DD \
-    --publish-paper
-```
+Publication may be restored only after a separate implementation carries all
+of the following through tests:
 
-Default topic is `strategy-signals-a`. Override with `--pubsub-topic-signals`
-only for an isolated test project.
-
-Each published signal is:
-
-- `source=RULE`
-- `action=BUY`
-- `holding_type=swing`
-- `max_hold_days=20`
-- `stop_loss_price=entry_price_assumption * (1 + CAT_STOP_PCT)`
-- `CAT_STOP_PCT=-0.10`
-
-The command upserts the corresponding `strategy_logs` row before Pub/Sub
-publish. This is required because `aggregator_logs.strategy_signal_id_a`
-references `strategy_logs.signal_id`.
-
-## Fail-Closed Cases
-
-No signal is published when:
-
-- `--publish-paper` is omitted.
-- `EVENT_CLUSTER_PAPER_PUBLISH_ENABLED` is unset or not true.
-- `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, or `PUBSUB_PROJECT_ID` is missing.
-- `system_status.trade_mode != paper`.
-- Pub/Sub publish fails.
-- `strategy_logs` upsert fails.
-
-## Verification
-
-The output JSON must show:
-
-```json
-{
-  "mode": "paper_publish",
-  "publish_enabled": true,
-  "summary": {
-    "published_count": 1
-  }
-}
-```
-
-Then confirm downstream flow:
-
-1. `strategy_logs` contains the emitted RULE signal.
-2. Aggregator receives from `strategy-signals-a` and publishes `trade-signals`.
-3. Gateway logs `trade_mode=paper` and publishes to `paper-orders`.
-4. OMS Paper writes `trades_paper` and `positions`.
-5. New paper position has `holding_type='swing'`, `max_hold_days=20`, and
-   `stop_loss_price`.
-
-If Gateway rejects the signal, record the reject reason in
-`out/event-paper-observation/` and do not rerun with modified strategy
-parameters.
+- a fresh best ask (or an explicitly approved next-open order semantic) with an
+  observed timestamp;
+- stale/missing market data rejection;
+- a relative 10% stop intent propagated through StrategySignal, Aggregator, and
+  OrderRequest;
+- OMS Paper setting the absolute stop from the actual fill price;
+- `holding_type=swing` surviving through OrderRequest into the stored position.
 
 ## Observation Report
 
-After publish and downstream processing, reconcile the detector output with
-Supabase:
+While publishing is blocked, generate a candidate-only report:
 
 ```bash
 cd /home/hiroyuki/workspaces/roboinvest
+SIGNAL_DATE=YYYY-MM-DD
 set -a && . infra/.op.service-account.env && set +a
 op run --env-file infra/env.production -- \
   uv run python scripts/report-event-paper-observation.py \
-    --candidates-json out/event-paper-observation/published-candidates.json \
+    --candidates-json "out/event-paper-observation/candidates-${SIGNAL_DATE}.json" \
     --output-json out/event-paper-observation/observation-report.json \
-    --output-csv out/event-paper-observation/observation-report.csv
+    --output-csv out/event-paper-observation/observation-report.csv \
+    --skip-supabase
 ```
 
-Use `--skip-supabase` only to generate a candidate-only report. A complete
-paper observation report should include `strategy_logs`, `aggregator_logs`,
-`trades_paper`, and `positions`.
+No new event-cluster downstream rows should exist while publication is blocked.
 
 Key statuses:
 

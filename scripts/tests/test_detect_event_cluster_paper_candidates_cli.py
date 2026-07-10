@@ -1,17 +1,11 @@
-import asyncio
-import base64
 import csv
 import importlib.util
 import json
 import sys
 from datetime import UTC, date, datetime, timedelta
-from decimal import Decimal
 from pathlib import Path
 
-import httpx
 import pytest
-from trade_contracts.enums import Action, SignalSource, TradingStyle
-from trade_contracts.signal import StrategySignal
 
 
 def _load_module():
@@ -36,17 +30,61 @@ def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
     )
 
 
-def _write_ohlcv(path: Path) -> None:
+def _write_completed_financial_fetch(
+    path: Path,
+    rows: list[dict[str, object]],
+    *,
+    target_date: date,
+    fetched_at: str,
+) -> None:
+    target_fetched_at = datetime.fromisoformat(fetched_at).astimezone(UTC).isoformat()
+    tagged: list[dict[str, object]] = []
+    target_count = 0
+    for row in rows:
+        disclosed_date = date.fromisoformat(str(row.get("DiscDate") or row["DisclosedDate"]))
+        row_fetched_at = (
+            target_fetched_at
+            if disclosed_date == target_date
+            else datetime.combine(
+                disclosed_date,
+                datetime.min.time(),
+                tzinfo=UTC,
+            )
+            .replace(hour=7)
+            .isoformat()
+        )
+        tagged.append({**row, "_roboinvest_fetched_at": row_fetched_at})
+        if disclosed_date == target_date:
+            target_count += 1
+    tagged.append(
+        {
+            "_roboinvest_record_type": "fetch_metadata",
+            "_roboinvest_target_date": target_date.isoformat(),
+            "_roboinvest_fetched_at": target_fetched_at,
+            "_roboinvest_row_count": target_count,
+        }
+    )
+    _write_jsonl(path, tagged)
+
+
+def _write_ohlcv(
+    path: Path,
+    *,
+    end_date: date | None = None,
+    future_open_offset: int = 1,
+) -> None:
     start = date(2026, 1, 1)
     rows = []
     for idx in range(55):
         current = start + timedelta(days=idx)
+        if end_date is not None and current > end_date:
+            continue
         close = 1000 + idx
         rows.append(
             {
                 "symbol": "7203",
                 "date": current.isoformat(),
-                "open": close + 1,
+                "open": close + (future_open_offset if current > date(2026, 1, 21) else 1),
                 "high": close + 10,
                 "low": close - 10,
                 "close": close,
@@ -256,6 +294,51 @@ def _one_week_summary_rows() -> list[dict[str, object]]:
     ]
 
 
+def _run_single_day_detection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    suffix: str,
+    ohlcv_end_date: date | None,
+    future_open_offset: int = 1,
+    fetched_at: str = "2026-01-21T15:30:00+00:00",
+) -> dict[str, object]:
+    financial_path = tmp_path / f"financial-{suffix}.jsonl"
+    ohlcv_path = tmp_path / f"ohlcv-{suffix}.csv"
+    output_json = tmp_path / f"candidates-{suffix}.json"
+    output_csv = tmp_path / f"candidates-{suffix}.csv"
+    _write_completed_financial_fetch(
+        financial_path,
+        _summary_rows(),
+        target_date=date(2026, 1, 21),
+        fetched_at=fetched_at,
+    )
+    _write_ohlcv(
+        ohlcv_path,
+        end_date=ohlcv_end_date,
+        future_open_offset=future_open_offset,
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "detect-event-cluster-paper-candidates.py",
+            "--financial-summary-jsonl",
+            str(financial_path),
+            "--ohlcv",
+            str(ohlcv_path),
+            "--output-json",
+            str(output_json),
+            "--output-csv",
+            str(output_csv),
+            "--signal-date",
+            "2026-01-21",
+        ],
+    )
+    assert detect_event_cluster_paper_candidates.main() == 0
+    return json.loads(output_json.read_text(encoding="utf-8"))
+
+
 def test_detect_cluster_v1_candidates_dry_run(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -264,8 +347,200 @@ def test_detect_cluster_v1_candidates_dry_run(
     ohlcv_path = tmp_path / "ohlcv.csv"
     output_json = tmp_path / "candidates.json"
     output_csv = tmp_path / "candidates.csv"
-    _write_jsonl(financial_path, _summary_rows())
+    _write_completed_financial_fetch(
+        financial_path,
+        _summary_rows(),
+        target_date=date(2026, 1, 21),
+        fetched_at="2026-01-21T15:30:00+00:00",
+    )
     _write_ohlcv(ohlcv_path)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "detect-event-cluster-paper-candidates.py",
+            "--financial-summary-jsonl",
+            str(financial_path),
+            "--ohlcv",
+            str(ohlcv_path),
+            "--output-json",
+            str(output_json),
+            "--output-csv",
+            str(output_csv),
+            "--signal-date",
+            "2026-01-21",
+        ],
+    )
+
+    assert detect_event_cluster_paper_candidates.main() == 0
+
+    payload = json.loads(output_json.read_text(encoding="utf-8"))
+    assert payload["mode"] == "dry_run"
+    assert payload["publish_enabled"] is False
+    assert payload["causality_verified"] is True
+    assert payload["causality"]["receipt_provenance"] == "export_metadata"
+    assert payload["rule"]["catastrophic_stop_pct"] == "-0.10"
+    assert payload["summary"]["candidate_count"] == 1
+    candidate = payload["candidates"][0]
+    assert candidate["candidate_id"] == (
+        "event_cluster_earnings_dividend_value_guard_fixed20_stop_v1_research"
+    )
+    assert candidate["symbol"] == "7203"
+    assert candidate["has_earnings_result"] is True
+    assert candidate["has_dividend_increase"] is True
+    assert candidate["max_hold_days"] == 20
+    assert candidate["valuation_reference_price"] == "1020"
+    assert candidate["data_available_at"] == "2026-01-21T15:30:00+00:00"
+    assert candidate["feature_cutoff_at"] == "2026-01-21T15:30:00+00:00"
+    assert candidate["catastrophic_stop_pct"] == "-0.10"
+    assert candidate["entry_price_status"] == "unresolved_until_fresh_market_observation"
+    assert "entry_price_assumption" not in candidate
+    assert "stop_loss_price" not in candidate
+    assert candidate["publish_ready"] is False
+    csv_text = output_csv.read_text(encoding="utf-8")
+    assert "publish_ready" in csv_text
+    assert "False" in csv_text
+
+
+def test_candidate_can_be_detected_without_entry_day_ohlcv(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = _run_single_day_detection(
+        tmp_path,
+        monkeypatch,
+        suffix="through-signal-date",
+        ohlcv_end_date=date(2026, 1, 21),
+    )
+
+    assert payload["causality_verified"] is True
+    assert payload["summary"]["event_count"] == 2
+    assert payload["summary"]["candidate_count"] == 1
+    candidate = payload["candidates"][0]
+    assert candidate["entry_date"] == "2026-01-22"
+    assert candidate["valuation_reference_bar_date"] == "2026-01-21"
+    assert "entry_price_assumption" not in candidate
+
+
+def test_candidate_artifact_is_invariant_to_future_bar_removal_and_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    truncated = _run_single_day_detection(
+        tmp_path,
+        monkeypatch,
+        suffix="truncated",
+        ohlcv_end_date=date(2026, 1, 21),
+    )
+    mutated_future = _run_single_day_detection(
+        tmp_path,
+        monkeypatch,
+        suffix="mutated-future",
+        ohlcv_end_date=None,
+        future_open_offset=50_000,
+    )
+
+    assert truncated["candidates"] == mutated_future["candidates"]
+    assert truncated["exclusions"] == mutated_future["exclusions"]
+
+
+def test_late_jquants_receipt_is_recorded_and_excluded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = _run_single_day_detection(
+        tmp_path,
+        monkeypatch,
+        suffix="late-receipt",
+        ohlcv_end_date=date(2026, 1, 21),
+        fetched_at="2026-01-22T01:00:00+00:00",
+    )
+
+    assert payload["causality_verified"] is False
+    assert payload["summary"]["candidate_count"] == 0
+    assert payload["summary"]["late_data_receipt_count"] == 2
+    assert {row["reason"] for row in payload["exclusions"]} == {"late_data_receipt"}
+
+
+def test_missing_signal_date_ohlcv_is_recorded_and_excluded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = _run_single_day_detection(
+        tmp_path,
+        monkeypatch,
+        suffix="missing-signal-bar",
+        ohlcv_end_date=date(2026, 1, 20),
+    )
+
+    assert payload["causality_verified"] is True
+    assert payload["summary"]["candidate_count"] == 0
+    assert payload["summary"]["missing_signal_date_ohlcv_count"] == 2
+    assert {row["reason"] for row in payload["exclusions"]} == {"missing_signal_date_ohlcv"}
+
+
+@pytest.mark.parametrize(
+    ("fetched_at", "expected_verified"),
+    [
+        ("2026-01-21T07:00:00+00:00", False),
+        ("2026-01-21T15:30:00+00:00", True),
+        ("2026-01-22T01:00:00+00:00", False),
+    ],
+)
+def test_zero_row_fetch_requires_complete_source_coverage_window(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fetched_at: str,
+    expected_verified: bool,
+) -> None:
+    financial_path = tmp_path / "financial-empty.jsonl"
+    ohlcv_path = tmp_path / "ohlcv-empty.csv"
+    output_json = tmp_path / "candidates-empty.json"
+    output_csv = tmp_path / "candidates-empty.csv"
+    _write_completed_financial_fetch(
+        financial_path,
+        [],
+        target_date=date(2026, 1, 21),
+        fetched_at=fetched_at,
+    )
+    _write_ohlcv(ohlcv_path, end_date=date(2026, 1, 21))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "detect-event-cluster-paper-candidates.py",
+            "--financial-summary-jsonl",
+            str(financial_path),
+            "--ohlcv",
+            str(ohlcv_path),
+            "--output-json",
+            str(output_json),
+            "--output-csv",
+            str(output_csv),
+            "--signal-date",
+            "2026-01-21",
+        ],
+    )
+
+    assert detect_event_cluster_paper_candidates.main() == 0
+
+    payload = json.loads(output_json.read_text(encoding="utf-8"))
+    assert payload["causality_verified"] is expected_verified
+    assert payload["causality"]["source_coverage_window_verified"] is expected_verified
+    assert payload["summary"]["event_count"] == 0
+    assert payload["summary"]["candidate_count"] == 0
+
+
+def test_unmarked_empty_archive_is_not_causally_verified(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    financial_path = tmp_path / "financial-unmarked-empty.jsonl"
+    ohlcv_path = tmp_path / "ohlcv-unmarked-empty.csv"
+    output_json = tmp_path / "candidates-unmarked-empty.json"
+    output_csv = tmp_path / "candidates-unmarked-empty.csv"
+    financial_path.write_text("", encoding="utf-8")
+    _write_ohlcv(ohlcv_path, end_date=date(2026, 1, 21))
     monkeypatch.setattr(
         sys,
         "argv",
@@ -289,23 +564,61 @@ def test_detect_cluster_v1_candidates_dry_run(
     assert detect_event_cluster_paper_candidates.main() == 0
 
     payload = json.loads(output_json.read_text(encoding="utf-8"))
-    assert payload["mode"] == "dry_run"
-    assert payload["publish_enabled"] is False
-    assert payload["rule"]["catastrophic_stop_pct"] == "-0.10"
-    assert payload["summary"]["candidate_count"] == 1
-    candidate = payload["candidates"][0]
-    assert candidate["candidate_id"] == (
-        "event_cluster_earnings_dividend_value_guard_fixed20_stop_v1_research"
+    assert payload["causality_verified"] is False
+    assert payload["causality"]["receipt_provenance"] == "explicit_cli_unverified"
+
+
+def test_latest_completion_marker_can_repair_an_older_malformed_marker() -> None:
+    rows = [
+        {
+            "_roboinvest_record_type": "fetch_metadata",
+            "_roboinvest_target_date": "2026-01-21",
+        },
+        {
+            "Code": "72030",
+            "DiscDate": "2026-01-21",
+            "_roboinvest_fetched_at": "2026-01-21T15:30:00+00:00",
+        },
+        {
+            "_roboinvest_record_type": "fetch_metadata",
+            "_roboinvest_target_date": "2026-01-21",
+            "_roboinvest_fetched_at": "2026-01-21T15:30:00+00:00",
+            "_roboinvest_row_count": 1,
+        },
+    ]
+
+    fetched_at, complete = detect_event_cluster_paper_candidates.validated_fetch_metadata(
+        rows,
+        signal_date=date(2026, 1, 21),
     )
-    assert candidate["symbol"] == "7203"
-    assert candidate["has_earnings_result"] is True
-    assert candidate["has_dividend_increase"] is True
-    assert candidate["max_hold_days"] == 20
-    assert candidate["stop_loss_price"] == "919.80"
-    assert candidate["publish_ready"] is False
-    csv_text = output_csv.read_text(encoding="utf-8")
-    assert "publish_ready" in csv_text
-    assert "False" in csv_text
+
+    assert fetched_at == datetime(2026, 1, 21, 15, 30, tzinfo=UTC)
+    assert complete is True
+
+
+def test_malformed_latest_completion_marker_is_not_verified() -> None:
+    rows = [
+        {
+            "_roboinvest_record_type": "fetch_metadata",
+            "_roboinvest_target_date": "2026-01-21",
+            "_roboinvest_fetched_at": "2026-01-21T15:30:00+00:00",
+            "_roboinvest_row_count": 0,
+        },
+        {
+            "_roboinvest_record_type": "fetch_metadata",
+            "_roboinvest_target_date": "2026-01-21",
+            "_roboinvest_fetched_at": "not-a-timestamp",
+            "_roboinvest_row_count": 0,
+        },
+    ]
+
+    fetched_at, complete = detect_event_cluster_paper_candidates.validated_fetch_metadata(
+        rows,
+        signal_date=date(2026, 1, 21),
+    )
+
+    assert fetched_at is None
+    assert complete is False
 
 
 def test_one_week_detection_fixture_matches_research_rule(
@@ -344,7 +657,12 @@ def test_one_week_detection_fixture_matches_research_rule(
     assert payload["paper_live_enabled"] is False
     assert payload["rule"]["catastrophic_stop_pct"] == "-0.10"
     assert payload["summary"] == {
+        "event_count": 10,
         "observation_count": 10,
+        "late_data_receipt_count": 0,
+        "fetched_before_disclosure_count": 0,
+        "missing_signal_date_ohlcv_count": 0,
+        "missing_feature_history_count": 0,
         "candidate_count": 2,
         "exclusion_count": 1,
         "published_count": 0,
@@ -354,7 +672,9 @@ def test_one_week_detection_fixture_matches_research_rule(
         ("9984", "2026-01-22"),
     ]
     assert payload["candidates"][0]["min_forecast_per"] == "8.425"
-    assert payload["candidates"][0]["stop_loss_price"] == "911.70"
+    assert payload["candidates"][0]["entry_price_status"] == (
+        "unresolved_until_fresh_market_observation"
+    )
     assert payload["candidates"][1]["min_forecast_per"] is None
     assert [
         (row["symbol"], row["signal_date"], row["reason"], row["min_forecast_per"])
@@ -370,7 +690,12 @@ def test_signal_date_filter_keeps_one_day_from_one_week_fixture(
     ohlcv_path = tmp_path / "ohlcv-one-week.csv"
     output_json = tmp_path / "candidates-filtered.json"
     output_csv = tmp_path / "candidates-filtered.csv"
-    _write_jsonl(financial_path, _one_week_summary_rows())
+    _write_completed_financial_fetch(
+        financial_path,
+        _one_week_summary_rows(),
+        target_date=date(2026, 1, 20),
+        fetched_at="2026-01-20T15:30:00+00:00",
+    )
     _write_one_week_ohlcv(ohlcv_path)
     monkeypatch.setattr(
         sys,
@@ -387,8 +712,6 @@ def test_signal_date_filter_keeps_one_day_from_one_week_fixture(
             str(output_csv),
             "--signal-date",
             "2026-01-20",
-            "--fetched-at",
-            "2026-01-23T07:00:00+00:00",
         ],
     )
 
@@ -397,7 +720,12 @@ def test_signal_date_filter_keeps_one_day_from_one_week_fixture(
     payload = json.loads(output_json.read_text(encoding="utf-8"))
     assert payload["signal_date"] == "2026-01-20"
     assert payload["summary"] == {
+        "event_count": 3,
         "observation_count": 3,
+        "late_data_receipt_count": 0,
+        "fetched_before_disclosure_count": 0,
+        "missing_signal_date_ohlcv_count": 0,
+        "missing_feature_history_count": 0,
         "candidate_count": 1,
         "exclusion_count": 0,
         "published_count": 0,
@@ -407,124 +735,7 @@ def test_signal_date_filter_keeps_one_day_from_one_week_fixture(
     ]
 
 
-def _publish_candidate() -> dict[str, object]:
-    return {
-        "candidate_id": "event_cluster_earnings_dividend_value_guard_fixed20_stop_v1_research",
-        "cluster_id": "cluster-1",
-        "observation_id": "obs-1",
-        "event_id": "event-1",
-        "event_ids": ["event-1", "event-2"],
-        "symbol": "7203",
-        "signal_date": "2026-01-20",
-        "entry_date": "2026-01-21",
-        "entry_price_assumption": "1013",
-        "stop_loss_price": "911.70",
-        "max_hold_days": 20,
-        "min_forecast_per": "8.425",
-        "publish_ready": True,
-    }
-
-
-def test_publish_requires_paper_trade_mode() -> None:
-    async def _supabase_handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/rest/v1/system_status"
-        return httpx.Response(200, json=[{"trade_mode": "live"}])
-
-    async def _pubsub_handler(request: httpx.Request) -> httpx.Response:
-        raise AssertionError("publish must not be called when trade_mode is live")
-
-    with pytest.raises(detect_event_cluster_paper_candidates.PreflightError):
-        asyncio.run(
-            detect_event_cluster_paper_candidates.publish_paper_candidates(
-                [_publish_candidate()],
-                settings=detect_event_cluster_paper_candidates.PublishSettings(
-                    supabase_url="https://example.supabase.co",
-                    supabase_secret_key="k",
-                    pubsub_project_id="trade-ai-dev",
-                ),
-                supabase_transport=httpx.MockTransport(_supabase_handler),
-                pubsub_transport=httpx.MockTransport(_pubsub_handler),
-            )
-        )
-
-
-def test_publish_paper_candidates_publishes_strategy_signal() -> None:
-    published: list[httpx.Request] = []
-    strategy_log_requests: list[httpx.Request] = []
-
-    async def _supabase_handler(request: httpx.Request) -> httpx.Response:
-        if request.method == "GET" and request.url.path == "/rest/v1/system_status":
-            return httpx.Response(200, json=[{"trade_mode": "paper"}])
-        if request.method == "POST" and request.url.path == "/rest/v1/strategy_logs":
-            strategy_log_requests.append(request)
-            return httpx.Response(201, json=[])
-        return httpx.Response(404)
-
-    async def _pubsub_handler(request: httpx.Request) -> httpx.Response:
-        published.append(request)
-        return httpx.Response(200, json={"messageIds": ["pub-1"]})
-
-    result = asyncio.run(
-        detect_event_cluster_paper_candidates.publish_paper_candidates(
-            [_publish_candidate()],
-            settings=detect_event_cluster_paper_candidates.PublishSettings(
-                supabase_url="https://example.supabase.co",
-                supabase_secret_key="k",
-                pubsub_project_id="trade-ai-dev",
-                pubsub_topic_signals="strategy-signals-a",
-                pubsub_emulator_host="pubsub:8085",
-                confidence=0.51,
-            ),
-            now=datetime(2026, 1, 21, 0, 1, tzinfo=UTC),
-            supabase_transport=httpx.MockTransport(_supabase_handler),
-            pubsub_transport=httpx.MockTransport(_pubsub_handler),
-        )
-    )
-
-    assert result == [
-        {
-            "message_id": "pub-1",
-            "signal_id": result[0]["signal_id"],
-            "symbol": "7203",
-            "topic": "strategy-signals-a",
-        }
-    ]
-    assert len(strategy_log_requests) == 1
-    log_request = strategy_log_requests[0]
-    assert log_request.url.params["on_conflict"] == "signal_id"
-    assert log_request.headers["Prefer"] == "resolution=merge-duplicates,return=minimal"
-    log_rows = json.loads(log_request.content.decode())
-    assert len(log_rows) == 1
-    assert log_rows[0]["source"] == "RULE"
-    assert log_rows[0]["symbol"] == "7203"
-    assert log_rows[0]["action"] == "BUY"
-    assert log_rows[0]["reasoning"]
-    assert len(published) == 1
-    request = published[0]
-    assert request.url.path == "/v1/projects/trade-ai-dev/topics/strategy-signals-a:publish"
-    body = json.loads(request.content.decode())
-    message = body["messages"][0]
-    assert message["attributes"] == {
-        "symbol": "7203",
-        "source": "RULE",
-        "candidate_id": "event_cluster_earnings_dividend_value_guard_fixed20_stop_v1_research",
-        "mode": "paper",
-    }
-    signal = StrategySignal.model_validate_json(base64.b64decode(message["data"]))
-    assert log_rows[0]["signal_id"] == str(signal.signal_id)
-    assert signal.source is SignalSource.RULE
-    assert signal.action is Action.BUY
-    assert signal.symbol == "7203"
-    assert signal.price == Decimal("1013")
-    assert signal.confidence == 0.51
-    assert signal.holding_type is TradingStyle.SWING
-    assert signal.stop_loss_price == Decimal("911.70")
-    assert signal.max_hold_days == 20
-    assert signal.created_at == datetime(2026, 1, 21, 0, 1, tzinfo=UTC)
-    assert json.loads(signal.reasoning or "{}")["mode"] == "paper_observation"
-
-
-def test_main_publish_requires_env_flag(
+def test_main_publish_is_disabled_until_execution_intent_is_causal(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -534,7 +745,6 @@ def test_main_publish_requires_env_flag(
     output_csv = tmp_path / "candidates.csv"
     _write_jsonl(financial_path, _summary_rows())
     _write_ohlcv(ohlcv_path)
-    monkeypatch.delenv("EVENT_CLUSTER_PAPER_PUBLISH_ENABLED", raising=False)
     monkeypatch.setattr(
         sys,
         "argv",
@@ -557,5 +767,7 @@ def test_main_publish_requires_env_flag(
     with pytest.raises(SystemExit) as exc_info:
         detect_event_cluster_paper_candidates.main()
 
-    assert "EVENT_CLUSTER_PAPER_PUBLISH_ENABLED=true" in str(exc_info.value)
+    message = str(exc_info.value)
+    assert "event paper publish is disabled" in message
+    assert "fill-anchored catastrophic stop" in message
     assert not output_json.exists()

@@ -7,7 +7,9 @@ rows and structured service logs.
 
 - `TRADE_MODE=paper`
 - day strategy: `relative_momentum`
-- event-cluster swing candidates for signal date `2026-07-09`: `0`
+- legacy event-cluster detector result for signal date `2026-07-09`: `0`
+  (unreliable/inconclusive because the audited detector required T+1 OHLCV;
+  this is not evidence of candidate absence or presence)
 - live trades: `0`
 - open paper/live positions after close: `0 / 0`
 
@@ -32,6 +34,8 @@ comparable with cost-adjusted research net PnL.
 - A duplicate `4722` SELL was safely rejected as `no_position_for_sell` after
   the position had already closed.
 - No `ERROR`, `CRITICAL`, or traceback was observed in the close review.
+- No event-cluster swing signals were published. The legacy zero-candidate row
+  is retained only as an operational record, not as strategy evidence.
 - This observation does not restore `relative_momentum` to paper/live candidate
   status; its OOS rejection remains controlling.
 

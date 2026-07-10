@@ -109,8 +109,12 @@ rejections above.
 - `2026-07-09`: 2 closed day-paper trades, gross execution PnL `-1,300 JPY`.
 - `2026-07-10`: 4 closed day-paper trades, gross execution PnL `+2,800 JPY`.
 - Both sessions ended with no open paper or live positions.
-- The event-cluster swing detector produced zero candidates for signal dates
-  `2026-07-08` and `2026-07-09`; no swing signals were published.
+- The legacy event-cluster detector reported zero candidates for signal dates
+  `2026-07-08` and `2026-07-09`, but the 2026-07-10 causality audit showed that
+  it required T+1 OHLCV before it could construct a candidate. Those zero rows
+  are unreliable and inconclusive because of structural false-zero risk; they
+  establish neither candidate absence nor presence. No swing signals were
+  published.
 
 The July paper PnL is calculated from `trades_paper` fill prices and excludes a
 separate commission/tax field because that production table does not store one.

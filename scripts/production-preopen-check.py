@@ -33,7 +33,7 @@ import sys
 import tempfile
 import time
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from datetime import time as datetime_time
 from decimal import Decimal
 from pathlib import Path
@@ -44,6 +44,7 @@ import httpx
 from google.api_core.exceptions import GoogleAPICallError, NotFound
 from google.cloud import pubsub_v1
 from trade_contracts.scanner_gate import ScannerGateThresholds, scanner_gate_reject_reason
+from universe_scanner.calendar import previous_business_day
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 COMPOSE_FILE = REPO_ROOT / "infra" / "docker-compose.prod.yml"
@@ -56,6 +57,7 @@ SMOKE_TOPIC = "adr-0001-smoke-test"
 SMOKE_SUBSCRIPTION = "adr-0001-smoke-test-sub"
 EVENT_CLUSTER_CANDIDATE_ID = "event_cluster_earnings_dividend_value_guard_fixed20_stop_v1_research"
 EVENT_CLUSTER_MAX_HOLD_DAYS = 20
+EVENT_CLUSTER_CAT_STOP_PCT = "-0.10"
 
 SUPABASE_TABLES = (
     "system_status",
@@ -734,15 +736,36 @@ def check_swing_paper_candidates(reporter: Reporter, args: argparse.Namespace) -
         )
 
     mode = str(payload.get("mode", ""))
-    if mode in {"dry_run", "paper_publish"}:
+    if mode == "dry_run":
         reporter.emit("OK", "candidate mode", mode)
     else:
-        reporter.emit("NG", "candidate mode", mode or "missing")
+        reporter.emit("NG", "candidate mode", f"{mode or 'missing'} (dry_run required)")
+
+    causality = payload.get("causality") if isinstance(payload.get("causality"), dict) else {}
+    if (
+        payload.get("causality_verified") is True
+        and causality.get("candidate_features_use_forward_bars") is False
+        and causality.get("candidate_artifact_contains_entry_price") is False
+        and causality.get("entry_date_source") == "tse_business_calendar"
+        and causality.get("data_receipt_checked") is True
+        and causality.get("receipt_provenance") == "export_metadata"
+        and causality.get("fetch_completion_verified") is True
+        and causality.get("source_coverage_window_verified") is True
+        and causality.get("paper_publish_disabled") is True
+    ):
+        reporter.emit("OK", "candidate causality", "verified")
+    else:
+        reporter.emit("NG", "candidate causality", "missing or unsafe causality metadata")
 
     if payload.get("paper_live_enabled") is False:
         reporter.emit("OK", "paper_live_enabled", "false")
     else:
         reporter.emit("NG", "paper_live_enabled", str(payload.get("paper_live_enabled")))
+
+    if payload.get("publish_enabled") is False and payload.get("paper_publish_enabled") is False:
+        reporter.emit("OK", "paper publish disabled", "true")
+    else:
+        reporter.emit("NG", "paper publish disabled", "artifact is publish-enabled")
 
     rule = payload.get("rule") if isinstance(payload.get("rule"), dict) else {}
     rule_max_hold = rule.get("max_hold_days")
@@ -754,11 +777,40 @@ def check_swing_paper_candidates(reporter: Reporter, args: argparse.Namespace) -
             "rule max_hold_days",
             f"actual={rule_max_hold!r} expected={EVENT_CLUSTER_MAX_HOLD_DAYS}",
         )
+    rule_stop = str(rule.get("catastrophic_stop_pct", ""))
+    if rule_stop == EVENT_CLUSTER_CAT_STOP_PCT:
+        reporter.emit("OK", "rule catastrophic_stop_pct", rule_stop)
+    else:
+        reporter.emit(
+            "NG",
+            "rule catastrophic_stop_pct",
+            f"actual={rule_stop or '<missing>'} expected={EVENT_CLUSTER_CAT_STOP_PCT}",
+        )
 
-    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
-    candidates = payload.get("candidates") if isinstance(payload.get("candidates"), list) else []
-    candidate_count = _coerce_int(summary.get("candidate_count"), default=len(candidates))
-    published_count = _coerce_int(summary.get("published_count"), default=0)
+    summary_value = payload.get("summary")
+    if isinstance(summary_value, dict):
+        summary = summary_value
+    else:
+        summary = {}
+        reporter.emit("NG", "candidate summary", "missing or not an object")
+    candidates_value = payload.get("candidates")
+    if isinstance(candidates_value, list):
+        candidates = candidates_value
+    else:
+        candidates = []
+        reporter.emit("NG", "candidate rows", "missing or not a list")
+    published_value = payload.get("published")
+    published = published_value if isinstance(published_value, list) else []
+    candidate_count_value = summary.get("candidate_count")
+    published_count_value = summary.get("published_count")
+    candidate_count = (
+        candidate_count_value if _is_nonnegative_int(candidate_count_value) else len(candidates)
+    )
+    published_count = published_count_value if _is_nonnegative_int(published_count_value) else 0
+    if not _is_nonnegative_int(candidate_count_value):
+        reporter.emit("NG", "summary candidate_count", repr(candidate_count_value))
+    if not _is_nonnegative_int(published_count_value):
+        reporter.emit("NG", "summary published_count", repr(published_count_value))
     signal_date = payload.get("signal_date") or "<all>"
     detail = (
         f"signal_date={signal_date} candidates={candidate_count} "
@@ -770,6 +822,140 @@ def check_swing_paper_candidates(reporter: Reporter, args: argparse.Namespace) -
         reporter.emit("NG", "swing candidate count", detail)
     else:
         reporter.emit("WARN", "swing candidate count", detail)
+
+    if candidate_count == len(candidates):
+        reporter.emit("OK", "candidate count consistency", str(candidate_count))
+    else:
+        reporter.emit(
+            "NG",
+            "candidate count consistency",
+            f"summary={candidate_count} rows={len(candidates)}",
+        )
+
+    artifact_signal_date = _parse_iso_date(payload.get("signal_date"))
+    if artifact_signal_date is None:
+        reporter.emit("NG", "candidate signal_date", str(payload.get("signal_date") or "missing"))
+    else:
+        reporter.emit("OK", "candidate signal_date", artifact_signal_date.isoformat())
+
+    target_date = getattr(args, "target_date", None) or datetime.now(ZoneInfo("Asia/Tokyo")).date()
+    expected_signal_date = previous_business_day(target_date)
+    if artifact_signal_date == expected_signal_date:
+        reporter.emit(
+            "OK",
+            "candidate artifact target date",
+            f"signal={expected_signal_date} entry={target_date}",
+        )
+    else:
+        reporter.emit(
+            "NG",
+            "candidate artifact target date",
+            f"signal={artifact_signal_date} expected={expected_signal_date} entry={target_date}",
+        )
+    artifact_fetched_at = _parse_iso_datetime(payload.get("fetched_at"))
+    source_coverage_start = (
+        None
+        if artifact_signal_date is None
+        else datetime.combine(
+            artifact_signal_date + timedelta(days=1),
+            datetime_time(0, 0),
+            tzinfo=ZoneInfo("Asia/Tokyo"),
+        )
+    )
+    entry_cutoff = datetime.combine(
+        target_date,
+        datetime_time(9, 0),
+        tzinfo=ZoneInfo("Asia/Tokyo"),
+    )
+    if (
+        artifact_fetched_at is not None
+        and source_coverage_start is not None
+        and source_coverage_start <= artifact_fetched_at < entry_cutoff
+    ):
+        reporter.emit("OK", "candidate source coverage window", artifact_fetched_at.isoformat())
+    else:
+        reporter.emit(
+            "NG",
+            "candidate source coverage window",
+            f"fetched_at={payload.get('fetched_at')!r} start={source_coverage_start} "
+            f"cutoff={entry_cutoff}",
+        )
+    bad_candidate_dates: list[str] = []
+    bad_reference_dates: list[str] = []
+    bad_lineage: list[str] = []
+    bad_publish_ready: list[str] = []
+    for item in candidates:
+        if not isinstance(item, dict):
+            bad_candidate_dates.append("<non-object>")
+            continue
+        symbol = str(item.get("symbol", "<missing>"))
+        signal_date = _parse_iso_date(item.get("signal_date"))
+        entry_date = _parse_iso_date(item.get("entry_date"))
+        if (
+            signal_date is None
+            or entry_date is None
+            or signal_date != artifact_signal_date
+            or entry_date != target_date
+        ):
+            bad_candidate_dates.append(symbol)
+        reference_date = _parse_iso_date(item.get("valuation_reference_bar_date"))
+        reference_available = _parse_iso_datetime(item.get("valuation_reference_available_at"))
+        data_available = _parse_iso_datetime(item.get("data_available_at"))
+        feature_cutoff = _parse_iso_datetime(item.get("feature_cutoff_at"))
+        signal_bar_available = (
+            None
+            if signal_date is None
+            else datetime.combine(
+                signal_date,
+                datetime_time(15, 30),
+                tzinfo=ZoneInfo("Asia/Tokyo"),
+            )
+        )
+        if (
+            reference_date is None
+            or signal_date is None
+            or reference_date > signal_date
+            or (
+                data_available is not None
+                and signal_bar_available is not None
+                and data_available >= signal_bar_available
+                and reference_date != signal_date
+            )
+        ):
+            bad_reference_dates.append(symbol)
+        if (
+            reference_available is None
+            or data_available is None
+            or feature_cutoff is None
+            or reference_available > data_available
+            or feature_cutoff != data_available
+            or data_available != artifact_fetched_at
+        ):
+            bad_lineage.append(symbol)
+        if item.get("publish_ready") is not False:
+            bad_publish_ready.append(symbol)
+
+    if bad_candidate_dates:
+        reporter.emit("NG", "candidate dates", f"bad={','.join(bad_candidate_dates[:8])}")
+    elif candidates:
+        expected_entry = target_date.isoformat()
+        reporter.emit(
+            "OK", "candidate dates", f"signal={artifact_signal_date} entry={expected_entry}"
+        )
+    if bad_reference_dates:
+        reporter.emit(
+            "NG", "candidate valuation reference date", f"bad={','.join(bad_reference_dates[:8])}"
+        )
+    elif candidates:
+        reporter.emit("OK", "candidate valuation reference date", "causal for availability time")
+    if bad_lineage:
+        reporter.emit("NG", "candidate timing lineage", f"bad={','.join(bad_lineage[:8])}")
+    elif candidates:
+        reporter.emit("OK", "candidate timing lineage", "verified")
+    if bad_publish_ready:
+        reporter.emit("NG", "candidate publish_ready", f"bad={','.join(bad_publish_ready[:8])}")
+    elif candidates:
+        reporter.emit("OK", "candidate publish_ready", "false")
 
     bad_candidates = [
         str(item.get("symbol", "<missing>"))
@@ -785,21 +971,81 @@ def check_swing_paper_candidates(reporter: Reporter, args: argparse.Namespace) -
     elif candidates:
         reporter.emit("OK", "candidate max_hold_days", str(EVENT_CLUSTER_MAX_HOLD_DAYS))
 
-    if mode == "paper_publish" and published_count != candidate_count:
+    bad_stop_intents = [
+        str(item.get("symbol", "<missing>"))
+        for item in candidates
+        if isinstance(item, dict)
+        and str(item.get("catastrophic_stop_pct", "")) != EVENT_CLUSTER_CAT_STOP_PCT
+    ]
+    if bad_stop_intents:
+        reporter.emit(
+            "NG",
+            "candidate catastrophic_stop_pct",
+            f"bad={','.join(bad_stop_intents[:8])}",
+        )
+    elif candidates:
+        reporter.emit("OK", "candidate catastrophic_stop_pct", EVENT_CLUSTER_CAT_STOP_PCT)
+
+    bad_entry_statuses = [
+        str(item.get("symbol", "<missing>"))
+        for item in candidates
+        if isinstance(item, dict)
+        and item.get("entry_price_status") != "unresolved_until_fresh_market_observation"
+    ]
+    if bad_entry_statuses:
+        reporter.emit(
+            "NG",
+            "candidate entry price status",
+            f"bad={','.join(bad_entry_statuses[:8])}",
+        )
+    elif candidates:
+        reporter.emit("OK", "candidate entry price status", "unresolved")
+
+    forbidden_price_fields = {"entry_price", "entry_price_assumption", "price", "stop_loss_price"}
+    leaked_prices = [
+        str(item.get("symbol", "<missing>"))
+        for item in candidates
+        if isinstance(item, dict) and forbidden_price_fields.intersection(item)
+    ]
+    if leaked_prices:
+        reporter.emit("NG", "candidate forward price fields", f"bad={','.join(leaked_prices[:8])}")
+    elif candidates:
+        reporter.emit("OK", "candidate forward price fields", "absent")
+
+    if not isinstance(published_value, list):
+        reporter.emit("NG", "published rows", "missing or not a list")
+    elif published:
+        reporter.emit("NG", "published rows", f"expected=0 actual={len(published)}")
+    else:
+        reporter.emit("OK", "published rows", "0 (publish blocked)")
+
+    if published_count != 0 or published_count != len(published):
         reporter.emit(
             "NG",
             "published count",
-            f"published={published_count} candidates={candidate_count}",
+            f"summary={published_count} rows={len(published)} expected=0",
         )
-    elif mode == "paper_publish":
-        reporter.emit("OK", "published count", str(published_count))
+    else:
+        reporter.emit("OK", "published count", "0 (publish blocked)")
 
 
-def _coerce_int(value: Any, *, default: int) -> int:
+def _parse_iso_date(value: Any) -> date | None:
     try:
-        return int(value)
+        return date.fromisoformat(str(value))
     except (TypeError, ValueError):
-        return default
+        return None
+
+
+def _parse_iso_datetime(value: Any) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed.tzinfo is not None else None
+
+
+def _is_nonnegative_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
 def _scanner_gate_thresholds_from_env() -> ScannerGateThresholds:

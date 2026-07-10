@@ -3,6 +3,7 @@ from datetime import date
 from universe_scanner.calendar import (
     business_days_back,
     is_tse_business_day,
+    next_business_day,
     previous_business_day,
 )
 
@@ -34,6 +35,14 @@ def test_previous_business_day_skips_weekend():
 def test_previous_business_day_skips_holiday():
     # 2026-04-30 木曜。前営業日は 4-28 火曜 (4-29 は祝日)
     assert previous_business_day(date(2026, 4, 30)) == date(2026, 4, 28)
+
+
+def test_next_business_day_skips_weekend():
+    assert next_business_day(date(2026, 1, 16)) == date(2026, 1, 19)
+
+
+def test_next_business_day_skips_holiday():
+    assert next_business_day(date(2026, 4, 28)) == date(2026, 4, 30)
 
 
 def test_business_days_back_returns_oldest_of_window():

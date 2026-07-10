@@ -45,6 +45,7 @@ ALLOWED_DECISIONS = {
     "paper_observation_only",
     "observation_only",
     "no_candidates",
+    "inconclusive_detection",
 }
 ALLOWED_PNL_SEMANTICS = {
     "reported_realized",

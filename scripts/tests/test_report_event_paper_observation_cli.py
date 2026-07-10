@@ -72,6 +72,23 @@ def test_build_report_candidate_only_marks_dry_run() -> None:
     assert row["reconciliation_status"] == "dry_run_only"
 
 
+def test_build_report_accepts_causal_candidate_without_entry_price() -> None:
+    payload = _payload(published=False)
+    candidate = payload["candidates"][0]
+    candidate.pop("entry_price_assumption")
+    candidate.pop("stop_loss_price")
+    candidate["valuation_reference_price"] = "1020"
+    candidate["entry_price_status"] = "unresolved_until_fresh_market_observation"
+
+    report = report_event_paper_observation.build_report(payload, rows=None)
+
+    row = report["rows"][0]
+    assert row["intended_entry_price"] is None
+    assert row["stop_loss_price"] is None
+    assert row["entry_slippage_bps"] is None
+    assert row["reconciliation_status"] == "dry_run_only"
+
+
 def test_fetch_and_build_report_reconciles_open_position() -> None:
     requests: list[httpx.Request] = []
 

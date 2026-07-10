@@ -1,6 +1,6 @@
 # Handoff Memo (for coding AIs)
 
-最終更新: 2026-07-08 / branch: `main`
+最終更新: 2026-07-10 / branch: `fix/event-candidate-causality`
 
 このファイルは、次の coding AI が最初に読むための短い索引です。日次の長い運用ログはここに積まず、必要な詳細だけリンク先で確認してください。
 
@@ -19,15 +19,19 @@
 
 ## 2. Current State
 
-2026-07-05 時点の要点:
+2026-07-10 時点の要点:
 
 - 全 9 サービス + Dashboard は実装済み。
-- 2026-07-09 JST の最優先目的は swing paper observation。
-  手順と合格条件は [2026-07-09 Swing Paper Plan](handoff/2026-07-09-swing-paper-plan.md)。
-  day `relative_momentum` の損益を swing 検証の代替にしない。
-- 2026-07-08 は `STRATEGIES_ENABLED` no-op のまま paper 観測を始めたため、
-  スイング検証日としては失敗。`STRATEGIES_ENABLED=relative_momentum` に戻し、
-  `production-preopen-check.py` は no-op を NG とする。
+- 現在の最優先は event candidate の因果性修正。運用候補と研究用
+  forward label を分離し、J-Quants export の受信時刻 provenance と
+  signal-date OHLCV だけで dry-run artifact を再現可能にする。
+- event `--publish-paper` は fail closed。fresh observed price、fill 基準の
+  10% stop、`OrderRequest` への swing metadata 伝播が paper-path テストで
+  検証されるまで解除しない。
+- 2026-07-09 / 2026-07-10 の legacy detector による候補 0 件は、T+1 OHLCV
+  依存による構造的 false zero の可能性があるため unreliable / inconclusive。
+  候補不在の証拠にも、実在した証拠にも使わない。
+- day `relative_momentum` の損益は swing 検証の代替にしない。
 - 2026-07-06 JST paper observation の前日準備は完了。
   `production-preopen-check.py --expected-trade-mode paper --target-date 2026-07-06 --kabu-offline`
   で `OK 127 / WARN 2 / NG 0`。WARN は kabu station / Windows proxy 停止前提の
@@ -84,6 +88,21 @@
 ## 4. Active Follow-ups
 
 優先度が高い順:
+
+0. **2026-07-10 event candidate causality audit**
+   - 外部レビューで、event detector が T+1 OHLCV と実際の寄付値を候補生成、
+     `StrategySignal.price`、絶対 stop に使用していたことを確認。
+   - `fix/event-candidate-causality` では運用候補特徴量と研究用 forward label を分離し、
+     entry date を未来 OHLCV ではなく東証営業日カレンダーから解決する。
+  - 候補 artifact は entry price / absolute stop を持たず、最新 signal date の
+    OHLCV だけで生成できる。J-Quants exporter が記録した受信時刻
+    provenance を保持し、signal date 終了後から次営業日 09:00 JST 前までの
+    complete snapshot だけを運用 artifact として認める。
+   - legacy detector の `candidate_count=0` は構造的な偽陰性の可能性が
+     あるため unreliable / inconclusive。候補不在と断定しない。
+   - event `--publish-paper` は、fresh observed price、fill 基準 10% stop、
+     `OrderRequest` までの swing metadata 伝播を実装するまで fail closed。
+   - kill switch、PER threshold、20日 exit、-10% stop の戦略値は変更しない。
 
 0. **2026-06-23 strategy reset: 既存 intraday strategy は live 候補から外す**
    - 2026-06-24 に方針転換を ADR 化:

@@ -2,10 +2,12 @@
 
 Created: 2026-07-04
 
-Status: Phase 0 approved on 2026-07-04. Phase 1 dry-run detection, Phase 2
-paper-only publication, and Phase 3 observation reporting are implemented.
-Publication remains disabled by default unless
-`EVENT_CLUSTER_PAPER_PUBLISH_ENABLED=true` and `--publish-paper` are both set.
+Status: Phase 0 was approved on 2026-07-04. On 2026-07-10 an external audit
+found that operational detection depended on T+1 OHLCV and copied the future
+open into the signal price and absolute stop. Phase 1 is now causal dry-run
+detection only. Phase 2 paper publication is blocked regardless of environment
+flags until fresh observed pricing, relative stop intent, and fill-anchored
+absolute stops are implemented.
 
 This plan covers paper observation for
 `event_cluster_earnings_dividend_value_guard_fixed20_stop_v1_research`.
@@ -51,7 +53,7 @@ ADR-0004 Paper Observation Gate:
 | Matched random p75 or better | target p75 | Locked OOS portfolio percentile: 1M `0.737`, 2M `0.853`, 5M `0.927` | 1M FAIL, 2M/5M PASS |
 | `same_symbol_random_date` percentile | `>= 0.65` | 1M `0.737`, 2M `0.853`, 5M `0.927` | PASS |
 | Execution stress does not materially break result | positive stressed result | entry10_exit25: 1M PF `1.784`, 2M `2.015`, 5M `2.655`; exit50: 1M PF `1.808`, 2M `1.975`, 5M `2.568` | PASS |
-| Backtest data timing matches paper ordering | point-in-time event data, next open entry | Research dataset has point-in-time fields; live/paper event detection path still needs implementation and audit | BORROWED/IMPLEMENTATION NEEDED |
+| Backtest data timing matches paper ordering | point-in-time event data, next open entry | Causal dry-run detection is implemented; executable next-open/fill path remains blocked and unaudited | DRY-RUN PASS / EXECUTION NEEDED |
 | Prompt/model/feature schema can be frozen | required for AI path | This is LLM-free rule-only. Rule definition is frozen instead. | PASS BY SCOPE |
 
 The only numerical gap is 1M matched-random p75: `0.737 < 0.75`. The argument
@@ -109,76 +111,66 @@ These criteria must not be loosened after observing paper results.
 
 ### Data Flow
 
-Use the existing Pub/Sub route. Do not add service-to-service direct calls.
+The currently supported path stops at a causal artifact and watchlist capture:
 
 ```text
 J-Quants /fins/summary
   -> event cluster paper batch
-  -> StrategySignal(source=RULE) on strategy-signals-a
-  -> aggregator
-  -> UnifiedTradeSignal on trade-signals
-  -> gateway risk checks and trade_mode routing
-  -> paper-orders
-  -> oms-paper
-  -> positions / trades_paper
+  -> causal candidate/exclusion artifact
+  -> production-preopen-check artifact validation
+  -> watchlist market-data capture
+  -> no signal or order publication
 ```
 
-The event batch is a daily batch similar in shape to `universe-scanner`, but it
-does not bypass aggregator or Gateway. Gateway remains the only risk executor
-for 2% rule sizing, lot calculation, kill switch state, duplicate-position
-checks, and paper/live routing.
+If publication is restored, it must use the existing Pub/Sub route through
+Aggregator, Gateway, and OMS Paper. It must not add service-to-service direct
+calls or bypass Gateway. Gateway remains the only risk executor for 2% rule
+sizing, lot calculation, kill switch state, duplicate-position checks, and
+paper/live routing.
 
 ### Timing
 
-Separate event detection from order publication:
+Current causal dry-run sequence:
 
-1. Evening detection batch, after J-Quants financial summaries are available:
-   fetch the day's `/fins/summary` disclosures, evaluate the frozen cluster v1
-   rule, and write dry-run/event-candidate output.
+1. After the signal date has ended in JST, and before 09:00 JST on the next TSE
+   business day, fetch that date's `/fins/summary` disclosures with
+   exporter-recorded receipt provenance. Evaluate the frozen cluster v1 rule
+   and write candidate and exclusion output without consulting T+1 OHLCV.
 2. Next trading day pre-open preparation: ensure event symbols are in the
-   watchlist for market-data capture and verify `system_status.trade_mode =
-   paper`.
-3. Opening exit batch: run `oms-paper opening-swing-exits` before new entries
-   so due fixed-hold positions can close before same-day BUYs.
-4. Entry publication: publish fresh `StrategySignal` messages shortly before or
-   during the intended opening entry window. Do not publish the previous
-   evening because Gateway rejects stale signals after 300 seconds by default
-   and, more importantly, immediate downstream processing would no longer
-   represent next-session entry.
-5. Gateway routes only while `trade_mode=paper`; otherwise the event batch must
-   refuse to publish and leave a dry-run report.
+   watchlist for market-data capture only after
+   `production-preopen-check.py --swing-candidates-json` validates causality,
+   dates, receipt provenance, and the absence of executable price fields.
+3. At the intended entry session, capture fresh market data. Do not publish a
+   `StrategySignal`; `--publish-paper` remains fail closed.
+4. Produce a candidate-only report. No event-cluster rows should appear in
+   `strategy_logs`, `aggregator_logs`, `trades_paper`, or `positions`.
 
-### StrategySignal Contract Gap
+### Execution Contract Status and Remaining Gaps
 
-Current `StrategySignal` carries stop, target, trailing stop, `max_hold_days`,
-and `scheduled_exit_date`, but it does not carry `holding_type`. Aggregator
-sets `UnifiedTradeSignal.holding_type` from its global `default_holding_type`.
-Setting the global default to `swing` would affect unrelated signals and is not
-acceptable.
+`StrategySignal` already carries optional `holding_type`, and Aggregator uses
+it when present while preserving the existing day-trading default otherwise.
+That earlier contract gap is closed. The remaining execution gap is downstream:
+`OrderRequest` does not carry `holding_type`, so OMS Paper currently uses a
+process-level default for a new position.
 
-Phase 1 must therefore include a small contract change:
+The candidate artifact is intentionally non-executable. It contains the
+valuation reference and frozen `CAT_STOP_PCT=-0.10`, but contains neither an
+entry-price assumption nor an absolute `stop_loss_price`.
 
-- Add `holding_type: TradingStyle | None = None` to `StrategySignal`.
-- Update aggregator to use the signal's `holding_type` when present; otherwise
-  keep `ConsensusConfig.default_holding_type`.
-- Keep the default behavior unchanged for existing day-trading signals.
+Paper publication may be restored only after a separate implementation:
 
-The event batch should publish:
+- observes a fresh entry price with its timestamp and rejects stale or missing
+  market data;
+- propagates `holding_type=swing`, `max_hold_days=20`, and the relative 10% stop
+  intent through `StrategySignal`, Aggregator, Gateway, and `OrderRequest`;
+- uses the fresh observation for pre-fill risk validation without presenting it
+  as an actual fill;
+- has OMS Paper anchor the persisted absolute stop to the actual fill price as
+  `fill_price * (1 + CAT_STOP_PCT)`; and
+- covers the complete paper path with tests while leaving existing day signals
+  unchanged.
 
-- `source=RULE`
-- `action=BUY`
-- `holding_type=swing`
-- `confidence >= MIN_CONFIDENCE_RULE_ONLY` (default threshold is `0.5`)
-- `max_hold_days=20`
-- `stop_loss_price` equal to `entry_price * (1 + CAT_STOP_PCT)`, using the
-  frozen research value `CAT_STOP_PCT=-0.10`
-  and current entry-price assumption
-- `reasoning` with candidate ID, event IDs, disclosure timestamps, PER guard
-  status, and intended entry date
-
-`scheduled_exit_date` may be supplied by the batch when the TSE calendar is
-available. If omitted, OMS Paper currently derives it from `max_hold_days` at
-fill time via `nth_tse_business_day_after`.
+Until those conditions are met, there is no supported event publisher.
 
 ### Aggregator
 
@@ -187,13 +179,17 @@ RULE-only input becomes `signal_source=RULE` when confidence is above
 `MIN_CONFIDENCE_RULE_ONLY`. No consensus requirement is needed for this paper
 candidate.
 
-Acceptance checks for Phase 1:
+Acceptance checks before publication can resume:
 
 - RULE-only event signal emits exactly one `UnifiedTradeSignal`.
-- `holding_type=swing`, stop, `max_hold_days`, and `scheduled_exit_date` fields
-  survive aggregation.
+- `holding_type=swing`, relative stop intent, `max_hold_days`, and
+  `scheduled_exit_date` survive aggregation once the execution contract is
+  implemented.
 - Below-threshold confidence is rejected by existing source-specific threshold
   behavior.
+
+These are target execution checks, not authorization to publish in the current
+phase.
 
 ### Gateway
 
@@ -206,17 +202,21 @@ Gateway must remain unchanged in responsibility:
 - calculate lot size and enforce risk limits
 - route by `system_status.trade_mode`
 
-Event paper publication must add a preflight that refuses to publish when
-`system_status.trade_mode != paper`. This is an event-batch safety check; it
-does not replace Gateway's routing responsibility.
+The current detector refuses all publication. Any restored event publisher must
+also add a preflight that refuses to publish when
+`system_status.trade_mode != paper`. This event-batch safety check would not
+replace Gateway's routing responsibility.
 
 ### OMS Paper
 
-OMS Paper already supports swing positions, catastrophic stop monitoring, and
-`opening-swing-exits` for fixed-hold exits. Required Phase 1/2 checks:
+OMS Paper already supports swing positions, absolute-stop monitoring, and
+`opening-swing-exits` for fixed-hold exits. Before publication can be restored,
+the paper path must prove:
 
-- New BUY position persists `holding_type=swing`.
-- `stop_loss_price` persists.
+- New BUY position derives and persists `holding_type=swing` from the order,
+  not a process-wide default.
+- Absolute `stop_loss_price` is calculated from the actual paper fill using the
+  frozen relative 10% intent and then persists.
 - `max_hold_days=20` persists.
 - `scheduled_exit_date` is set either from the signal/order or by OMS Paper
   from the fill date plus 20 TSE business days.
@@ -225,27 +225,25 @@ OMS Paper already supports swing positions, catastrophic stop monitoring, and
 ## Operational Timeline
 
 ```text
-T day 15:30-18:00 JST
-  J-Quants summaries become available
-  event batch detects cluster v1 candidates
-  dry-run report written; no order publish
+T day through 23:59 JST
+  J-Quants disclosures accumulate; no final zero-candidate conclusion is made
 
-T+1 pre-open
+After T day ends, before next TSE business day 09:00 JST
+  exporter records the complete signal-date response and receipt provenance
+  event batch detects cluster v1 candidates without consulting T+1 OHLCV
+  causal dry-run artifact is written; no order publish
+  production-preopen-check validates the candidate artifact
   event candidates are added to watchlist for data capture
-  Supabase health, Pub/Sub health, trade_mode=paper, and kill switch checked
-  due swing exits are identified
+  no StrategySignal is published
 
 T+1 open
-  oms-paper opening-swing-exits runs first
-  event batch publishes fresh RULE StrategySignal for approved candidates
-  aggregator emits RULE UnifiedTradeSignal
-  gateway validates and publishes paper-orders
-  oms-paper simulates fills from current book
+  Feeder captures fresh market data for candidate symbols
+  event --publish-paper remains fail closed
+  no event order or position is created
 
-T+1 through scheduled exit
-  OMS Paper monitors catastrophic stop on book updates
-  opening-swing-exits closes due fixed-hold positions
-  observation report reconciles detected events, orders, fills, positions, and exits
+After market-data capture
+  candidate-only report records detections and exclusions
+  event execution fields remain empty while the execution path is blocked
 ```
 
 ## Observation Log Design
@@ -262,10 +260,12 @@ against the research assumption:
   forecast PER, missing PER treatment
 - exclusion reason for every detected but unpublished candidate
 - signal ID, unified signal ID, order ID, and paper trade IDs
-- intended entry price assumption from research
-- Gateway entry price source (`signal`, `positions`, or `daily_ohlcv`)
+- valuation reference price, bar date, and availability timestamp; this is not
+  an executable entry price
+- fresh observed entry price and timestamp after the execution path is restored
 - paper fill price, quantity, fill timestamp, fill reason, and slippage bps
-- stop loss price, max hold days, scheduled exit date
+- relative stop intent, fill-anchored absolute stop loss price, max hold days,
+  and scheduled exit date
 - exit trigger (`opening_max_hold_days`, `stop_loss`, manual/no-fill)
 - exit fill price and exit slippage bps
 - open-position status and unrealized PnL for still-open positions
@@ -285,8 +285,8 @@ Phase 1:
 - Added a 1-week J-Quants-shaped fixture test covering PASS, PER-guard
   exclusion, missing-PER PASS, and `--signal-date` filtering.
 - Added contract and aggregator tests for `StrategySignal.holding_type`.
-- The Phase 1 command remains dry-run: without `--publish-paper`, it writes
-  JSON/CSV artifacts only and never calls Pub/Sub.
+- The Phase 1 command writes JSON/CSV artifacts only and never calls Pub/Sub.
+  Passing `--publish-paper` fails closed.
 
 Dry-run command:
 
@@ -304,12 +304,11 @@ side effect and cannot route to Gateway, OMS Paper, or OMS Live.
 
 Phase 2:
 
-- Implemented paper-only publish behind
-  `EVENT_CLUSTER_PAPER_PUBLISH_ENABLED=true`; default is off.
-- `--publish-paper` requires Supabase preflight
-  `system_status.trade_mode = paper` before any Pub/Sub publish.
-- Published messages go only to `strategy-signals-a` as `StrategySignal`
-  `source=RULE`, `holding_type=swing`, `max_hold_days=20`.
+- Blocked on 2026-07-10. `--publish-paper` fails closed before any Supabase or
+  Pub/Sub side effect.
+- Restore only after a timestamped fresh-price path, relative stop intent,
+  actual-fill stop anchoring, and `holding_type` propagation through
+  `OrderRequest` are covered by paper-path tests.
 - Runbook: [Event Cluster Paper Publish](../runbook/event-cluster-paper-publish.md).
 - Live routes remain untouched.
 

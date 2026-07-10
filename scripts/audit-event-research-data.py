@@ -28,7 +28,7 @@ def main() -> int:
     parser.add_argument("--random-seeds", type=int, default=30)
     args = parser.parse_args()
 
-    raw_row_count = _count_jsonl(args.financial_summary_jsonl)
+    raw_row_count, fetch_metadata_row_count = _count_financial_jsonl(args.financial_summary_jsonl)
     manifest = _stream_split_manifest(args.observations)
     window_dates = _first_trading_dates_from_file(args.observations, args.max_trading_days)
     window_events = [
@@ -54,6 +54,7 @@ def main() -> int:
             "trading_day_count": len(window_dates),
         },
         "raw_rows": raw_row_count,
+        "fetch_metadata_rows": fetch_metadata_row_count,
         "window_event_count": len(window_events),
         "window_observation_count": len(window_observations),
         "event_type_counts": dict(Counter(event.event_type.value for event in window_events)),
@@ -108,9 +109,15 @@ def _iter_jsonl(path: Path):
                 yield json.loads(line)
 
 
-def _count_jsonl(path: Path) -> int:
-    with path.open("r", encoding="utf-8") as f:
-        return sum(1 for line in f if line.strip())
+def _count_financial_jsonl(path: Path) -> tuple[int, int]:
+    source_rows = 0
+    metadata_rows = 0
+    for row in _iter_jsonl(path):
+        if row.get("_roboinvest_record_type") == "fetch_metadata":
+            metadata_rows += 1
+        else:
+            source_rows += 1
+    return source_rows, metadata_rows
 
 
 def _first_trading_dates_from_file(path: Path, limit: int) -> set[date]:
