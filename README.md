@@ -5,6 +5,13 @@
 
 詳細は [CLAUDE.md](CLAUDE.md) を参照。
 
+## External Profitability Review
+
+収益性レビューの入口は
+[docs/review/profitability/README.md](docs/review/profitability/README.md) です。
+live / paper / replay / backtest を分離した証拠台帳、判定基準、再現可能性、
+対象ソースへの索引をまとめています。
+
 ## License
 
 [MIT](LICENSE)
