@@ -1,21 +1,23 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import pytest
 from gateway import order_builder
-from trade_contracts.enums import Action, OrderType, Side, SignalSource, TradeMode
+from trade_contracts.enums import Action, OrderType, Side, SignalSource, TradeMode, TradingStyle
 
 
 def test_build_buy_order(unified_signal_factory) -> None:  # type: ignore[no-untyped-def]
     signal = unified_signal_factory(
         action=Action.BUY,
         signal_source=SignalSource.CONSENSUS,
+        holding_type=TradingStyle.SWING,
         stop_loss_price=Decimal("2450"),
         target_price=Decimal("2600"),
         trailing_stop_pct=Decimal("0.02"),
         max_hold_days=5,
+        scheduled_exit_date=date(2026, 5, 1),
     )
     stamp = datetime(2026, 4, 23, 10, 0, tzinfo=UTC)
     order = order_builder.build(
@@ -33,10 +35,13 @@ def test_build_buy_order(unified_signal_factory) -> None:  # type: ignore[no-unt
     assert order.limit_price == Decimal("2500")
     assert order.trade_mode is TradeMode.LIVE
     assert order.signal_source is SignalSource.CONSENSUS
+    assert order.holding_type is TradingStyle.SWING
     assert order.stop_loss_price == Decimal("2450")
+    assert order.stop_loss_pct is None
     assert order.target_price == Decimal("2600")
     assert order.trailing_stop_pct == Decimal("0.02")
     assert order.max_hold_days == 5
+    assert order.scheduled_exit_date == date(2026, 5, 1)
     assert order.created_at == stamp
 
 
@@ -50,6 +55,28 @@ def test_build_buy_order_fills_default_stop_loss(unified_signal_factory) -> None
         default_stop_loss_spread_pct=Decimal("0.02"),
     )
     assert order.stop_loss_price == Decimal("1685.208")
+
+
+def test_build_buy_order_carries_relative_stop_without_synthesizing_absolute(  # type: ignore[no-untyped-def]
+    unified_signal_factory,
+) -> None:
+    signal = unified_signal_factory(
+        action=Action.BUY,
+        holding_type=TradingStyle.SWING,
+        stop_loss_pct=Decimal("0.10"),
+        max_hold_days=20,
+    )
+    order = order_builder.build(
+        signal=signal,
+        quantity=100,
+        trade_mode=TradeMode.PAPER,
+        entry_price=Decimal("1719.6"),
+        default_stop_loss_spread_pct=Decimal("0.02"),
+    )
+    assert order.holding_type is TradingStyle.SWING
+    assert order.stop_loss_price is None
+    assert order.stop_loss_pct == Decimal("0.10")
+    assert order.max_hold_days == 20
 
 
 def test_build_buy_order_applies_limit_offset_ticks(unified_signal_factory) -> None:  # type: ignore[no-untyped-def]

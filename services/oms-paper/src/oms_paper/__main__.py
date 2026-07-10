@@ -105,7 +105,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=TradingStyle,
         choices=list(TradingStyle),
         default=None,
-        help="OrderRequest が holding_type を持たないため、新規 BUY 時に使う値。"
+        help="OrderRequest が holding_type を指定しない場合、新規 BUY 時に使う値。"
         "未指定時は環境変数 DEFAULT_HOLDING_TYPE (デフォルト day)。",
     )
 

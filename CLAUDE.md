@@ -179,7 +179,7 @@ trade-ai-agent/
 - `paper-orders` および `raw-market-data`（`OrderBookSnapshot`）をサブスクライブ
 - 受信した板情報を元に擬似約定ロジックで仮想的に約定
 - 約定後に Supabase `trades_paper` に記録、`positions`（trade_type=paper）を更新
-- `system_status.trading_style = day` の場合のみ 14:50 デイクローズアウト実行（全 paper ポジションを仮想的に強制決済し、`positions` の paper 行を削除）
+- `system_status.trading_style = day` の場合のみ 14:50 デイクローズアウト実行（`holding_type=day` の paper ポジションだけを仮想的に強制決済し、swing は保持）
 
 ### 8. Dashboard (`dashboard/`)
 - Next.js (App Router) + Tailwind CSS
@@ -307,13 +307,13 @@ Universe Scanner が生成した当日の監視銘柄リスト。
 
 ### 2%ルール（1トレードリスク制限）
 - 1トレードの最大許容損失 = 総資金 × 2%
-- Gateway の `lot_calculator.py` が `UnifiedTradeSignal.stop_loss_price` とエントリー価格から最大ロット数を算出
-- `stop_loss_price` が未設定（`None`）の場合はデフォルトのスプレッド幅で代替計算
+- Gateway の `lot_calculator.py` が `UnifiedTradeSignal.stop_loss_price`、または paper BUY の `stop_loss_pct` とエントリー価格から最大ロット数を算出
+- absolute/relative stop がともに未設定の場合はデフォルトのスプレッド幅で代替計算
 - スイングトレード時はオーバーナイトリスク（ギャップダウン）を考慮し、通常より保守的なポジションサイジングを適用
 - シグナルのロット数がこれを超える場合は強制的に切り詰め
 
 ### デイ・クローズアウト
-- `system_status.trading_style = day` の場合のみ 14:50 (JST) に OMS が全建玉を成行で強制決済
+- `system_status.trading_style = day` の場合のみ 14:50 (JST) に day closeout を実行。OMS Paper は `holding_type=day` の建玉だけを決済し、swing を保持
 - `trading_style = swing` の場合はクローズアウトを行わず、ポジションを翌日へ持ち越す
 
 ### スイングトレード管理

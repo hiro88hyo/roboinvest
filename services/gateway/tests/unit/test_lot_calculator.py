@@ -65,6 +65,18 @@ def test_buy_without_explicit_stop_uses_default_spread(unified_signal_factory) -
     assert result.adjusted_quantity == 1000
 
 
+def test_buy_with_relative_stop_uses_entry_price_distance(unified_signal_factory) -> None:  # type: ignore[no-untyped-def]
+    signal = unified_signal_factory(action=Action.BUY, stop_loss_pct=Decimal("0.10"))
+    # stop = 1000*(1-0.10) = 900; risk/share = 100; risk = 20,000
+    result = lot_calculator.calculate(
+        signal=signal,
+        entry_price=Decimal("1000"),
+        config=_cfg(default_stop_loss_spread_pct=Decimal("0.02")),
+    )
+    assert result.passed is True
+    assert result.adjusted_quantity == 200
+
+
 def test_buy_swing_applies_risk_scale(unified_signal_factory) -> None:  # type: ignore[no-untyped-def]
     signal = unified_signal_factory(
         action=Action.BUY,

@@ -100,7 +100,7 @@ def run_backtest(
     * 1 シンボルにつき最新の ``OrderBookSnapshot`` をメモリ保持し、注文到着時に
       その板で擬似約定する。板未受信のシンボルへの注文は ``no_book`` で no-fill。
     * BUY で新規ポジションを作る場合の ``holding_type`` は
-      ``default_holding_type`` を使う (``OrderRequest`` は holding_type を持たない)。
+      ``OrderRequest`` の値を優先し、未指定なら ``default_holding_type`` を使う。
     * 既存ポジションがある場合の ``holding_type`` は既存値を維持する。
     * 実現損益は SELL 決済時に計算し、約定代金 0.099% の往復手数料を控除する。
       評価損益・スイング自動決済は対象外 (Phase 4 以降)。
@@ -145,15 +145,21 @@ def run_backtest(
             continue
 
         existing = positions.get(order.symbol)
-        holding_type = existing.holding_type if existing is not None else default_holding_type
+        holding_type = (
+            existing.holding_type
+            if existing is not None
+            else order.holding_type or default_holding_type
+        )
         update = apply_fill(
             order=order,
             fill=fill,
             existing=existing,
             holding_type=holding_type,
             stop_loss_price=order.stop_loss_price,
+            stop_loss_pct=order.stop_loss_pct,
             target_price=order.target_price,
             max_hold_days=order.max_hold_days,
+            scheduled_exit_date=order.scheduled_exit_date,
             trailing_stop_pct=order.trailing_stop_pct,
             executed_at=order.created_at,
         )

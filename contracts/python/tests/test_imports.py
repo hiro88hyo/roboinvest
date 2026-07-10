@@ -3,6 +3,8 @@
 from datetime import UTC, datetime
 from decimal import Decimal
 
+import pytest
+from pydantic import ValidationError
 from trade_contracts import (
     Action,
     KillSwitchState,
@@ -70,17 +72,129 @@ def test_models_have_expected_attributes() -> None:
     assert ProcessedFeatures.model_fields["session_phase"].annotation == str | None
     assert StrategySignal.model_fields["spread_bps"].annotation == Decimal | None
     assert StrategySignal.model_fields["target_price"].annotation == Decimal | None
+    assert StrategySignal.model_fields["stop_loss_pct"].annotation == Decimal | None
     assert StrategySignal.model_fields["trailing_stop_pct"].annotation == Decimal | None
     assert StrategySignal.model_fields["holding_type"].annotation == TradingStyle | None
     assert UnifiedTradeSignal.model_fields["tick_size"].annotation == Decimal | None
     assert UnifiedTradeSignal.model_fields["ask_depth_5"].annotation == int | None
     assert OrderRequest.model_fields["trade_mode"].annotation is TradeMode
+    assert OrderRequest.model_fields["holding_type"].annotation == TradingStyle | None
     assert OrderRequest.model_fields["stop_loss_price"].annotation == Decimal | None
+    assert OrderRequest.model_fields["stop_loss_pct"].annotation == Decimal | None
     assert OrderResult.model_fields["status"].annotation is OrderStatus
     assert OrderBookSnapshot.model_fields["bids"].annotation is not None
     assert StrategySignal.model_fields["source"].annotation is SignalSource
     assert RiskCheck(passed=True).passed is True
     assert KillSwitchState.model_fields["daily_pnl"].annotation is Decimal
+
+
+def test_relative_stop_intent_roundtrip() -> None:
+    stamp = datetime.now(UTC)
+    signal = StrategySignal(
+        source=SignalSource.RULE,
+        symbol="7203",
+        action=Action.BUY,
+        confidence=0.8,
+        holding_type=TradingStyle.SWING,
+        stop_loss_pct=Decimal("0.10"),
+        max_hold_days=20,
+        created_at=stamp,
+    )
+    roundtrip = StrategySignal.model_validate_json(signal.model_dump_json())
+    assert roundtrip.stop_loss_pct == Decimal("0.10")
+    assert roundtrip.stop_loss_price is None
+
+
+def test_stop_loss_price_and_pct_are_mutually_exclusive() -> None:
+    stamp = datetime.now(UTC)
+    with pytest.raises(ValidationError, match="mutually exclusive"):
+        StrategySignal(
+            source=SignalSource.RULE,
+            symbol="7203",
+            action=Action.BUY,
+            confidence=0.8,
+            stop_loss_price=Decimal("900"),
+            stop_loss_pct=Decimal("0.10"),
+            created_at=stamp,
+        )
+    with pytest.raises(ValidationError, match="mutually exclusive"):
+        UnifiedTradeSignal(
+            symbol="7203",
+            action=Action.BUY,
+            confidence=0.8,
+            signal_source=SignalSource.RULE,
+            holding_type=TradingStyle.SWING,
+            stop_loss_price=Decimal("900"),
+            stop_loss_pct=Decimal("0.10"),
+            created_at=stamp,
+        )
+    with pytest.raises(ValidationError, match="mutually exclusive"):
+        OrderRequest(
+            symbol="7203",
+            side=Side.BUY,
+            quantity=100,
+            trade_mode=TradeMode.PAPER,
+            signal_source=SignalSource.RULE,
+            stop_loss_price=Decimal("900"),
+            stop_loss_pct=Decimal("0.10"),
+            created_at=stamp,
+        )
+
+
+@pytest.mark.parametrize("value", [Decimal("0"), Decimal("1"), Decimal("-0.10")])
+def test_stop_loss_pct_requires_positive_fraction(value: Decimal) -> None:
+    with pytest.raises(ValidationError):
+        StrategySignal(
+            source=SignalSource.RULE,
+            symbol="7203",
+            action=Action.BUY,
+            confidence=0.8,
+            stop_loss_pct=value,
+            created_at=datetime.now(UTC),
+        )
+
+
+def test_stop_loss_pct_is_buy_only_and_paper_only_at_order_boundary() -> None:
+    stamp = datetime.now(UTC)
+    with pytest.raises(ValidationError, match="only valid for BUY signals"):
+        StrategySignal(
+            source=SignalSource.RULE,
+            symbol="7203",
+            action=Action.SELL,
+            confidence=0.8,
+            stop_loss_pct=Decimal("0.10"),
+            created_at=stamp,
+        )
+    with pytest.raises(ValidationError, match="only valid for BUY signals"):
+        UnifiedTradeSignal(
+            symbol="7203",
+            action=Action.HOLD,
+            confidence=0.8,
+            signal_source=SignalSource.RULE,
+            holding_type=TradingStyle.SWING,
+            stop_loss_pct=Decimal("0.10"),
+            created_at=stamp,
+        )
+    with pytest.raises(ValidationError, match="only valid for BUY orders"):
+        OrderRequest(
+            symbol="7203",
+            side=Side.SELL,
+            quantity=100,
+            trade_mode=TradeMode.PAPER,
+            signal_source=SignalSource.RULE,
+            stop_loss_pct=Decimal("0.10"),
+            created_at=stamp,
+        )
+    with pytest.raises(ValidationError, match="only supported for paper orders"):
+        OrderRequest(
+            symbol="7203",
+            side=Side.BUY,
+            quantity=100,
+            trade_mode=TradeMode.LIVE,
+            signal_source=SignalSource.RULE,
+            stop_loss_pct=Decimal("0.10"),
+            created_at=stamp,
+        )
 
 
 def test_tse_tick_size_tables() -> None:

@@ -12,7 +12,8 @@
 - 板情報を元にした擬似約定判定（フル約定 / 部分約定 / 不約定）
 - 約定行を Supabase `trades_paper` に INSERT
 - `positions`（`trade_type=paper`）の UPSERT（BUY=新規 or 平均取得単価更新、SELL=全決済で DELETE）
-- `system_status.trading_style=day` のとき 14:50 (JST) に paper 全建玉を仮想成行決済
+- `system_status.trading_style=day` のとき 14:50 (JST) に
+  `holding_type=day` の paper 建玉だけを仮想成行決済（swing は保持）
 - `holding_type=swing` の paper 建玉に対する自動決済（`stop_loss_price` 割れ / `target_price` 到達 / `max_hold_days` 経過）と `trailing_stop_pct` による `stop_loss_price` 切り上げ。板更新トリガで評価し、決済時は closeout と同形式の `unified_signal_id=None` / `signal_source=CONSENSUS` で約定行を書く
 
 **非責務**
@@ -36,12 +37,17 @@ aggregator / strategy-rule / gateway と同じ 3 フェーズパターン。段�
     `SELL` は `bid.price >= limit_price` の板のみを食う。条件に合う板がなければ
     不約定 + 理由 `limit_not_crossed`
 - **position_updater** `position_updater.py`: 入力 `FillResult` + 既存 `PaperPosition | None` → `PositionUpdate`
-  - `BUY` で既存ポジションなし → 新規ポジション（`entry_price = fill_price`）
-  - `BUY` で既存 LONG あり → 数量加算 + 平均取得単価更新
+  - `BUY` で既存ポジションなし → 新規ポジション（`entry_price = fill_price`）。
+    `stop_loss_pct` があれば実約定値から
+    `stop_loss_price = fill_price * (1 - stop_loss_pct)` を固定
+  - `BUY` で既存 LONG あり → 数量加算 + 平均取得単価更新。既存の
+    holding/stop/max-hold/scheduled-exit metadata は維持
   - `SELL` で LONG あり → 数量減算（残量 0 で `delete=True`）
   - `SELL` で LONG なし → エラー（Gateway 側で reject されている前提なのでログ + 約定スキップ）
 - **closeout** `closeout.py`: 入力 `list[PaperPosition]` → 決済用 `OrderRequest` リスト（純関数）
-  - 各ポジションに対し `Side.SELL` / `OrderType.MARKET` / `quantity = position.quantity` の `OrderRequest` を生成
+  - `holding_type=day` の各ポジションに対し `Side.SELL` /
+    `OrderType.MARKET` / `quantity = position.quantity` の `OrderRequest` を生成。
+    `holding_type=swing` は対象外
   - closeout 由来の注文は対応する `aggregator_logs` 行を持たないため、`unified_signal_id` は `None` で出力する（`trades_paper.unified_signal_id` は nullable FK）
 - I/O・時刻・DB・Pub/Sub を持ち込まない純関数だけで構成する
 
@@ -65,7 +71,8 @@ aggregator / strategy-rule / gateway と同じ 3 フェーズパターン。段�
   - シンボル別に最新の `OrderBookSnapshot` をメモリ保持
   - paper-orders 受信時、対応シンボルの板を引いて擬似約定 → Supabase 書き込み → ack
   - 板未受信のシンボルへの注文は短時間（数百 ms）待機 → タイムアウトで不約定 ack（再配信は冪等性のため避ける）
-  - 14:50 (JST) cron タスクが `system_status.trading_style=day` を確認し、paper positions 全件を closeout へ
+  - 14:50 (JST) cron タスクが `system_status.trading_style=day` を確認し、
+    `holding_type=day` の paper positions だけを closeout へ
 - 3c: CLI `stream` サブコマンド + e2e テスト（Pub/Sub エミュレータ + ローカル Supabase）
 
 ### Phase 4: スイング自動決済
@@ -142,6 +149,9 @@ services/oms-paper/
 - `system_status` は 14:50 cron で `.eq("id", 1).single()` のみ読み取り（OMS Paper は更新しない）
 - `unrealized_pnl` 更新は **Feature Engine の責務**。OMS Paper は `entry_price` / `quantity` のみ書く
 - 書き込み順序: `trades_paper` INSERT → `positions` UPSERT/DELETE → ack
+- 上記 2 書き込みは現状 1 transaction ではない。trade INSERT 後の position
+  書き込み失敗を redelivery だけでは修復できないため、event publisher を
+  解除する前に idempotent な transactional RPC へ置き換える
 
 ## Pub/Sub 連携の規約（Phase 3）
 
@@ -150,7 +160,10 @@ services/oms-paper/
   - `raw-market-data`（env `PUBSUB_SUBSCRIPTION_RAW_MARKET_DATA`、デフォルト `oms-paper-raw-market-data`）
 - メッセージ型は payload 中の `symbol` / 板構造で `OrderBookSnapshot` か `TickData` を判別。`TickData` は無視
 - `ack` は Supabase 書き込み成功後のみ（書き込み失敗時は `nack` して再配信）
-- 二重約定回避: `OrderRequest.order_id` で Supabase `trades_paper` 側に冪等性キーを持たせるか、上流の at-least-once を許容するかは Phase 3 着手時に確定
+- `OrderRequest.order_id` の重複 trade は検出するが、trade と position の
+  atomicity は未解決。上記 transactional RPC と emulator E2E が必要
+- event publication では板 timestamp 同士の比較だけでなく、受信 provenance
+  を含む wall-clock stale-book 判定を追加するまで fail closed
 
 ## 設定（env）
 
@@ -171,8 +184,9 @@ services/oms-paper/
 - **ユニット**:
   - fill_simulator: 板の各ケース（フル約定 / 部分約定 / 板空 / LIMIT 拒否 / 反対方向不足）
   - VWAP 丸め（複数価格レベルにまたがる約定）
-  - position_updater: 新規 BUY / 既存への BUY 加算 / 部分 SELL / 全 SELL / SELL 失敗
-  - closeout: 0 件 / 複数銘柄 / すでに 0 株のポジション
+  - position_updater: 新規 BUY / relative stop の actual-fill 固定 / 既存への
+    BUY 加算 / 部分 SELL / 全 SELL / SELL 失敗
+  - closeout: 0 件 / day と swing の混在 / swing の除外 / すでに 0 株のポジション
 - **Phase 2 統合**: JSONL 入出力、注文と板のタイムスタンプ整合
 - **Phase 3 統合**: Pub/Sub エミュレータ + ローカル Supabase で約定 → DB 反映 → ack まで含む end-to-end
 - カバレッジ 80%+（ルート方針）
@@ -182,7 +196,9 @@ services/oms-paper/
 
 - **OMS Paper はキルスイッチに影響しない**。`daily_pnl` は live のみ集計するため、paper の約定で `system_status` を書き換えない
 - **純関数とサイドエフェクトを厳密に分離**: fill_simulator / position_updater / closeout は I/O を持たない。I/O は `clients/` と `streaming/runner.py` に閉じる
-- **fail-closed**: 板が無い / Supabase 書き込み失敗時は約定を確定しない（at-least-once + 上流 retry に委ねる）
+- **fail-closed**: 板が無い場合は約定しない。Supabase 書き込み失敗時は nack
+  するが、現行の trade/position 分割書き込みは trade だけが残り得るため、
+  transactional RPC 完了までは event publication の安全条件を満たさない
 - **`trade-contracts` を破らない**: 既存型で表現できないなら `contracts/` の 3 層同期手順に従って拡張
 - **Phase 1 では Pub/Sub / Supabase を触らない**。Phase 3 で `clients/` にまとめて導入
 - **空売りは contracts レベルで `PositionSide=LONG` のみ**。SELL は LONG 決済のみ。Gateway で弾かれているはずだが、OMS でも防御的にチェックする

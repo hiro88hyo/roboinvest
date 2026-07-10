@@ -25,9 +25,15 @@
 - 現在の最優先は event candidate の因果性修正。運用候補と研究用
   forward label を分離し、J-Quants export の受信時刻 provenance と
   signal-date OHLCV だけで dry-run artifact を再現可能にする。
-- event `--publish-paper` は fail closed。fresh observed price、fill 基準の
-  10% stop、`OrderRequest` への swing metadata 伝播が paper-path テストで
-  検証されるまで解除しない。
+- event の relative-stop execution contract は実装済み。
+  `StrategySignal` / `UnifiedTradeSignal` / `OrderRequest` は相対 stop と
+  holding metadata を運び、Gateway は live BUY の相対 stop を拒否し、OMS Paper
+  は新規 BUY の実約定値から絶対 stop を固定する。14:50 day closeout は swing
+  position を対象外にした。
+- event `--publish-paper` は引き続き fail closed。fresh quote の受信 provenance
+  と専用 subscription、`PAPER_ONLY` の end-to-end 強制、deterministic ID と
+  strategy isolation、OMS の wall-clock stale-book 判定、trade/position の
+  atomic persistence、Pub/Sub emulator E2E が揃うまで解除しない。
 - 2026-07-09 / 2026-07-10 の legacy detector による候補 0 件は、T+1 OHLCV
   依存による構造的 false zero の可能性があるため unreliable / inconclusive。
   候補不在の証拠にも、実在した証拠にも使わない。
@@ -100,8 +106,17 @@
     complete snapshot だけを運用 artifact として認める。
    - legacy detector の `candidate_count=0` は構造的な偽陰性の可能性が
      あるため unreliable / inconclusive。候補不在と断定しない。
-   - event `--publish-paper` は、fresh observed price、fill 基準 10% stop、
-     `OrderRequest` までの swing metadata 伝播を実装するまで fail closed。
+   - relative stop は `0 < stop_loss_pct < 1`、absolute stop と排他にして
+     Strategy/Unified/Order を通過する。Gateway は holding/max-hold/scheduled
+     exit を保持し、live BUY の relative stop を
+     `relative_stop_live_unsupported` で reject する。OMS Paper は新規 BUY の
+     実約定値から absolute stop を固定する。
+   - 14:50 day closeout は `holding_type=day` だけを対象とし、swing position を
+     保持する。
+   - event `--publish-paper` は、fresh quote provenance と専用 subscription、
+     `PAPER_ONLY` 強制、deterministic ID / strategy isolation、wall-clock
+     stale-book 判定、atomic trade/position persistence、Pub/Sub emulator E2E
+     を実装するまで fail closed。
    - kill switch、PER threshold、20日 exit、-10% stop の戦略値は変更しない。
 
 0. **2026-06-23 strategy reset: 既存 intraday strategy は live 候補から外す**

@@ -5,9 +5,11 @@ covers causal dry-run detection and watchlist capture only for
 `event_cluster_earnings_dividend_value_guard_fixed20_stop_v1_research`.
 
 The old publisher used the future T+1 open as `StrategySignal.price` and as the
-basis of an absolute stop. `--publish-paper` now fails closed until a fresh,
-timestamped observed-price path exists and OMS Paper anchors the 10% stop to the
-actual fill. This does not change the candidate parameters or the live gate.
+basis of an absolute stop. The contracts and paper execution path now support a
+relative 10% stop that OMS Paper anchors to the actual new-position fill, but
+`--publish-paper` remains fail closed until the remaining end-to-end safety
+requirements are complete. This does not change the candidate parameters or
+the live gate.
 
 ## Preconditions
 
@@ -121,13 +123,29 @@ exits before writing an artifact, inserting `strategy_logs`, or calling Pub/Sub.
 Publication may be restored only after a separate implementation carries all
 of the following through tests:
 
-- a fresh best ask (or an explicitly approved next-open order semantic) with an
-  observed timestamp;
-- stale/missing market data rejection;
-- a relative 10% stop intent propagated through StrategySignal, Aggregator, and
-  OrderRequest;
-- OMS Paper setting the absolute stop from the actual fill price;
-- `holding_type=swing` surviving through OrderRequest into the stored position.
+Already implemented while publication remains blocked:
+
+- `StrategySignal`, `UnifiedTradeSignal`, and `OrderRequest` accept a positive
+  `stop_loss_pct` below 1 and reject simultaneous absolute and relative stops;
+- Gateway preserves holding and exit metadata, sizes against the relative stop,
+  and rejects a live BUY carrying that stop intent;
+- OMS Paper fixes a new BUY's absolute stop to its actual fill and carries
+  `holding_type=swing`, `max_hold_days`, and `scheduled_exit_date`; and
+- the 14:50 day closeout ignores swing positions.
+
+Still required before publication can be restored:
+
+- truthful fresh best-ask/next-open receive provenance through a dedicated
+  raw-book subscription that cannot steal another consumer's messages;
+- an explicit `PAPER_ONLY` intent enforced end to end, including Gateway routing
+  after the publisher's trade-mode preflight;
+- deterministic StrategySignal and UnifiedTradeSignal IDs plus candidate
+  strategy-key isolation from unrelated RULE/AI signals;
+- OMS Paper wall-clock stale/missing-book rejection;
+- atomic, idempotent persistence of each `trades_paper` fill and its resulting
+  `positions` mutation; and
+- Pub/Sub emulator E2E covering publication, aggregation, Gateway, OMS Paper,
+  redelivery, and position creation.
 
 ## Observation Report
 

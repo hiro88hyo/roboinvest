@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from gateway import validator
 from gateway.config import RiskConfig
-from trade_contracts.enums import Action
+from trade_contracts.enums import Action, TradeMode
 
 
 def _risk_cfg() -> RiskConfig:
@@ -56,6 +56,34 @@ def test_buy_happy_path(unified_signal_factory, kill_switch_state_factory) -> No
     )
     assert result.passed is True
     assert result.adjusted_quantity == 400
+
+
+def test_relative_stop_buy_is_allowed_in_paper(  # type: ignore[no-untyped-def]
+    unified_signal_factory, kill_switch_state_factory
+) -> None:
+    signal = unified_signal_factory(action=Action.BUY, stop_loss_pct=Decimal("0.10"))
+    result = validator.validate(
+        signal=signal,
+        state=kill_switch_state_factory(trade_mode=TradeMode.PAPER),
+        risk_config=_risk_cfg(),
+        entry_price=Decimal("1000"),
+    )
+    assert result.passed is True
+    assert result.adjusted_quantity == 200
+
+
+def test_relative_stop_buy_is_rejected_in_live(  # type: ignore[no-untyped-def]
+    unified_signal_factory, kill_switch_state_factory
+) -> None:
+    signal = unified_signal_factory(action=Action.BUY, stop_loss_pct=Decimal("0.10"))
+    result = validator.validate(
+        signal=signal,
+        state=kill_switch_state_factory(trade_mode=TradeMode.LIVE),
+        risk_config=_risk_cfg(),
+        entry_price=Decimal("1000"),
+    )
+    assert result.passed is False
+    assert result.reason == "relative_stop_live_unsupported"
 
 
 def test_buy_with_existing_long_rejects(  # type: ignore[no-untyped-def]

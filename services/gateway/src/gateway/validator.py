@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from trade_contracts.enums import Action
+from trade_contracts.enums import Action, TradeMode
 from trade_contracts.risk import KillSwitchState, RiskCheck
 from trade_contracts.signal import UnifiedTradeSignal
 
@@ -48,6 +48,8 @@ def validate(
         return ks
 
     if signal.action is Action.BUY:
+        if signal.stop_loss_pct is not None and state.trade_mode is TradeMode.LIVE:
+            return RiskCheck(passed=False, reason="relative_stop_live_unsupported")
         if existing_long_quantity is not None and existing_long_quantity > 0:
             return RiskCheck(passed=False, reason="already_long")
         return lot_calculator.calculate(

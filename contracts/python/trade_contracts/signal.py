@@ -1,9 +1,9 @@
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Self
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from .enums import Action, SignalSource, TradingStyle
 
@@ -25,6 +25,7 @@ EXECUTION_FIELD_NAMES = (
 
 ORDER_FIELD_NAMES = (
     "stop_loss_price",
+    "stop_loss_pct",
     "target_price",
     "trailing_stop_pct",
     "max_hold_days",
@@ -54,6 +55,7 @@ class StrategySignal(BaseModel):
     reasoning: str | None = None
     holding_type: TradingStyle | None = None
     stop_loss_price: Decimal | None = None
+    stop_loss_pct: Decimal | None = Field(default=None, gt=0, lt=1)
     target_price: Decimal | None = None
     trailing_stop_pct: Decimal | None = None
     max_hold_days: int | None = Field(default=None, ge=1)
@@ -72,6 +74,14 @@ class StrategySignal(BaseModel):
     minutes_to_close: int | None = None
     session_phase: str | None = None
     created_at: datetime
+
+    @model_validator(mode="after")
+    def validate_stop_loss_intent(self) -> Self:
+        if self.stop_loss_price is not None and self.stop_loss_pct is not None:
+            raise ValueError("stop_loss_price and stop_loss_pct are mutually exclusive")
+        if self.stop_loss_pct is not None and self.action is not Action.BUY:
+            raise ValueError("stop_loss_pct is only valid for BUY signals")
+        return self
 
 
 class UnifiedTradeSignal(BaseModel):
@@ -89,6 +99,7 @@ class UnifiedTradeSignal(BaseModel):
 
     holding_type: TradingStyle
     stop_loss_price: Decimal | None = None
+    stop_loss_pct: Decimal | None = Field(default=None, gt=0, lt=1)
     target_price: Decimal | None = None
     trailing_stop_pct: Decimal | None = None
     max_hold_days: int | None = Field(default=None, ge=1)
@@ -108,3 +119,11 @@ class UnifiedTradeSignal(BaseModel):
     session_phase: str | None = None
 
     created_at: datetime
+
+    @model_validator(mode="after")
+    def validate_stop_loss_intent(self) -> Self:
+        if self.stop_loss_price is not None and self.stop_loss_pct is not None:
+            raise ValueError("stop_loss_price and stop_loss_pct are mutually exclusive")
+        if self.stop_loss_pct is not None and self.action is not Action.BUY:
+            raise ValueError("stop_loss_pct is only valid for BUY signals")
+        return self

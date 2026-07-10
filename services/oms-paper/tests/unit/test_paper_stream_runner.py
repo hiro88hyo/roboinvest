@@ -5,7 +5,7 @@ import json
 import logging
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -262,6 +262,52 @@ async def test_book_pulled_first_then_order_fills() -> None:
     assert pos_body["trailing_stop_pct"] == "0.02"
     assert pos_body["max_hold_days"] == 5
     assert pos_body["scheduled_exit_date"] == "2026-05-07"
+
+
+async def test_swing_buy_persists_fill_anchored_stop_and_order_metadata() -> None:
+    book = make_order_book(
+        symbol="7203",
+        asks=(("1000", 50), ("1010", 100)),
+    )
+    scheduled_exit = date(2026, 5, 15)
+    order = make_order_request(
+        symbol="7203",
+        side=Side.BUY,
+        quantity=100,
+        holding_type=TradingStyle.SWING,
+        stop_loss_pct=Decimal("0.10"),
+        max_hold_days=10,
+        scheduled_exit_date=scheduled_exit,
+        created_at=DEFAULT_TS,
+    )
+    pubsub = _PubSubRouter(
+        order_batches=[_pull_response([("ord-1", order.model_dump_json().encode("utf-8"))])],
+        book_batches=[_pull_response([("bk-1", book.model_dump_json().encode("utf-8"))])],
+    )
+    supabase = _SupabaseRouter(paper_position_rows=[[]])
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        settings=_settings(default_holding_type=TradingStyle.DAY),
+        run_body=_body,
+    )
+
+    assert stats.filled == 1
+    insert_pos = next(
+        request
+        for request in supabase.requests
+        if request.method == "POST" and request.url.path == "/rest/v1/positions"
+    )
+    position_row = json.loads(insert_pos.content.decode())[0]
+    assert position_row["entry_price"] == "1005"
+    assert position_row["holding_type"] == "swing"
+    assert position_row["stop_loss_price"] == "904.50"
+    assert position_row["max_hold_days"] == 10
+    assert position_row["scheduled_exit_date"] == scheduled_exit.isoformat()
 
 
 async def test_day_stop_loss_breach_triggers_exit() -> None:
@@ -842,6 +888,58 @@ async def test_closeout_fills_each_position_with_book_in_cache() -> None:
     assert len(deletes) == 1
     posts = [r for r in supabase.requests if r.method == "POST"]
     assert any(r.url.path == "/rest/v1/trades_paper" for r in posts)
+
+
+async def test_closeout_preserves_swing_position_in_mixed_portfolio() -> None:
+    pubsub = _PubSubRouter()
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trading_style="day")],
+        list_position_rows=[
+            [
+                _position_row(
+                    symbol="DAY",
+                    quantity=100,
+                    entry_price="900",
+                    holding_type="day",
+                ),
+                _position_row(
+                    symbol="SWING",
+                    quantity=200,
+                    entry_price="1000",
+                    holding_type="swing",
+                ),
+            ]
+        ],
+    )
+    books = {
+        "DAY": make_order_book(symbol="DAY", bids=(("1100", 500),)),
+        "SWING": make_order_book(symbol="SWING", bids=(("1200", 500),)),
+    }
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_closeout()
+
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        run_body=_body,
+        book_cache=books,
+    )
+
+    assert stats.triggered is True
+    assert stats.positions_seen == 1
+    assert stats.closed == 1
+    assert stats.no_fills == 0
+    trade_posts = [
+        request
+        for request in supabase.requests
+        if request.method == "POST" and request.url.path == "/rest/v1/trades_paper"
+    ]
+    assert len(trade_posts) == 1
+    assert json.loads(trade_posts[0].content.decode())[0]["symbol"] == "DAY"
+    deletes = [request for request in supabase.requests if request.method == "DELETE"]
+    assert len(deletes) == 1
+    assert deletes[0].url.params.get("symbol") == "eq.DAY"
 
 
 async def test_closeout_no_book_is_no_fill_and_no_writes_for_that_symbol() -> None:

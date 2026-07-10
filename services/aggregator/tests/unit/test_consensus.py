@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import pytest
@@ -84,13 +84,22 @@ def test_rule_only_carries_order_fields(signal_factory) -> None:  # type: ignore
         source=SignalSource.RULE,
         action=Action.BUY,
         confidence=0.8,
+        holding_type=TradingStyle.SWING,
+        stop_loss_pct=Decimal("0.10"),
         target_price=Decimal("1002"),
         trailing_stop_pct=Decimal("0.002"),
+        max_hold_days=20,
+        scheduled_exit_date=date(2026, 5, 20),
     )
     unified = aggregate([rule], config=_cfg())
     assert unified is not None
+    assert unified.holding_type is TradingStyle.SWING
+    assert unified.stop_loss_pct == Decimal("0.10")
+    assert unified.stop_loss_price is None
     assert unified.target_price == Decimal("1002")
     assert unified.trailing_stop_pct == Decimal("0.002")
+    assert unified.max_hold_days == 20
+    assert unified.scheduled_exit_date == date(2026, 5, 20)
 
 
 def test_consensus_uses_latest_signal_execution_context(signal_factory) -> None:  # type: ignore[no-untyped-def]

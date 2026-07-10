@@ -262,10 +262,11 @@ class StreamRunner:
         return books_pulled, books_applied, books_acked, updated_symbols
 
     async def run_closeout(self) -> CloseoutStats:
-        """14:50 JST cron から呼ばれる前提の paper 全建玉強制決済。
+        """14:50 JST cron から呼ばれる day paper 建玉の強制決済。
 
         ``system_status.trading_style != day`` の場合は何もせず ``skipped`` を返す。
-        各ポジションは最新の板で擬似約定する。板未受信なら no_fill。
+        ``holding_type=day`` の各ポジションは最新の板で擬似約定し、
+        ``holding_type=swing`` は保持する。板未受信なら no_fill。
 
         closeout 由来の OrderRequest / 約定行は対応する ``aggregator_logs`` 行を
         持たないため ``unified_signal_id`` は ``None`` で書き込む。
@@ -294,7 +295,8 @@ class StreamRunner:
             )
 
         positions = await self.supabase.list_paper_positions()
-        if not positions:
+        orders = build_closeout_orders(positions=positions, created_at=self.wall_clock())
+        if not orders:
             return CloseoutStats(
                 triggered=True,
                 skipped_reason=None,
@@ -303,9 +305,6 @@ class StreamRunner:
                 no_fills=0,
                 write_errors=0,
             )
-
-        now = self.wall_clock()
-        orders = build_closeout_orders(positions=positions, created_at=now)
 
         closed = 0
         no_fills = 0
@@ -364,7 +363,7 @@ class StreamRunner:
         return CloseoutStats(
             triggered=True,
             skipped_reason=None,
-            positions_seen=len(positions),
+            positions_seen=len(orders),
             closed=closed,
             no_fills=no_fills,
             write_errors=write_errors,
@@ -1058,7 +1057,9 @@ class StreamRunner:
 
         existing = await self.supabase.read_paper_position(symbol=order.symbol)
         holding_type = (
-            existing.holding_type if existing is not None else self.settings.default_holding_type
+            existing.holding_type
+            if existing is not None
+            else order.holding_type or self.settings.default_holding_type
         )
         update = apply_fill(
             order=order,
@@ -1066,6 +1067,7 @@ class StreamRunner:
             existing=existing,
             holding_type=holding_type,
             stop_loss_price=order.stop_loss_price,
+            stop_loss_pct=order.stop_loss_pct,
             target_price=order.target_price,
             max_hold_days=order.max_hold_days,
             scheduled_exit_date=order.scheduled_exit_date,
