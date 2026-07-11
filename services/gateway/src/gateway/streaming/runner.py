@@ -57,6 +57,7 @@ from trade_contracts.event_paper_dispatch import (
     EventPaperDispatchResult,
     EventPaperDispatchStage,
     EventPaperDispatchStatus,
+    canonical_payload_sha256,
     is_event_paper_execution_signal,
 )
 from trade_contracts.logging import event_extra
@@ -460,6 +461,16 @@ class StreamRunner:
         )
         if record is None:
             return None
+        input_payload = signal.model_dump(mode="json")
+        input_payload_sha256 = canonical_payload_sha256(input_payload)
+        if (
+            record.input_payload_sha256 != input_payload_sha256
+            or record.input_payload != input_payload
+        ):
+            raise SupabaseError(
+                "event-paper gateway journal replay input payload mismatch: "
+                f"signal_id={signal.signal_id}"
+            )
         if record.outcome is EventPaperDispatchOutcome.CONFIRMED:
             logger.info(
                 "event-paper gateway duplicate suppressed: signal_id=%s status=confirmed",

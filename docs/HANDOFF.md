@@ -37,7 +37,8 @@
   paper-only one-shot publisher、single-attempt CAS journal、Aggregator/Gateway の
   event 専用 durable dispatch journal、confirmed/ambiguous receipt、Pub/Sub +
   Supabase 実 E2E はローカル実装・検証済み。下流は confirmed の再送を抑止し、
-  外部 publish が曖昧なら自動再送しない。ただし現
+  prepared journal の再開時も現在の入力payload/hashを照合し、不一致なら publish/ack
+  せず fail closed とする。外部 publish が曖昧なら自動再送しない。ただし現
   publisher は `opening_transport_stress_v1` で、凍結済み next-open / 20日目
   close を再現せず `comparable_to_registered_backtest=false`。そのため trades/PnL
   は v1 evidence に数えず、target 実行は禁止。加えて将来の実行には

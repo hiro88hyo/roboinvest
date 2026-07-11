@@ -149,7 +149,7 @@ jobs:
             psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
             -c "notify pgrst, 'reload schema';"
 
-      - name: Verify event-paper RPC security
+      - name: Verify event-paper and OMS Paper RPC security
         run: |
           docker exec -i supabase_db_trade-ai-agent \
             psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
@@ -162,7 +162,8 @@ jobs:
           begin
               foreach function_signature in array array[
                   'public.event_paper_cas_strategy_reasoning(uuid,text,text)',
-                  'public.event_paper_stage_dispatch(text,text,uuid,jsonb,text,jsonb,text,text,text,text,timestamptz,text)'
+                  'public.event_paper_stage_dispatch(text,text,uuid,jsonb,text,jsonb,text,text,text,text,timestamptz,text)',
+                  'public.oms_paper_apply_fill(uuid,uuid,text,text,integer,numeric,text,uuid,timestamptz,timestamptz,text,numeric,numeric,integer,date,numeric)'
               ] loop
                   function_oid := function_signature::regprocedure;
                   if has_function_privilege('anon', function_signature, 'EXECUTE') then

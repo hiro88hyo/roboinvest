@@ -14,7 +14,7 @@ from uuid import UUID, uuid4
 import httpx
 import pytest
 from gateway.clients.pubsub import PubSubError, PubSubPublisher, PubSubSubscriber
-from gateway.clients.supabase import SupabaseClient
+from gateway.clients.supabase import SupabaseClient, SupabaseError
 from gateway.config import GatewaySettings, RiskConfig
 from gateway.order_archive import OrderArchiveWriter
 from gateway.router import TopicRouting
@@ -26,7 +26,10 @@ from trade_contracts.enums import (
     TradeMode,
     TradingStyle,
 )
-from trade_contracts.event_paper_dispatch import EVENT_PAPER_EXECUTION_STRATEGY_KEY
+from trade_contracts.event_paper_dispatch import (
+    EVENT_PAPER_EXECUTION_STRATEGY_KEY,
+    canonical_payload_sha256,
+)
 from trade_contracts.order import OrderRequest
 from trade_contracts.signal import UnifiedTradeSignal
 
@@ -553,6 +556,62 @@ async def test_event_paper_redelivery_is_durably_suppressed_before_second_approv
     assert len(pubsub.published) == 1
     [journal] = supabase.event_dispatches.values()
     assert journal["status"] == "confirmed"
+
+
+async def test_event_paper_prepared_replay_rejects_mutated_input_payload() -> None:
+    signal_id = uuid4()
+    original_payload = json.loads(
+        _unified_payload(
+            signal_id=signal_id,
+            price="2500",
+            stop_loss_price="2400",
+            routing_intent=RoutingIntent.PAPER_ONLY,
+            strategy_key=EVENT_PAPER_EXECUTION_STRATEGY_KEY,
+            candidate_id="cluster-1:observation-1",
+            holding_type=TradingStyle.SWING,
+        )
+    )
+    mutated_payload = _unified_payload(
+        signal_id=signal_id,
+        symbol="6758",
+        price="2600",
+        stop_loss_price="2500",
+        routing_intent=RoutingIntent.PAPER_ONLY,
+        strategy_key=EVENT_PAPER_EXECUTION_STRATEGY_KEY,
+        candidate_id="cluster-1:observation-1",
+        holding_type=TradingStyle.SWING,
+        created_at="2026-04-20T09:01:00+00:00",
+    )
+    pubsub = _PubSubRouter(pull_batches=[_pull_response([("a1", mutated_payload)])])
+    supabase = _SupabaseRouter(system_status_rows=[_system_status_row(trade_mode="paper")])
+    input_payload_sha256 = canonical_payload_sha256(original_payload)
+    supabase.event_dispatches[("gateway", str(signal_id))] = {
+        "stage": "gateway",
+        "input_signal_id": str(signal_id),
+        "input_payload": original_payload,
+        "input_payload_sha256": input_payload_sha256,
+        "output_payload": {},
+        "output_payload_sha256": canonical_payload_sha256({}),
+        "destination_topic": PAPER_TOPIC,
+        "status": "prepared",
+        "attempt_id": None,
+        "attempted_at": None,
+        "pubsub_message_id": None,
+        "confirmed_at": None,
+        "last_error": None,
+    }
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_once()
+
+    with pytest.raises(SupabaseError, match="replay input payload mismatch"):
+        await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+
+    assert pubsub.published == []
+    assert pubsub.acked == []
+    journal = supabase.event_dispatches[("gateway", str(signal_id))]
+    assert journal["input_payload"] == original_payload
+    assert journal["status"] == "prepared"
 
 
 async def test_execution_gate_log_only_keeps_publishing_wide_spread(

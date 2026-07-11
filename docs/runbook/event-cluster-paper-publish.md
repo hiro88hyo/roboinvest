@@ -178,6 +178,8 @@ Already implemented while publication remains blocked:
   silently pooled with frozen-v1 evidence;
 - the isolated event-paper path persists its immutable input/output payload
   before Aggregator or Gateway publishes. A confirmed replay is suppressed;
+  before Gateway resumes a prepared journal, it requires the current signal's
+  canonical input payload/hash to match the stored value;
   an uncheckpointed external attempt becomes `ambiguous` and is never
   automatically re-published;
 - OMS Paper persists every normal/closeout/swing/day-stop fill and its position
