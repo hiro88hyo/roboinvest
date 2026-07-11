@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 import jpholiday
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-EVENT_ARTIFACT_SCHEMA_VERSION = 2
+EVENT_ARTIFACT_SCHEMA_VERSION = 3
 EVENT_STRATEGY_KEY = "event_cluster_earnings_dividend_value_guard_fixed20_stop_v1_research"
 EVENT_STOP_LOSS_PCT = Decimal("0.10")
 EVENT_MAX_HOLD_DAYS = 20
@@ -35,6 +35,27 @@ def _next_tse_business_day(value: date) -> date:
     while not _is_tse_business_day(candidate):
         candidate += timedelta(days=1)
     return candidate
+
+
+def _previous_tse_business_day(value: date) -> date:
+    candidate = value - timedelta(days=1)
+    while not _is_tse_business_day(candidate):
+        candidate -= timedelta(days=1)
+    return candidate
+
+
+def _required_ohlcv_session_date(feature_cutoff_at: datetime) -> date:
+    if feature_cutoff_at.tzinfo is None:
+        raise ValueError("feature_cutoff_at must be timezone-aware")
+    cutoff_date = feature_cutoff_at.astimezone(JST).date()
+    same_day_available_at = datetime.combine(
+        cutoff_date,
+        DAILY_BAR_AVAILABLE_TIME_JST,
+        tzinfo=JST,
+    )
+    if _is_tse_business_day(cutoff_date) and feature_cutoff_at >= same_day_available_at:
+        return cutoff_date
+    return _previous_tse_business_day(cutoff_date)
 
 
 class EventArtifactError(RuntimeError):
@@ -71,7 +92,7 @@ class EventPaperSummary(BaseModel):
     observation_count: int = Field(ge=0)
     late_data_receipt_count: int = Field(ge=0)
     fetched_before_disclosure_count: int = Field(ge=0)
-    missing_signal_date_ohlcv_count: int = Field(ge=0)
+    missing_required_ohlcv_session_count: int = Field(ge=0)
     missing_feature_history_count: int = Field(ge=0)
     candidate_count: int = Field(ge=0)
     exclusion_count: int = Field(ge=0)
@@ -98,9 +119,11 @@ class EventPaperCandidate(BaseModel):
     data_available_at: datetime
     source_received_at: datetime
     feature_data_complete: bool
+    selection_status: Literal["eligible", "incomplete_required_ohlcv_session"]
+    required_ohlcv_session_date: date
     valuation_reference_price: Decimal | None
-    valuation_reference_bar_date: date
-    valuation_reference_available_at: datetime
+    valuation_reference_bar_date: date | None
+    valuation_reference_available_at: datetime | None
     entry_price_status: Literal["unresolved_until_fresh_market_observation"]
     catastrophic_stop_pct: Decimal
     max_hold_days: int
@@ -137,36 +160,52 @@ class EventPaperCandidate(BaseModel):
         ):
             if value.tzinfo is None:
                 raise ValueError("candidate timing lineage must be timezone-aware")
-        if self.valuation_reference_available_at.tzinfo is None:
-            raise ValueError("valuation availability must be timezone-aware")
         if self.data_available_at != self.feature_cutoff_at:
             raise ValueError("candidate feature cutoff differs from frozen data availability")
         if self.feature_cutoff_at.astimezone(JST).date() != self.signal_date:
             raise ValueError("candidate feature cutoff date differs from signal_date")
         if self.feature_cutoff_at > self.source_received_at:
             raise ValueError("candidate feature vintage postdates source receipt")
-        if self.valuation_reference_available_at > self.feature_cutoff_at:
-            raise ValueError("valuation reference was unavailable at the feature cutoff")
-        if self.valuation_reference_bar_date > self.signal_date:
-            raise ValueError("valuation reference uses a future bar")
-        expected_reference_available_at = datetime.combine(
-            self.valuation_reference_bar_date,
-            DAILY_BAR_AVAILABLE_TIME_JST,
-            tzinfo=JST,
-        )
-        if self.valuation_reference_available_at != expected_reference_available_at:
-            raise ValueError("valuation reference availability does not match its bar date")
-        signal_bar_available_at = datetime.combine(
-            self.signal_date,
-            DAILY_BAR_AVAILABLE_TIME_JST,
-            tzinfo=JST,
-        )
-        expected_complete = not (
-            self.feature_cutoff_at >= signal_bar_available_at
-            and self.valuation_reference_bar_date != self.signal_date
-        )
-        if self.feature_data_complete != expected_complete:
-            raise ValueError("feature_data_complete differs from timing lineage")
+        expected_required_session = _required_ohlcv_session_date(self.feature_cutoff_at)
+        if self.required_ohlcv_session_date != expected_required_session:
+            raise ValueError("required OHLCV session differs from the feature cutoff")
+        if self.feature_data_complete:
+            if self.selection_status != "eligible":
+                raise ValueError("complete candidate has an incomplete selection status")
+            if (
+                self.valuation_reference_price is None
+                or self.valuation_reference_bar_date is None
+                or self.valuation_reference_available_at is None
+            ):
+                raise ValueError("complete candidate is missing its required valuation reference")
+            if self.valuation_reference_bar_date != self.required_ohlcv_session_date:
+                raise ValueError("valuation reference does not match the required OHLCV session")
+            if self.valuation_reference_available_at.tzinfo is None:
+                raise ValueError("valuation availability must be timezone-aware")
+            if self.valuation_reference_available_at > self.feature_cutoff_at:
+                raise ValueError("valuation reference was unavailable at the feature cutoff")
+            expected_reference_available_at = datetime.combine(
+                self.valuation_reference_bar_date,
+                DAILY_BAR_AVAILABLE_TIME_JST,
+                tzinfo=JST,
+            )
+            if self.valuation_reference_available_at != expected_reference_available_at:
+                raise ValueError("valuation reference availability does not match its bar date")
+        else:
+            if self.selection_status != "incomplete_required_ohlcv_session":
+                raise ValueError("incomplete candidate has an unsafe selection status")
+            if any(
+                value is not None
+                for value in (
+                    self.valuation_reference_price,
+                    self.valuation_reference_bar_date,
+                    self.valuation_reference_available_at,
+                    self.min_forecast_per,
+                )
+            ):
+                raise ValueError(
+                    "incomplete candidate must not retain an older valuation reference"
+                )
         return self
 
 
@@ -235,7 +274,7 @@ class EventPaperArtifact(BaseModel):
         if self.summary.candidate_count != len(self.candidates):
             raise ValueError("candidate count does not match candidate rows")
         incomplete_count = sum(not row.feature_data_complete for row in self.candidates)
-        if self.summary.missing_signal_date_ohlcv_count != incomplete_count:
+        if self.summary.missing_required_ohlcv_session_count != incomplete_count:
             raise ValueError("incomplete feature-data count does not match candidate rows")
         if self.summary.exclusion_count != len(self.exclusions):
             raise ValueError("exclusion count does not match exclusion rows")

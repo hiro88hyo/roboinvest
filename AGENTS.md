@@ -102,10 +102,11 @@ Dashboard は Volta 管理の Node/npm を使う。
 
 - Pub/Sub: `infra/pubsub/topics.json` の全 topics（現行 9 件）と
   `infra/pubsub/subscriptions.json` の全 subscriptions（現行 13 件）が emulator 上に存在するか確認する。
-- Supabase: 主要 10 tables（上記 9 件 + `market_regime`）の read、
-  `positions.scheduled_exit_date` / `trades_paper.order_id`、および安全な validation
-  probe による `event_paper_cas_strategy_reasoning` / `oms_paper_apply_fill` /
-  `oms_paper_update_stop_loss` の存在・service-role 実行可否を確認する。
+- Supabase: 主要 11 tables（上記 10 件 + `event_paper_stage_dispatches`）の read、
+  `positions.scheduled_exit_date` / `positions.position_generation_id` /
+  `trades_paper.order_id` / `trades_paper.position_generation_id`、および安全な validation
+  probe による `event_paper_cas_strategy_reasoning` / `event_paper_stage_dispatch` /
+  `oms_paper_apply_fill` / `oms_paper_update_stop_loss` の存在・service-role 実行可否を確認する。
 - Services: 9 service modules (`universe_scanner`, `feature_engine`, `strategy_rule`, `strategy_ai`, `aggregator`, `gateway`, `oms_paper`, `oms_live`, `feeder`) の `python -m <module> --help` が起動できるか確認する。
 
 必要 env がないセクションは `SKIP` で、失敗扱いではない。`NG` が 1 件でもあれば exit code 1。
@@ -116,9 +117,10 @@ Pub/Sub は `PUBSUB_EMULATOR_HOST` / `PUBSUB_PROJECT_ID`、Supabase は `SUPABAS
 - event detector の凍結済み feature vintage は disclosure-time
   `data_available_at/feature_cutoff_at`。翌朝の実受信は
   `source_received_at` へ分離し、PER/valuation cutoff を進めない。
-- signal-date OHLCV が欠けた post-close 候補は選定から消さず
-  `feature_data_complete=false` として残す。cohort は維持するが、pre-open、
-  watchlist、publisher は実行不可として拒否する。
+- event detector の必須OHLCV session は feature cutoff から決める。15:30 JST
+  以降は signal-date、それ以前は直前TSE営業日であり、当該行が欠けても古いbarを
+  代用しない。候補は `feature_data_complete=false` として残し cohort を維持するが、
+  pre-open、watchlist、publisher は実行不可として拒否する。
 - 現 event publisher/E2E は `opening_transport_stress_v1` であり、凍結済み
   next-open / 20日目 close を再現しない。receipt/report の
   `comparable_to_registered_backtest=false` を厳守し、target 実行や v1

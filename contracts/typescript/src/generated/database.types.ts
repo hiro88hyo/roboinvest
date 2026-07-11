@@ -105,6 +105,60 @@ export type Database = {
         }
         Relationships: []
       }
+      event_paper_stage_dispatches: {
+        Row: {
+          attempt_id: string | null
+          attempted_at: string | null
+          confirmed_at: string | null
+          created_at: string
+          destination_topic: string
+          input_payload: Json
+          input_payload_sha256: string
+          input_signal_id: string
+          last_error: string | null
+          output_payload: Json
+          output_payload_sha256: string
+          pubsub_message_id: string | null
+          stage: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          attempt_id?: string | null
+          attempted_at?: string | null
+          confirmed_at?: string | null
+          created_at?: string
+          destination_topic: string
+          input_payload: Json
+          input_payload_sha256: string
+          input_signal_id: string
+          last_error?: string | null
+          output_payload: Json
+          output_payload_sha256: string
+          pubsub_message_id?: string | null
+          stage: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          attempt_id?: string | null
+          attempted_at?: string | null
+          confirmed_at?: string | null
+          created_at?: string
+          destination_topic?: string
+          input_payload?: Json
+          input_payload_sha256?: string
+          input_signal_id?: string
+          last_error?: string | null
+          output_payload?: Json
+          output_payload_sha256?: string
+          pubsub_message_id?: string | null
+          stage?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       gateway_risk_reservations: {
         Row: {
           notional_amount: number
@@ -217,6 +271,7 @@ export type Database = {
           holding_type: string
           max_hold_days: number | null
           opened_at: string
+          position_generation_id: string | null
           quantity: number
           scheduled_exit_date: string | null
           side: string
@@ -233,6 +288,7 @@ export type Database = {
           holding_type: string
           max_hold_days?: number | null
           opened_at?: string
+          position_generation_id?: string | null
           quantity: number
           scheduled_exit_date?: string | null
           side: string
@@ -249,6 +305,7 @@ export type Database = {
           holding_type?: string
           max_hold_days?: number | null
           opened_at?: string
+          position_generation_id?: string | null
           quantity?: number
           scheduled_exit_date?: string | null
           side?: string
@@ -381,6 +438,7 @@ export type Database = {
         Row: {
           executed_at: string
           order_id: string | null
+          position_generation_id: string | null
           price: number
           quantity: number
           side: string
@@ -392,6 +450,7 @@ export type Database = {
         Insert: {
           executed_at?: string
           order_id?: string | null
+          position_generation_id?: string | null
           price: number
           quantity: number
           side: string
@@ -403,6 +462,7 @@ export type Database = {
         Update: {
           executed_at?: string
           order_id?: string | null
+          position_generation_id?: string | null
           price?: number
           quantity?: number
           side?: string
@@ -453,6 +513,49 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      event_paper_cas_strategy_reasoning: {
+        Args: {
+          p_expected_reasoning: string
+          p_signal_id: string
+          p_updated_reasoning: string
+        }
+        Returns: {
+          applied: boolean
+          reasoning: string
+        }[]
+      }
+      event_paper_stage_dispatch: {
+        Args: {
+          p_action: string
+          p_attempt_id?: string
+          p_destination_topic?: string
+          p_error?: string
+          p_input_payload?: Json
+          p_input_payload_sha256?: string
+          p_input_signal_id: string
+          p_occurred_at?: string
+          p_output_payload?: Json
+          p_output_payload_sha256?: string
+          p_pubsub_message_id?: string
+          p_stage: string
+        }
+        Returns: {
+          attempt_id: string
+          attempted_at: string
+          confirmed_at: string
+          destination_topic: string
+          input_payload: Json
+          input_payload_sha256: string
+          input_signal_id: string
+          last_error: string
+          outcome: string
+          output_payload: Json
+          output_payload_sha256: string
+          pubsub_message_id: string
+          stage: string
+          status: string
+        }[]
+      }
       gateway_check_and_reserve_risk: {
         Args: {
           p_notional_amount: number

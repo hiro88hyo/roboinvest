@@ -46,6 +46,7 @@ def _causal_payload() -> dict[str, object]:
         feature_cutoff_at="2026-01-21T06:30:00+00:00",
         data_available_at="2026-01-21T06:30:00+00:00",
         source_received_at="2026-01-21T15:30:00+00:00",
+        required_ohlcv_session_date="2026-01-21",
         valuation_reference_bar_date="2026-01-21",
         valuation_reference_available_at="2026-01-21T06:30:00+00:00",
     )
@@ -126,10 +127,13 @@ def test_preopen_rejects_stale_reference_after_signal_close(tmp_path: Path) -> N
     path = tmp_path / "stale-reference-candidates.json"
     payload = _causal_payload()
     candidate = payload["candidates"][0]
-    candidate["valuation_reference_bar_date"] = "2026-01-20"
-    candidate["valuation_reference_available_at"] = "2026-01-20T06:30:00+00:00"
     candidate["feature_data_complete"] = False
-    payload["summary"]["missing_signal_date_ohlcv_count"] = 1
+    candidate["selection_status"] = "incomplete_required_ohlcv_session"
+    candidate["valuation_reference_price"] = None
+    candidate["valuation_reference_bar_date"] = None
+    candidate["valuation_reference_available_at"] = None
+    candidate["min_forecast_per"] = None
+    payload["summary"]["missing_required_ohlcv_session_count"] = 1
     _write_payload(path, payload)
     reporter = preopen.Reporter(quiet=True)
 

@@ -19,13 +19,13 @@ def _write(path: Path, payload: object) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
 
-def test_load_event_artifact_accepts_causal_v2_and_hashes_exact_bytes(tmp_path: Path) -> None:
+def test_load_event_artifact_accepts_causal_v3_and_hashes_exact_bytes(tmp_path: Path) -> None:
     path = tmp_path / "candidates.json"
     _write(path, make_event_artifact_payload())
 
     loaded = load_event_paper_artifact(path)
 
-    assert loaded.artifact.schema_version == 2
+    assert loaded.artifact.schema_version == 3
     assert loaded.artifact.candidates[0].execution_candidate_id == "cluster-7203:obs-7203"
     assert len(loaded.sha256) == 64
     loaded.artifact.validate_target_date(TARGET_DATE)
@@ -91,11 +91,14 @@ def test_artifact_target_date_is_fail_closed(tmp_path: Path) -> None:
 def test_incomplete_feature_data_is_reportable_but_not_publishable(tmp_path: Path) -> None:
     candidate = make_event_candidate(
         feature_data_complete=False,
-        valuation_reference_bar_date="2026-01-19",
-        valuation_reference_available_at="2026-01-19T06:30:00+00:00",
+        selection_status="incomplete_required_ohlcv_session",
+        valuation_reference_price=None,
+        valuation_reference_bar_date=None,
+        valuation_reference_available_at=None,
+        min_forecast_per=None,
     )
     payload = make_event_artifact_payload(candidates=[candidate])
-    payload["summary"]["missing_signal_date_ohlcv_count"] = 1
+    payload["summary"]["missing_required_ohlcv_session_count"] = 1
     path = tmp_path / "incomplete-feature-data.json"
     _write(path, payload)
 
@@ -115,7 +118,7 @@ def test_artifact_recomputes_feature_data_completeness_from_lineage(tmp_path: Pa
     path = tmp_path / "forged-feature-completeness.json"
     _write(path, make_event_artifact_payload(candidates=[candidate]))
 
-    with pytest.raises(EventArtifactError, match="feature_data_complete"):
+    with pytest.raises(EventArtifactError, match="required OHLCV session"):
         load_event_paper_artifact(path)
 
 
@@ -185,6 +188,7 @@ def test_artifact_rejects_exchange_holiday_as_entry_date(tmp_path: Path) -> None
         feature_cutoff_at="2026-04-28T06:30:00+00:00",
         data_available_at="2026-04-28T06:30:00+00:00",
         source_received_at=fetched_at,
+        required_ohlcv_session_date="2026-04-28",
         valuation_reference_bar_date="2026-04-28",
         valuation_reference_available_at="2026-04-28T06:30:00+00:00",
     )
@@ -204,6 +208,7 @@ def test_artifact_preserves_disclosure_time_feature_vintage(tmp_path: Path) -> N
     candidate = make_event_candidate(
         feature_cutoff_at="2026-01-20T05:30:00+00:00",
         data_available_at="2026-01-20T05:30:00+00:00",
+        required_ohlcv_session_date="2026-01-19",
         valuation_reference_bar_date="2026-01-19",
         valuation_reference_available_at="2026-01-19T06:30:00+00:00",
     )
@@ -212,8 +217,62 @@ def test_artifact_preserves_disclosure_time_feature_vintage(tmp_path: Path) -> N
 
     artifact = load_event_paper_artifact(path).artifact
 
-    assert artifact.candidates[0].valuation_reference_bar_date.isoformat() == "2026-01-19"
+    valuation_reference_bar_date = artifact.candidates[0].valuation_reference_bar_date
+    assert valuation_reference_bar_date is not None
+    assert valuation_reference_bar_date.isoformat() == "2026-01-19"
     assert artifact.candidates[0].feature_cutoff_at < artifact.candidates[0].source_received_at
+
+
+def test_artifact_rejects_v2_even_if_its_other_fields_are_well_formed(tmp_path: Path) -> None:
+    payload = make_event_artifact_payload()
+    payload["schema_version"] = 2
+    path = tmp_path / "unsafe-v2.json"
+    _write(path, payload)
+
+    with pytest.raises(EventArtifactError, match="unsupported event artifact schema_version"):
+        load_event_paper_artifact(path)
+
+
+def test_artifact_rejects_incomplete_candidate_that_retains_an_older_bar(tmp_path: Path) -> None:
+    candidate = make_event_candidate(
+        feature_data_complete=False,
+        selection_status="incomplete_required_ohlcv_session",
+    )
+    payload = make_event_artifact_payload(candidates=[candidate])
+    payload["summary"]["missing_required_ohlcv_session_count"] = 1
+    path = tmp_path / "stale-incomplete-reference.json"
+    _write(path, payload)
+
+    with pytest.raises(EventArtifactError, match="must not retain an older valuation reference"):
+        load_event_paper_artifact(path)
+
+
+@pytest.mark.parametrize(
+    ("feature_cutoff_at", "required_bar_date", "reference_bar_date"),
+    [
+        ("2026-01-20T06:29:59+00:00", "2026-01-19", "2026-01-19"),
+        ("2026-01-20T06:30:00+00:00", "2026-01-20", "2026-01-20"),
+    ],
+)
+def test_artifact_enforces_the_1530_required_session_boundary(
+    tmp_path: Path,
+    feature_cutoff_at: str,
+    required_bar_date: str,
+    reference_bar_date: str,
+) -> None:
+    candidate = make_event_candidate(
+        feature_cutoff_at=feature_cutoff_at,
+        data_available_at=feature_cutoff_at,
+        required_ohlcv_session_date=required_bar_date,
+        valuation_reference_bar_date=reference_bar_date,
+        valuation_reference_available_at=f"{reference_bar_date}T06:30:00+00:00",
+    )
+    path = tmp_path / f"boundary-{required_bar_date}.json"
+    _write(path, make_event_artifact_payload(candidates=[candidate]))
+
+    artifact = load_event_paper_artifact(path).artifact
+
+    assert artifact.candidates[0].required_ohlcv_session_date.isoformat() == required_bar_date
 
 
 @pytest.mark.parametrize("signal_date", ["2026-01-18", "2026-02-11"])

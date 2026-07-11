@@ -179,9 +179,12 @@ def test_cli_rejects_incomplete_feature_data_before_supabase_or_output(
     output_json = tmp_path / "watchlist.json"
     payload = _payload()
     payload["candidates"][0]["feature_data_complete"] = False
-    payload["candidates"][0]["valuation_reference_bar_date"] = "2026-01-19"
-    payload["candidates"][0]["valuation_reference_available_at"] = "2026-01-19T06:30:00+00:00"
-    payload["summary"]["missing_signal_date_ohlcv_count"] = 1
+    payload["candidates"][0]["selection_status"] = "incomplete_required_ohlcv_session"
+    payload["candidates"][0]["valuation_reference_price"] = None
+    payload["candidates"][0]["valuation_reference_bar_date"] = None
+    payload["candidates"][0]["valuation_reference_available_at"] = None
+    payload["candidates"][0]["min_forecast_per"] = None
+    payload["summary"]["missing_required_ohlcv_session_count"] = 1
     candidates_json.write_text(json.dumps(payload), encoding="utf-8")
 
     def fail_network(*_args: object, **_kwargs: object) -> None:

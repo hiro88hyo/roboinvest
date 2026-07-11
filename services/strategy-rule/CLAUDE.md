@@ -11,7 +11,7 @@
 - `strategies/` 配下のルールプラグインを評価しシグナルを生成
 - `StrategySignal` (source=RULE) の組み立てと `strategy-signals-a` へのパブリッシュ
 - Supabase `strategy_logs` への書き込み（source=RULE）
-- schema v2 event artifact と fresh book から、二重ラッチ・paper preflight・durable claim を経て `PAPER_ONLY` signal を一度だけ選定する one-shot publish
+- schema v3 event artifact と fresh book から、二重ラッチ・paper preflight・durable claim を経て `PAPER_ONLY` signal を一度だけ選定する one-shot publish
 
 **非責務**
 - 指標計算 → Feature Engine
@@ -55,7 +55,7 @@
 - CLI: `uv run python -m strategy_rule event-paper-publish ...`
 - detector 内蔵の旧 `--publish-paper` は引き続き fail closed。one-shot publisher だけが実行経路を持つ
 - detector は凍結済み選定の `data_available_at/feature_cutoff_at` を disclosure time のまま保持し、翌朝の実受信は `source_received_at` に分離する。受信時刻で PER/valuation の bar vintage を進めない
-- post-close で signal-date OHLCV が欠ける候補は cohort から除外せず `feature_data_complete=false` にする。artifact は reportable だが pre-open/watchlist/publisher では実行不可
+- feature cutoff から定まる必須OHLCV session（15:30 JST以降は signal-date、それ以前は直前TSE営業日）が欠ける候補は、古いbarを使わず cohort から除外せず `feature_data_complete=false` にする。artifact は reportable だが pre-open/watchlist/publisher では実行不可
 - 現 publisher は `opening_transport_stress_v1`。signal strategy key も selection key と分離し、receipt/report は `comparable_to_registered_backtest=false`。next-open / 20日目 close を再現する frozen-v1 paper evidence には数えない
 - `--publish-paper` と `EVENT_CLUSTER_PAPER_PUBLISH_ENABLED=true` の両方を必須とし、環境変数の既定値は必ず `false`
 - `event-paper-raw-books` だけを pull し、09:00〜09:30 JST の `received_at` 付き fresh ask を使う。現 CLI は managed Pub/Sub を network I/O 前に全面拒否し、loopback emulator の明示的な `--no-seek`、loopback Supabase、allowlist 済み dev project の stress test だけ許可する。Supabase HTTP と emulator gRPC は proxy 継承なし

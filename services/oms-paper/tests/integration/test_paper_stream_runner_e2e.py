@@ -494,6 +494,16 @@ async def test_atomic_fill_rpc_serializes_buys_rounds_and_is_idempotent(
             )
             assert first_result.outcome is PaperFillOutcome.APPLIED
             assert second_result.outcome is PaperFillOutcome.APPLIED
+            inserted_record, inserted_result = (
+                (first, first_result)
+                if first_result.position_action is PaperPositionAction.INSERTED
+                else (second, second_result)
+            )
+            assert inserted_result.resulting_position is not None
+            assert (
+                inserted_result.resulting_position.position_generation_id
+                == inserted_record.trade_id
+            )
 
             # A Gateway redelivery rebuilds the deterministic order_id but can
             # carry a new timestamp and be re-simulated against a different
@@ -554,6 +564,8 @@ async def test_atomic_fill_rpc_serializes_buys_rounds_and_is_idempotent(
         )
         assert len(trades) == 4
         assert all(trade["order_id"] is not None for trade in trades)
+        generation_ids = {trade["position_generation_id"] for trade in trades}
+        assert generation_ids == {str(inserted_record.trade_id)}
 
         # The state before the SELLs proves 1000.5 used the same one-yen
         # ROUND_HALF_UP contract as position_updater.py.

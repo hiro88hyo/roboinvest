@@ -341,7 +341,7 @@ def fetch_supabase_rows(
     trade_filters = {
         "select": (
             "trade_id,order_id,symbol,side,quantity,price,signal_source,"
-            "unified_signal_id,executed_at"
+            "unified_signal_id,position_generation_id,executed_at"
         ),
         "unified_signal_id": _in_filter(unified_ids),
         "order": "executed_at.asc",
@@ -354,7 +354,7 @@ def fetch_supabase_rows(
     symbol_trade_filters = {
         "select": (
             "trade_id,order_id,symbol,side,quantity,price,signal_source,"
-            "unified_signal_id,executed_at"
+            "unified_signal_id,position_generation_id,executed_at"
         ),
         "symbol": _in_filter(symbols),
         "order": "executed_at.asc",
@@ -382,7 +382,7 @@ def fetch_supabase_rows(
                 "select": (
                     "symbol,trade_type,side,quantity,entry_price,current_price,"
                     "unrealized_pnl,holding_type,stop_loss_price,max_hold_days,"
-                    "scheduled_exit_date,opened_at"
+                    "scheduled_exit_date,opened_at,position_generation_id"
                 ),
                 "trade_type": "eq.paper",
                 "symbol": _in_filter(symbols),
@@ -413,7 +413,7 @@ def build_report(
     aggregator_by_strategy_id = _index(rows.aggregator_logs if rows else [], "strategy_signal_id_a")
     positions_by_symbol = _index(rows.positions if rows else [], "symbol")
     trades_by_unified = _group(rows.trades_paper if rows else [], "unified_signal_id")
-    trades_by_symbol = _group(rows.trades_paper if rows else [], "symbol")
+    trades_by_generation = _group(rows.trades_paper if rows else [], "position_generation_id")
 
     out_rows: list[dict[str, Any]] = []
     for candidate in artifact.candidates:
@@ -444,12 +444,19 @@ def build_report(
             [row for row in linked_trades if row.get("signal_source") == "RULE"],
             side="BUY",
         )
-        sell_trade = _first_trade(linked_trades, side="SELL") or _generation_exit_trade(
-            trades_by_symbol.get(candidate.symbol, []),
+        position_generation_id, exit_lineage_status, exit_trades = _generation_exits(
             buy_trade=buy_trade,
+            trades_by_generation=trades_by_generation,
+            symbol=candidate.symbol,
         )
         raw_position = positions_by_symbol.get(candidate.symbol)
-        position = _matching_position(raw_position, buy_trade=buy_trade)
+        position = _matching_position(
+            raw_position,
+            position_generation_id=(
+                position_generation_id if exit_lineage_status == "verified" else None
+            ),
+        )
+        exit_summary = _exit_summary(exit_trades)
         intended = None if published is None else published.observed_ask
         buy_price = _decimal(None if buy_trade is None else buy_trade.get("price"))
         position_stop = None if position is None else position.get("stop_loss_price")
@@ -468,16 +475,22 @@ def build_report(
                 "data_available_at": candidate.data_available_at.isoformat(),
                 "source_received_at": candidate.source_received_at.isoformat(),
                 "feature_data_complete": candidate.feature_data_complete,
+                "selection_status": candidate.selection_status,
+                "required_ohlcv_session_date": candidate.required_ohlcv_session_date.isoformat(),
                 "valuation_reference_price": (
                     None
                     if candidate.valuation_reference_price is None
                     else str(candidate.valuation_reference_price)
                 ),
                 "valuation_reference_bar_date": (
-                    candidate.valuation_reference_bar_date.isoformat()
+                    None
+                    if candidate.valuation_reference_bar_date is None
+                    else candidate.valuation_reference_bar_date.isoformat()
                 ),
                 "valuation_reference_available_at": (
-                    candidate.valuation_reference_available_at.isoformat()
+                    None
+                    if candidate.valuation_reference_available_at is None
+                    else candidate.valuation_reference_available_at.isoformat()
                 ),
                 "intended_entry_price": None if intended is None else str(intended),
                 "observed_ask": None if intended is None else str(intended),
@@ -513,9 +526,9 @@ def build_report(
                 "buy_price": None if buy_trade is None else buy_trade.get("price"),
                 "buy_quantity": None if buy_trade is None else buy_trade.get("quantity"),
                 "entry_slippage_bps": _slippage_bps(fill=buy_price, intended=intended),
-                "sell_trade_id": None if sell_trade is None else sell_trade.get("trade_id"),
-                "sell_executed_at": None if sell_trade is None else sell_trade.get("executed_at"),
-                "sell_price": None if sell_trade is None else sell_trade.get("price"),
+                "position_generation_id": position_generation_id,
+                "exit_lineage_status": exit_lineage_status,
+                **exit_summary,
                 "position_open": position is not None,
                 "position_quantity": None if position is None else position.get("quantity"),
                 "position_entry_price": (None if position is None else position.get("entry_price")),
@@ -538,7 +551,8 @@ def build_report(
                     strategy_log=strategy_log,
                     aggregator_log=aggregator_log,
                     buy_trade=buy_trade,
-                    sell_trade=sell_trade,
+                    exit_lineage_status=exit_lineage_status,
+                    exit_count=exit_summary["exit_count"],
                     position=position,
                 ),
             }
@@ -577,6 +591,9 @@ def build_report(
             "aggregator_log_count": 0 if rows is None else len(rows.aggregator_logs),
             "trades_paper_count": 0 if rows is None else len(rows.trades_paper),
             "open_position_count": sum(bool(row["position_open"]) for row in out_rows),
+            "unverifiable_generation_lineage_count": sum(
+                str(row["exit_lineage_status"]).startswith("unverifiable_") for row in out_rows
+            ),
             "status_counts": _status_counts(out_rows),
         },
         "rows": out_rows,
@@ -717,13 +734,11 @@ def _matching_aggregator_log(
 def _matching_position(
     position: dict[str, Any] | None,
     *,
-    buy_trade: dict[str, Any] | None,
+    position_generation_id: str | None,
 ) -> dict[str, Any] | None:
-    if position is None or buy_trade is None:
+    if position is None or position_generation_id is None:
         return None
-    opened_at = _datetime(position.get("opened_at"))
-    executed_at = _datetime(buy_trade.get("executed_at"))
-    if opened_at is None or executed_at is None or opened_at != executed_at:
+    if _nonempty_text(position.get("position_generation_id")) != position_generation_id:
         return None
     return position
 
@@ -735,33 +750,125 @@ def _first_trade(rows: list[dict[str, Any]], *, side: str) -> dict[str, Any] | N
     return None
 
 
-def _generation_exit_trade(
-    rows: list[dict[str, Any]],
+def _generation_exits(
     *,
     buy_trade: dict[str, Any] | None,
-) -> dict[str, Any] | None:
-    """Return a null-lineage swing SELL only within the event position generation."""
+    trades_by_generation: dict[str, list[dict[str, Any]]],
+    symbol: str,
+) -> tuple[str | None, str, list[dict[str, Any]]]:
+    """Return every SELL in the exact immutable position generation.
+
+    The legacy schema did not write a generation key to ``trades_paper``.
+    Never infer it from timestamps or a subsequent BUY: both would turn a
+    reportable uncertainty into a false attribution.
+    """
 
     if buy_trade is None:
+        return None, "missing_event_buy", []
+    position_generation_id = _nonempty_text(buy_trade.get("position_generation_id"))
+    if position_generation_id is None:
+        return None, "unverifiable_legacy_lineage", []
+    # A later BUY can add to an already-open generation. Its eventual SELLs
+    # belong to the original position, not necessarily to this event entry.
+    # The event report has no lot-allocation contract, so only the generation's
+    # first BUY (whose trade ID is the generation ID) can ever be attributable.
+    if _nonempty_text(buy_trade.get("trade_id")) != position_generation_id:
+        return position_generation_id, "unverifiable_non_origin_event_buy", []
+    generation_trades = [
+        row
+        for row in trades_by_generation.get(position_generation_id, [])
+        if row.get("symbol") == symbol
+    ]
+    if any(
+        row.get("side") == "BUY" and _nonempty_text(row.get("trade_id")) != position_generation_id
+        for row in generation_trades
+    ):
+        return position_generation_id, "unverifiable_mixed_generation_buys", []
+    exits = [row for row in generation_trades if row.get("side") == "SELL"]
+    return position_generation_id, "verified", _sorted_trades(exits)
+
+
+def _exit_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Return JSON-safe, aggregate exit evidence without single-SELL loss."""
+
+    total_quantity = 0
+    total_notional = Decimal("0")
+    complete = True
+    normalized: list[dict[str, Any]] = []
+    trade_ids: list[str] = []
+    for row in rows:
+        quantity = _positive_int(row.get("quantity"))
+        price = _decimal(row.get("price"))
+        notional = None if quantity is None or price is None else price * quantity
+        if quantity is None or price is None:
+            complete = False
+        else:
+            assert notional is not None
+            total_quantity += quantity
+            total_notional += notional
+        trade_id = _nonempty_text(row.get("trade_id"))
+        if trade_id is not None:
+            trade_ids.append(trade_id)
+        normalized.append(
+            {
+                "trade_id": trade_id,
+                "order_id": _nonempty_text(row.get("order_id")),
+                "executed_at": _timestamp_text(row.get("executed_at")),
+                "quantity": quantity,
+                "price": None if price is None else str(price),
+                "notional": None if notional is None else str(notional),
+                "signal_source": _nonempty_text(row.get("signal_source")),
+                "unified_signal_id": _nonempty_text(row.get("unified_signal_id")),
+            }
+        )
+    aggregate_quantity = total_quantity if complete else None
+    aggregate_notional = total_notional if complete else None
+    return {
+        "exit_trades": normalized,
+        "exit_trade_ids": ",".join(trade_ids),
+        "exit_count": len(normalized),
+        "exit_quantity": aggregate_quantity,
+        "exit_notional": None if aggregate_notional is None else str(aggregate_notional),
+        "exit_vwap": (
+            None
+            if aggregate_notional is None or aggregate_quantity is None or aggregate_quantity == 0
+            else str(aggregate_notional / aggregate_quantity)
+        ),
+    }
+
+
+def _sorted_trades(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        rows,
+        key=lambda row: (
+            _timestamp_text(row.get("executed_at")) or "",
+            _nonempty_text(row.get("trade_id")) or "",
+        ),
+    )
+
+
+def _nonempty_text(value: Any) -> str | None:
+    if value is None:
         return None
-    buy_at = _datetime(buy_trade.get("executed_at"))
-    if buy_at is None:
+    result = str(value).strip()
+    return result or None
+
+
+def _timestamp_text(value: Any) -> str | None:
+    parsed = _datetime(value)
+    if parsed is not None:
+        return parsed.isoformat()
+    return _nonempty_text(value)
+
+
+def _positive_int(value: Any) -> int | None:
+    if isinstance(value, bool):
         return None
-    for row in sorted(rows, key=lambda item: str(item.get("executed_at") or "")):
-        executed_at = _datetime(row.get("executed_at"))
-        if executed_at is None or executed_at <= buy_at:
-            continue
-        # Any later BUY begins (or mutates) another position generation. Do
-        # not attribute a subsequent symbol-only SELL to this event candidate.
-        if row.get("side") == "BUY":
-            return None
-        if (
-            row.get("side") == "SELL"
-            and row.get("unified_signal_id") is None
-            and row.get("signal_source") == "CONSENSUS"
-        ):
-            return row
-    return None
+    try:
+        result = int(value)
+    except (TypeError, ValueError):
+        return None
+    return result if result > 0 else None
 
 
 def _datetime(value: Any) -> datetime | None:
@@ -803,7 +910,8 @@ def _status(
     strategy_log: dict[str, Any] | None,
     aggregator_log: dict[str, Any] | None,
     buy_trade: dict[str, Any] | None,
-    sell_trade: dict[str, Any] | None,
+    exit_lineage_status: str,
+    exit_count: Any,
     position: dict[str, Any] | None,
 ) -> str:
     if strategy_signal_id is None:
@@ -818,9 +926,11 @@ def _status(
         return "missing_aggregator_log"
     if buy_trade is None:
         return "missing_buy_fill"
+    if exit_lineage_status.startswith("unverifiable_"):
+        return "unverifiable_generation_lineage"
     if position is not None:
         return "open_position"
-    if sell_trade is not None:
+    if exit_count:
         return "closed_or_exited"
     return "no_open_position_no_sell"
 
@@ -849,6 +959,8 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "data_available_at",
         "source_received_at",
         "feature_data_complete",
+        "selection_status",
+        "required_ohlcv_session_date",
         "valuation_reference_price",
         "valuation_reference_bar_date",
         "valuation_reference_available_at",
@@ -874,9 +986,13 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "buy_price",
         "buy_quantity",
         "entry_slippage_bps",
-        "sell_trade_id",
-        "sell_executed_at",
-        "sell_price",
+        "position_generation_id",
+        "exit_lineage_status",
+        "exit_trade_ids",
+        "exit_count",
+        "exit_quantity",
+        "exit_notional",
+        "exit_vwap",
         "position_open",
         "position_quantity",
         "position_entry_price",

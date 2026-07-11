@@ -59,11 +59,14 @@ SUPABASE_TABLES: tuple[str, ...] = (
     "master_stocks",
     "daily_ohlcv",
     "market_regime",
+    "event_paper_stage_dispatches",
 )
 
 SUPABASE_COLUMN_CHECKS: tuple[tuple[str, str], ...] = (
     ("positions", "scheduled_exit_date"),
+    ("positions", "position_generation_id"),
     ("trades_paper", "order_id"),
+    ("trades_paper", "position_generation_id"),
 )
 
 OMS_PAPER_APPLY_FILL_PROBE: dict[str, object] = {
@@ -95,6 +98,12 @@ EVENT_PAPER_CLAIM_CAS_PROBE: dict[str, object] = {
     "p_signal_id": None,
     "p_expected_reasoning": None,
     "p_updated_reasoning": None,
+}
+
+EVENT_PAPER_STAGE_DISPATCH_PROBE: dict[str, object] = {
+    "p_action": None,
+    "p_stage": None,
+    "p_input_signal_id": None,
 }
 
 SERVICE_MODULES: tuple[str, ...] = (
@@ -303,6 +312,11 @@ async def check_supabase(timeout: float, *, quiet: bool) -> CheckResult:
                 "event_paper_cas_strategy_reasoning",
                 EVENT_PAPER_CLAIM_CAS_PROBE,
                 "p_signal_id is required",
+            ),
+            (
+                "event_paper_stage_dispatch",
+                EVENT_PAPER_STAGE_DISPATCH_PROBE,
+                "invalid p_action",
             ),
             (
                 "oms_paper_apply_fill",

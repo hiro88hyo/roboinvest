@@ -594,6 +594,7 @@ def test_fetch_and_build_report_reconciles_exact_open_position(tmp_path: Path) -
                             "price": "1023",
                             "signal_source": "RULE",
                             "unified_signal_id": ("22222222-2222-2222-2222-222222222222"),
+                            "position_generation_id": "trade-buy",
                             "executed_at": "2026-01-21T00:02:00+00:00",
                         }
                     ],
@@ -620,6 +621,7 @@ def test_fetch_and_build_report_reconciles_exact_open_position(tmp_path: Path) -
                         "max_hold_days": 20,
                         "scheduled_exit_date": "2026-02-18",
                         "opened_at": "2026-01-21T00:02:00+00:00",
+                        "position_generation_id": "trade-buy",
                     }
                 ],
             )
@@ -647,6 +649,8 @@ def test_fetch_and_build_report_reconciles_exact_open_position(tmp_path: Path) -
     assert row["strategy_log_found"] is True
     assert row["aggregator_log_found"] is True
     assert row["buy_trade_id"] == "trade-buy"
+    assert row["position_generation_id"] == "trade-buy"
+    assert row["exit_lineage_status"] == "verified"
     assert row["position_open"] is True
     assert row["position_stop_loss_price"] == "920.70"
     assert row["position_scheduled_exit_date"] == "2026-02-18"
@@ -749,7 +753,7 @@ def test_strategy_claim_attempt_must_match_receipt(tmp_path: Path) -> None:
     assert report["rows"][0]["reconciliation_status"] == "missing_strategy_log"
 
 
-def test_null_unified_swing_sell_after_linked_buy_is_attributed(tmp_path: Path) -> None:
+def test_generation_exit_report_aggregates_partial_and_final_sells(tmp_path: Path) -> None:
     artifact = _write_artifact(tmp_path)
     receipt = _receipt(artifact)
     strategy_signal_id = receipt.published[0].signal_id
@@ -770,18 +774,108 @@ def test_null_unified_swing_sell_after_linked_buy_is_attributed(tmp_path: Path) 
                 "trade_id": "event-buy",
                 "symbol": "7203",
                 "side": "BUY",
+                "quantity": 100,
                 "price": "1000",
                 "signal_source": "RULE",
                 "unified_signal_id": unified_signal_id,
+                "position_generation_id": "event-buy",
                 "executed_at": "2026-01-21T00:02:00+00:00",
             },
             {
-                "trade_id": "scheduled-or-stop-sell",
+                "trade_id": "scheduled-or-stop-sell-40",
                 "symbol": "7203",
                 "side": "SELL",
+                "quantity": 40,
                 "price": "1100",
                 "signal_source": "CONSENSUS",
                 "unified_signal_id": None,
+                "position_generation_id": "event-buy",
+                "executed_at": "2026-02-18T00:03:00+00:00",
+            },
+            {
+                "trade_id": "scheduled-or-stop-sell-60",
+                "symbol": "7203",
+                "side": "SELL",
+                "quantity": 60,
+                "price": "1099",
+                "signal_source": "CONSENSUS",
+                "unified_signal_id": None,
+                "position_generation_id": "event-buy",
+                "executed_at": "2026-02-18T00:04:00+00:00",
+            },
+        ],
+        positions=[],
+    )
+
+    report = report_event_paper_observation.build_report(
+        artifact.artifact,
+        receipt=receipt,
+        rows=rows,
+    )
+
+    row = report["rows"][0]
+    assert row["exit_lineage_status"] == "verified"
+    assert row["position_generation_id"] == "event-buy"
+    assert [exit_row["trade_id"] for exit_row in row["exit_trades"]] == [
+        "scheduled-or-stop-sell-40",
+        "scheduled-or-stop-sell-60",
+    ]
+    assert row["exit_trade_ids"] == "scheduled-or-stop-sell-40,scheduled-or-stop-sell-60"
+    assert row["exit_count"] == 2
+    assert row["exit_quantity"] == 100
+    assert row["exit_notional"] == "109940"
+    assert row["exit_vwap"] == "1099.4"
+    assert row["reconciliation_status"] == "closed_or_exited"
+
+
+def test_event_origin_with_later_generation_add_on_is_fail_closed(tmp_path: Path) -> None:
+    artifact = _write_artifact(tmp_path)
+    receipt = _receipt(artifact)
+    strategy_signal_id = receipt.published[0].signal_id
+    unified_signal_id = "22222222-2222-2222-2222-222222222222"
+    rows = report_event_paper_observation.SupabaseRows(
+        strategy_logs=[_strategy_log_row(artifact, receipt)],
+        aggregator_logs=[
+            {
+                "signal_id": unified_signal_id,
+                "strategy_signal_id_a": strategy_signal_id,
+                "signal_source": "RULE",
+                "symbol": "7203",
+                "action": "BUY",
+            }
+        ],
+        trades_paper=[
+            {
+                "trade_id": "event-buy",
+                "symbol": "7203",
+                "side": "BUY",
+                "quantity": 100,
+                "price": "1000",
+                "signal_source": "RULE",
+                "unified_signal_id": unified_signal_id,
+                "position_generation_id": "event-buy",
+                "executed_at": "2026-01-21T00:02:00+00:00",
+            },
+            {
+                "trade_id": "non-event-add-on-buy",
+                "symbol": "7203",
+                "side": "BUY",
+                "quantity": 100,
+                "price": "1010",
+                "signal_source": "RULE",
+                "unified_signal_id": "33333333-3333-3333-3333-333333333333",
+                "position_generation_id": "event-buy",
+                "executed_at": "2026-01-22T00:02:00+00:00",
+            },
+            {
+                "trade_id": "mixed-generation-sell",
+                "symbol": "7203",
+                "side": "SELL",
+                "quantity": 200,
+                "price": "1100",
+                "signal_source": "CONSENSUS",
+                "unified_signal_id": None,
+                "position_generation_id": "event-buy",
                 "executed_at": "2026-02-18T00:03:00+00:00",
             },
         ],
@@ -795,8 +889,13 @@ def test_null_unified_swing_sell_after_linked_buy_is_attributed(tmp_path: Path) 
     )
 
     row = report["rows"][0]
-    assert row["sell_trade_id"] == "scheduled-or-stop-sell"
-    assert row["reconciliation_status"] == "closed_or_exited"
+    assert row["position_generation_id"] == "event-buy"
+    assert row["exit_lineage_status"] == "unverifiable_mixed_generation_buys"
+    assert row["exit_count"] == 0
+    assert row["exit_trades"] == []
+    assert row["position_open"] is False
+    assert row["reconciliation_status"] == "unverifiable_generation_lineage"
+    assert report["summary"]["unverifiable_generation_lineage_count"] == 1
 
 
 def test_symbol_sell_after_next_buy_generation_is_not_attributed(tmp_path: Path) -> None:
@@ -823,6 +922,7 @@ def test_symbol_sell_after_next_buy_generation_is_not_attributed(tmp_path: Path)
                 "price": "1000",
                 "signal_source": "RULE",
                 "unified_signal_id": unified_signal_id,
+                "position_generation_id": "event-buy",
                 "executed_at": "2026-01-21T00:02:00+00:00",
             },
             {
@@ -832,6 +932,7 @@ def test_symbol_sell_after_next_buy_generation_is_not_attributed(tmp_path: Path)
                 "price": "1050",
                 "signal_source": "RULE",
                 "unified_signal_id": "33333333-3333-3333-3333-333333333333",
+                "position_generation_id": "later-generation-buy",
                 "executed_at": "2026-03-01T00:02:00+00:00",
             },
             {
@@ -841,6 +942,7 @@ def test_symbol_sell_after_next_buy_generation_is_not_attributed(tmp_path: Path)
                 "price": "1060",
                 "signal_source": "CONSENSUS",
                 "unified_signal_id": None,
+                "position_generation_id": "later-generation-buy",
                 "executed_at": "2026-03-02T00:03:00+00:00",
             },
         ],
@@ -854,8 +956,136 @@ def test_symbol_sell_after_next_buy_generation_is_not_attributed(tmp_path: Path)
     )
 
     row = report["rows"][0]
-    assert row["sell_trade_id"] is None
+    assert row["exit_lineage_status"] == "verified"
+    assert row["exit_count"] == 0
+    assert row["exit_trades"] == []
     assert row["reconciliation_status"] == "no_open_position_no_sell"
+
+
+def test_event_buy_that_adds_to_existing_generation_is_fail_closed(tmp_path: Path) -> None:
+    artifact = _write_artifact(tmp_path)
+    receipt = _receipt(artifact)
+    strategy_signal_id = receipt.published[0].signal_id
+    unified_signal_id = "22222222-2222-2222-2222-222222222222"
+    rows = report_event_paper_observation.SupabaseRows(
+        strategy_logs=[_strategy_log_row(artifact, receipt)],
+        aggregator_logs=[
+            {
+                "signal_id": unified_signal_id,
+                "strategy_signal_id_a": strategy_signal_id,
+                "signal_source": "RULE",
+                "symbol": "7203",
+                "action": "BUY",
+            }
+        ],
+        trades_paper=[
+            {
+                "trade_id": "origin-buy",
+                "symbol": "7203",
+                "side": "BUY",
+                "quantity": 100,
+                "price": "990",
+                "signal_source": "RULE",
+                "unified_signal_id": "33333333-3333-3333-3333-333333333333",
+                "position_generation_id": "origin-buy",
+                "executed_at": "2026-01-20T00:02:00+00:00",
+            },
+            {
+                "trade_id": "event-add-on-buy",
+                "symbol": "7203",
+                "side": "BUY",
+                "quantity": 100,
+                "price": "1000",
+                "signal_source": "RULE",
+                "unified_signal_id": unified_signal_id,
+                "position_generation_id": "origin-buy",
+                "executed_at": "2026-01-21T00:02:00+00:00",
+            },
+            {
+                "trade_id": "generation-sell",
+                "symbol": "7203",
+                "side": "SELL",
+                "quantity": 200,
+                "price": "1100",
+                "signal_source": "CONSENSUS",
+                "unified_signal_id": None,
+                "position_generation_id": "origin-buy",
+                "executed_at": "2026-02-18T00:03:00+00:00",
+            },
+        ],
+        positions=[],
+    )
+
+    report = report_event_paper_observation.build_report(
+        artifact.artifact,
+        receipt=receipt,
+        rows=rows,
+    )
+
+    row = report["rows"][0]
+    assert row["position_generation_id"] == "origin-buy"
+    assert row["exit_lineage_status"] == "unverifiable_non_origin_event_buy"
+    assert row["exit_count"] == 0
+    assert row["exit_trades"] == []
+    assert row["position_open"] is False
+    assert row["reconciliation_status"] == "unverifiable_generation_lineage"
+    assert report["summary"]["unverifiable_generation_lineage_count"] == 1
+
+
+def test_legacy_trade_rows_without_generation_are_not_time_attributed(tmp_path: Path) -> None:
+    artifact = _write_artifact(tmp_path)
+    receipt = _receipt(artifact)
+    strategy_signal_id = receipt.published[0].signal_id
+    unified_signal_id = "22222222-2222-2222-2222-222222222222"
+    rows = report_event_paper_observation.SupabaseRows(
+        strategy_logs=[_strategy_log_row(artifact, receipt)],
+        aggregator_logs=[
+            {
+                "signal_id": unified_signal_id,
+                "strategy_signal_id_a": strategy_signal_id,
+                "signal_source": "RULE",
+                "symbol": "7203",
+                "action": "BUY",
+            }
+        ],
+        trades_paper=[
+            {
+                "trade_id": "event-buy",
+                "symbol": "7203",
+                "side": "BUY",
+                "quantity": 100,
+                "price": "1000",
+                "signal_source": "RULE",
+                "unified_signal_id": unified_signal_id,
+                "position_generation_id": None,
+                "executed_at": "2026-01-21T00:02:00+00:00",
+            },
+            {
+                "trade_id": "later-sell",
+                "symbol": "7203",
+                "side": "SELL",
+                "quantity": 100,
+                "price": "1100",
+                "signal_source": "CONSENSUS",
+                "unified_signal_id": None,
+                "position_generation_id": None,
+                "executed_at": "2026-02-18T00:03:00+00:00",
+            },
+        ],
+        positions=[],
+    )
+
+    report = report_event_paper_observation.build_report(
+        artifact.artifact,
+        receipt=receipt,
+        rows=rows,
+    )
+
+    row = report["rows"][0]
+    assert row["exit_lineage_status"] == "unverifiable_legacy_lineage"
+    assert row["exit_count"] == 0
+    assert row["exit_trades"] == []
+    assert row["reconciliation_status"] == "unverifiable_generation_lineage"
 
 
 def test_position_from_later_generation_is_not_attributed(tmp_path: Path) -> None:
@@ -882,6 +1112,7 @@ def test_position_from_later_generation_is_not_attributed(tmp_path: Path) -> Non
                 "price": "1000",
                 "signal_source": "RULE",
                 "unified_signal_id": unified_signal_id,
+                "position_generation_id": "event-buy",
                 "executed_at": "2026-01-21T00:02:00+00:00",
             }
         ],
@@ -889,6 +1120,7 @@ def test_position_from_later_generation_is_not_attributed(tmp_path: Path) -> Non
             {
                 "symbol": "7203",
                 "opened_at": "2026-03-01T00:02:00+00:00",
+                "position_generation_id": "later-generation-buy",
             }
         ],
     )

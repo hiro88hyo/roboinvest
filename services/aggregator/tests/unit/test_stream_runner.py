@@ -14,6 +14,7 @@ from aggregator.config import AggregatorSettings
 from aggregator.consensus import ConsensusConfig
 from aggregator.streaming.runner import StreamRunner
 from trade_contracts.enums import Action, RoutingIntent, SignalSource
+from trade_contracts.event_paper_dispatch import EVENT_PAPER_EXECUTION_STRATEGY_KEY
 from trade_contracts.signal import StrategySignal
 
 Handler = Callable[[httpx.Request], Coroutine[None, None, httpx.Response]]
@@ -134,9 +135,99 @@ class _SupabaseRouter:
         self.trade_mode = trade_mode
         self.position_rows = list(position_rows or [])
         self.requests: list[httpx.Request] = []
+        self.event_dispatches: dict[tuple[str, str], dict[str, Any]] = {}
+
+    def _event_dispatch_response(self, payload: dict[str, Any]) -> httpx.Response:
+        action = str(payload["p_action"])
+        stage = str(payload["p_stage"])
+        signal_id = str(payload["p_input_signal_id"])
+        key = (stage, signal_id)
+        row = self.event_dispatches.get(key)
+        if action == "read":
+            if row is None:
+                return httpx.Response(200, json=[])
+            outcome = (
+                "confirmed"
+                if row["status"] == "confirmed"
+                else ("ambiguous" if row["status"] in {"attempting", "ambiguous"} else "prepared")
+            )
+            return httpx.Response(200, json=[{"outcome": outcome, **row}])
+        if action == "prepare":
+            if row is None:
+                row = {
+                    "stage": stage,
+                    "input_signal_id": signal_id,
+                    "input_payload": payload["p_input_payload"],
+                    "input_payload_sha256": payload["p_input_payload_sha256"],
+                    "output_payload": payload["p_output_payload"],
+                    "output_payload_sha256": payload["p_output_payload_sha256"],
+                    "destination_topic": payload["p_destination_topic"],
+                    "status": "prepared",
+                    "attempt_id": None,
+                    "attempted_at": None,
+                    "pubsub_message_id": None,
+                    "confirmed_at": None,
+                    "last_error": None,
+                }
+                self.event_dispatches[key] = row
+                outcome = "prepared"
+            elif any(
+                row[field] != payload[param]
+                for field, param in (
+                    ("input_payload", "p_input_payload"),
+                    ("input_payload_sha256", "p_input_payload_sha256"),
+                    ("output_payload", "p_output_payload"),
+                    ("output_payload_sha256", "p_output_payload_sha256"),
+                    ("destination_topic", "p_destination_topic"),
+                )
+            ):
+                outcome = "payload_mismatch"
+            elif row["status"] == "confirmed":
+                outcome = "confirmed"
+            elif row["status"] in {"attempting", "ambiguous"}:
+                outcome = "ambiguous"
+            else:
+                outcome = "prepared"
+            return httpx.Response(200, json=[{"outcome": outcome, **row}])
+        if row is None:
+            return httpx.Response(400, text="missing dispatch")
+        if action == "begin":
+            if row["status"] == "prepared":
+                row.update(
+                    status="attempting",
+                    attempt_id=payload["p_attempt_id"],
+                    attempted_at=payload["p_occurred_at"],
+                )
+                outcome = "attempt_started"
+            elif row["status"] == "confirmed":
+                outcome = "confirmed"
+            else:
+                outcome = "ambiguous"
+        elif action == "confirm":
+            if row["status"] == "attempting" and row["attempt_id"] == payload["p_attempt_id"]:
+                row.update(
+                    status="confirmed",
+                    pubsub_message_id=payload["p_pubsub_message_id"],
+                    confirmed_at=payload["p_occurred_at"],
+                )
+                outcome = "confirmed"
+            else:
+                outcome = "ambiguous"
+        elif action == "ambiguous":
+            if row["status"] == "attempting" and row["attempt_id"] == payload["p_attempt_id"]:
+                row.update(status="ambiguous", last_error=payload["p_error"])
+            outcome = "ambiguous"
+        else:
+            return httpx.Response(400, text=f"unexpected dispatch action: {action}")
+        return httpx.Response(200, json=[{"outcome": outcome, **row}])
 
     async def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
+        if (
+            request.method == "POST"
+            and request.url.path == "/rest/v1/rpc/event_paper_stage_dispatch"
+        ):
+            return self._event_dispatch_response(json.loads(request.content.decode()))
         if request.method == "POST" and request.url.path == "/rest/v1/aggregator_logs":
             return httpx.Response(self.upsert_status)
         if request.method == "GET" and request.url.path == "/rest/v1/system_status":
@@ -258,6 +349,44 @@ async def test_paired_a_and_b_emit_consensus_unified_signal() -> None:
     assert len(pubsub.acked_b) == 1
     assert json.loads(pubsub.acked_a[0].content.decode()) == {"ackIds": ["a1"]}
     assert json.loads(pubsub.acked_b[0].content.decode()) == {"ackIds": ["b1"]}
+
+
+async def test_event_paper_redelivery_uses_frozen_timestamp_and_suppresses_publish() -> None:
+    signal_id = uuid4()
+    payload = _strategy_signal_payload(
+        routing_intent=RoutingIntent.PAPER_ONLY,
+        strategy_key=EVENT_PAPER_EXECUTION_STRATEGY_KEY,
+        candidate_id="cluster-1:observation-1",
+        signal_id=signal_id,
+    )
+    pubsub = _PubSubRouter(
+        pull_batches_a=[_pull_response([("a1", payload)]), _pull_response([("a2", payload)])],
+        pull_batches_b=[{}, {}],
+    )
+    supabase = _SupabaseRouter()
+
+    async def _body(runner: StreamRunner) -> tuple[Any, Any]:
+        return await runner.run_once(), await runner.run_once()
+
+    first, second = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        settings=_settings(pairing_window_ms=0),
+        run_body=_body,
+    )
+
+    assert first.unified_emitted == 1
+    assert first.duplicates_suppressed == 0
+    assert second.unified_emitted == 0
+    assert second.duplicates_suppressed == 1
+    assert second.ambiguous == 0
+    assert len(pubsub.published) == 1
+    published = json.loads(
+        base64.b64decode(json.loads(pubsub.published[0].content.decode())["messages"][0]["data"])
+    )
+    assert published["created_at"] == "2026-04-20T09:00:00Z"
+    [journal] = supabase.event_dispatches.values()
+    assert journal["status"] == "confirmed"
 
 
 async def test_only_a_within_window_stays_buffered() -> None:

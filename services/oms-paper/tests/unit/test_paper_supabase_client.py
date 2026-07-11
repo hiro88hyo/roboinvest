@@ -67,6 +67,7 @@ def _position_row(**overrides: object) -> dict[str, object]:
         "max_hold_days": None,
         "trailing_stop_pct": None,
         "opened_at": "2026-04-25T09:00:00+00:00",
+        "position_generation_id": "11111111-1111-1111-1111-111111111111",
     }
     row.update(overrides)
     return row
@@ -138,6 +139,7 @@ async def test_read_paper_position_parses_full_row() -> None:
     assert pos.quantity == 300
     assert pos.entry_price == Decimal("1234.5")
     assert pos.holding_type is TradingStyle.DAY
+    assert str(pos.position_generation_id) == "11111111-1111-1111-1111-111111111111"
 
 
 async def test_read_paper_position_rejects_non_long_side() -> None:

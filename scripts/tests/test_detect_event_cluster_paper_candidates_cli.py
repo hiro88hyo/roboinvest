@@ -378,7 +378,7 @@ def test_detect_cluster_v1_candidates_dry_run(
     payload = json.loads(output_json.read_text(encoding="utf-8"))
     loaded = load_event_paper_artifact(output_json)
     assert loaded.artifact.candidates[0].symbol == "7203"
-    assert payload["schema_version"] == 2
+    assert payload["schema_version"] == 3
     assert payload["strategy_key"] == (
         "event_cluster_earnings_dividend_value_guard_fixed20_stop_v1_research"
     )
@@ -404,6 +404,8 @@ def test_detect_cluster_v1_candidates_dry_run(
     assert candidate["feature_cutoff_at"] == "2026-01-21T06:30:00+00:00"
     assert candidate["source_received_at"] == "2026-01-21T15:30:00+00:00"
     assert candidate["feature_data_complete"] is True
+    assert candidate["selection_status"] == "eligible"
+    assert candidate["required_ohlcv_session_date"] == "2026-01-21"
     assert candidate["catastrophic_stop_pct"] == "-0.10"
     assert candidate["entry_price_status"] == "unresolved_until_fresh_market_observation"
     assert "entry_price_assumption" not in candidate
@@ -550,16 +552,87 @@ def test_missing_signal_date_ohlcv_preserves_selection_but_blocks_execution(
 
     assert payload["causality_verified"] is True
     assert payload["summary"]["candidate_count"] == 1
-    assert payload["summary"]["missing_signal_date_ohlcv_count"] == 1
+    assert payload["summary"]["missing_required_ohlcv_session_count"] == 1
     assert payload["exclusions"] == []
     [candidate] = payload["candidates"]
-    assert candidate["valuation_reference_bar_date"] == "2026-01-20"
+    assert candidate["selection_status"] == "incomplete_required_ohlcv_session"
+    assert candidate["required_ohlcv_session_date"] == "2026-01-21"
+    assert candidate["valuation_reference_price"] is None
+    assert candidate["valuation_reference_bar_date"] is None
+    assert candidate["valuation_reference_available_at"] is None
+    assert candidate["min_forecast_per"] is None
     assert candidate["feature_data_complete"] is False
 
     artifact_path = tmp_path / "candidates-missing-signal-bar.json"
     artifact = load_event_paper_artifact(artifact_path).artifact
     with pytest.raises(EventArtifactError, match="feature data is incomplete"):
         artifact.validate_target_date(date(2026, 1, 22))
+
+
+def test_missing_intraday_required_bar_preserves_cohort_without_using_d2(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    financial_path = tmp_path / "financial-missing-intraday-required.jsonl"
+    ohlcv_path = tmp_path / "ohlcv-missing-intraday-required.csv"
+    output_json = tmp_path / "candidates-missing-intraday-required.json"
+    output_csv = tmp_path / "candidates-missing-intraday-required.csv"
+    rows = _summary_rows()
+    for row in rows:
+        if row["DiscDate"] == "2026-01-21":
+            row["DiscTime"] = "14:00:00"
+    _write_completed_financial_fetch(
+        financial_path,
+        rows,
+        target_date=date(2026, 1, 21),
+        fetched_at="2026-01-21T15:30:00+00:00",
+    )
+    _write_ohlcv(ohlcv_path, end_date=date(2026, 1, 21))
+    with ohlcv_path.open(encoding="utf-8") as handle:
+        ohlcv_rows = [row for row in csv.DictReader(handle) if row["date"] != "2026-01-20"]
+    for row in ohlcv_rows:
+        if row["date"] == "2026-01-19":
+            row.update(open="9999", high="10009", low="9989", close="9999")
+    with ohlcv_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=ohlcv_rows[0].keys())
+        writer.writeheader()
+        writer.writerows(ohlcv_rows)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "detect-event-cluster-paper-candidates.py",
+            "--financial-summary-jsonl",
+            str(financial_path),
+            "--ohlcv",
+            str(ohlcv_path),
+            "--output-json",
+            str(output_json),
+            "--output-csv",
+            str(output_csv),
+            "--signal-date",
+            "2026-01-21",
+        ],
+    )
+
+    assert detect_event_cluster_paper_candidates.main() == 0
+
+    payload = json.loads(output_json.read_text(encoding="utf-8"))
+    [candidate] = payload["candidates"]
+    assert payload["summary"]["candidate_count"] == 1
+    assert payload["summary"]["missing_required_ohlcv_session_count"] == 1
+    assert candidate["required_ohlcv_session_date"] == "2026-01-20"
+    assert candidate["feature_data_complete"] is False
+    assert candidate["selection_status"] == "incomplete_required_ohlcv_session"
+    assert candidate["valuation_reference_price"] is None
+    assert candidate["valuation_reference_bar_date"] is None
+    assert candidate["valuation_reference_available_at"] is None
+    assert candidate["min_forecast_per"] is None
+    assert candidate["event_id"] in candidate["event_ids"]
+    assert len(candidate["event_ids"]) == 2
+    assert "9999" not in json.dumps(candidate)
+    artifact = load_event_paper_artifact(output_json).artifact
+    assert artifact.candidates[0].feature_data_complete is False
 
 
 @pytest.mark.parametrize(
@@ -744,7 +817,7 @@ def test_one_week_detection_fixture_matches_research_rule(
         "observation_count": 10,
         "late_data_receipt_count": 0,
         "fetched_before_disclosure_count": 0,
-        "missing_signal_date_ohlcv_count": 0,
+        "missing_required_ohlcv_session_count": 0,
         "missing_feature_history_count": 0,
         "candidate_count": 2,
         "exclusion_count": 1,
@@ -807,7 +880,7 @@ def test_signal_date_filter_keeps_one_day_from_one_week_fixture(
         "observation_count": 3,
         "late_data_receipt_count": 0,
         "fetched_before_disclosure_count": 0,
-        "missing_signal_date_ohlcv_count": 0,
+        "missing_required_ohlcv_session_count": 0,
         "missing_feature_history_count": 0,
         "candidate_count": 1,
         "exclusion_count": 0,

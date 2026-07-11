@@ -10,6 +10,15 @@ from .enums import (
     TradeType,
     TradingStyle,
 )
+from .event_paper_dispatch import (
+    EVENT_PAPER_EXECUTION_STRATEGY_KEY,
+    EventPaperDispatchOutcome,
+    EventPaperDispatchResult,
+    EventPaperDispatchStage,
+    EventPaperDispatchStatus,
+    canonical_payload_sha256,
+    is_event_paper_execution_signal,
+)
 from .event_research import (
     EntryArm,
     EventAiJob,
@@ -36,11 +45,16 @@ from .signal import StrategySignal, UnifiedTradeSignal
 from .tick_size import tse_tick_size
 
 __all__ = [
+    "EVENT_PAPER_EXECUTION_STRATEGY_KEY",
     "Action",
     "EntryArm",
     "EventAiJob",
     "EventAiLabel",
     "EventAiLabeledRecord",
+    "EventPaperDispatchOutcome",
+    "EventPaperDispatchResult",
+    "EventPaperDispatchStage",
+    "EventPaperDispatchStatus",
     "EventRecord",
     "EventSource",
     "EventType",
@@ -72,8 +86,10 @@ __all__ = [
     "TradingStyle",
     "UnifiedTradeSignal",
     "ValuationFeaturesV0",
+    "canonical_payload_sha256",
     "configure_logging",
     "event_extra",
+    "is_event_paper_execution_signal",
     "scanner_gate_reject_reason",
     "tse_tick_size",
 ]

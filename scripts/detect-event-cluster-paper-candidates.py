@@ -23,11 +23,12 @@ from event_research_common import (
     read_jsonl,
     read_master_csv,
     read_ohlcv_csv,
+    required_ohlcv_session_date,
 )
 from trade_contracts.event_research import EventRecord, ObservationRecord
 
 CANDIDATE_ID = "event_cluster_earnings_dividend_value_guard_fixed20_stop_v1_research"
-ARTIFACT_SCHEMA_VERSION = 2
+ARTIFACT_SCHEMA_VERSION = 3
 PER_THRESHOLD = Decimal("15")
 MAX_HOLD_DAYS = 20
 PUBLISH_DISABLED_REASON = (
@@ -204,7 +205,7 @@ def main() -> int:
             "fetched_before_disclosure_count": count_exclusions(
                 receipt_exclusions, reason="fetched_before_disclosure"
             ),
-            "missing_signal_date_ohlcv_count": sum(
+            "missing_required_ohlcv_session_count": sum(
                 candidate["feature_data_complete"] is False for candidate in candidates
             ),
             "missing_feature_history_count": count_exclusions(
@@ -451,6 +452,29 @@ def detect_candidates(
     candidates: list[dict[str, Any]] = []
     exclusions: list[dict[str, Any]] = []
     for cluster_id, items in sorted(clusters.items()):
+        if not cluster_earnings_dividend_increase_allows(items):
+            continue
+        if any(not observation_has_required_ohlcv(item) for item in items):
+            # Preserve the event occurrence in the frozen cohort, but never
+            # treat an absent price bar as the rule's separately permitted
+            # "missing forecast PER" condition.
+            for representative in cluster_trade_representatives(items):
+                candidates.append(
+                    candidate_row(
+                        cluster_id,
+                        representative,
+                        items,
+                        symbol_name=symbol_names.get(representative.symbol, ""),
+                        source_received_at=max(
+                            source_received_by_event_id.get(
+                                item.event_id,
+                                item.data_available_at,
+                            )
+                            for item in items
+                        ),
+                    )
+                )
+            continue
         if cluster_earnings_dividend_value_guard_allows(items, per_threshold=PER_THRESHOLD):
             for representative in cluster_trade_representatives(items):
                 candidates.append(
@@ -491,12 +515,12 @@ def candidate_row(
     symbol_name: str = "",
     source_received_at: datetime,
 ) -> dict[str, Any]:
-    feature_data_complete = all(
-        not (
-            item.data_available_at >= daily_bar_available_at(date.fromisoformat(item.signal_date))
-            and item.source_bar_date != item.signal_date
-        )
-        for item in items
+    feature_data_complete = all(observation_has_required_ohlcv(item) for item in items)
+    required_session_date = observation_required_ohlcv_session_date(representative)
+    valuation_reference_price = representative.valuation_price if feature_data_complete else None
+    valuation_reference_bar_date = representative.source_bar_date if feature_data_complete else None
+    valuation_reference_available_at = (
+        representative.source_bar_available_at if feature_data_complete else None
     )
     return {
         "candidate_id": CANDIDATE_ID,
@@ -513,17 +537,21 @@ def candidate_row(
         "data_available_at": representative.data_available_at.isoformat(),
         "source_received_at": source_received_at.isoformat(),
         "feature_data_complete": feature_data_complete,
+        "selection_status": (
+            "eligible" if feature_data_complete else "incomplete_required_ohlcv_session"
+        ),
+        "required_ohlcv_session_date": required_session_date,
         "valuation_reference_price": None
-        if representative.valuation_price is None
-        else str(representative.valuation_price),
-        "valuation_reference_bar_date": representative.source_bar_date,
+        if valuation_reference_price is None
+        else str(valuation_reference_price),
+        "valuation_reference_bar_date": valuation_reference_bar_date,
         "valuation_reference_available_at": None
-        if representative.source_bar_available_at is None
-        else representative.source_bar_available_at.isoformat(),
+        if valuation_reference_available_at is None
+        else valuation_reference_available_at.isoformat(),
         "entry_price_status": "unresolved_until_fresh_market_observation",
         "catastrophic_stop_pct": str(CAT_STOP_PCT),
         "max_hold_days": MAX_HOLD_DAYS,
-        "min_forecast_per": _min_forecast_per(items),
+        "min_forecast_per": None if not feature_data_complete else _min_forecast_per(items),
         "has_earnings_result": any(obs.event_type.value == "earnings_result" for obs in items),
         "has_dividend_increase": any(
             obs.event_type.value == "dividend_revision" and obs.event_subtype == "increase"
@@ -531,6 +559,23 @@ def candidate_row(
         ),
         "publish_ready": False,
     }
+
+
+def observation_required_ohlcv_session_date(item: ObservationRecord) -> str:
+    return (
+        item.required_ohlcv_session_date
+        or required_ohlcv_session_date(item.feature_cutoff_at).isoformat()
+    )
+
+
+def observation_has_required_ohlcv(item: ObservationRecord) -> bool:
+    required_session_date = observation_required_ohlcv_session_date(item)
+    return (
+        item.source_bar_date == required_session_date
+        and item.source_bar_available_at
+        == daily_bar_available_at(date.fromisoformat(required_session_date))
+        and item.valuation_price is not None
+    )
 
 
 def _min_forecast_per(items: list[ObservationRecord]) -> str | None:
@@ -559,6 +604,8 @@ def write_candidates_csv(path: Path, candidates: list[dict[str, Any]]) -> None:
         "data_available_at",
         "source_received_at",
         "feature_data_complete",
+        "selection_status",
+        "required_ohlcv_session_date",
         "valuation_reference_price",
         "valuation_reference_bar_date",
         "valuation_reference_available_at",

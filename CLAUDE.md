@@ -233,6 +233,8 @@ trade-ai-agent/
 - `max_hold_days` (int): 最大保有日数（スイング用）
 - `scheduled_exit_date` (date): fixed-hold swing の予定決済日
 - `trailing_stop_pct` (numeric): トレーリングストップ率（スイング用）
+- `position_generation_id` (uuid nullable): Paper の初回 BUY `trade_id`。部分決済後も
+  同じ建玉世代を識別する不変の lineage
 - `opened_at` (timestamptz)
 
 ### `trades_live`
@@ -251,12 +253,14 @@ trade-ai-agent/
 - `symbol`, `side`, `quantity`, `price`
 - `signal_source` (text): `RULE` | `AI` | `CONSENSUS`
 - `unified_signal_id` (uuid nullable FK → `aggregator_logs.signal_id`): 元の統合シグナルへの参照。closeout/monitor fill は `NULL`
+- `position_generation_id` (uuid nullable): その約定が属する Paper 建玉世代
 - `executed_at` (timestamptz)
 
 OMS Paper の fill は `oms_paper_apply_fill` RPC だけで書き込み、対応する
 `positions` 遷移と同一 transaction で確定する。monitor/closeout SELL と
-`oms_paper_update_stop_loss` は `opened_at` を position generation として照合し、
-trailing stop は DB transaction 内でも引き下げを拒否する。
+`oms_paper_update_stop_loss` は `opened_at` を ABA guard として照合し、各 fill の
+`position_generation_id` は report 用の不変 lineage として残る。trailing stop は
+DB transaction 内でも引き下げを拒否する。
 
 ### `aggregator_logs`
 Aggregator が出力した統合シグナルのログ。約定テーブルの参照元。

@@ -26,6 +26,8 @@ def make_event_candidate(**overrides: Any) -> dict[str, Any]:
         "data_available_at": "2026-01-20T06:30:00+00:00",
         "source_received_at": "2026-01-20T15:30:00+00:00",
         "feature_data_complete": True,
+        "selection_status": "eligible",
+        "required_ohlcv_session_date": "2026-01-20",
         "valuation_reference_price": "1000",
         "valuation_reference_bar_date": "2026-01-20",
         "valuation_reference_available_at": "2026-01-20T06:30:00+00:00",
@@ -45,7 +47,7 @@ def make_event_artifact_payload(**overrides: Any) -> dict[str, Any]:
     candidates = overrides.pop("candidates", [make_event_candidate()])
     exclusions = overrides.pop("exclusions", [])
     payload: dict[str, Any] = {
-        "schema_version": 2,
+        "schema_version": 3,
         "strategy_key": EVENT_STRATEGY_KEY,
         "candidate_id": EVENT_STRATEGY_KEY,
         "mode": "dry_run",
@@ -77,7 +79,7 @@ def make_event_artifact_payload(**overrides: Any) -> dict[str, Any]:
             "observation_count": 2,
             "late_data_receipt_count": 0,
             "fetched_before_disclosure_count": 0,
-            "missing_signal_date_ohlcv_count": 0,
+            "missing_required_ohlcv_session_count": 0,
             "missing_feature_history_count": 0,
             "candidate_count": len(candidates),
             "exclusion_count": len(exclusions),

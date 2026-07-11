@@ -41,6 +41,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
@@ -51,6 +52,14 @@ from trade_contracts.enums import (
     TradeMode,
     TradingStyle,
 )
+from trade_contracts.event_paper_dispatch import (
+    EventPaperDispatchOutcome,
+    EventPaperDispatchResult,
+    EventPaperDispatchStage,
+    EventPaperDispatchStatus,
+    canonical_payload_sha256,
+    is_event_paper_execution_signal,
+)
 from trade_contracts.logging import event_extra
 from trade_contracts.order import OrderRequest
 from trade_contracts.risk import KillSwitchState
@@ -60,7 +69,12 @@ from trade_contracts.signal import UnifiedTradeSignal
 from .. import lot_calculator
 from ..clients.kabu import KabuWalletClient
 from ..clients.pubsub import PubSubPublisher, PubSubSubscriber, PulledMessage
-from ..clients.supabase import DailyLiquiditySnapshot, MarketRegimeState, SupabaseClient
+from ..clients.supabase import (
+    DailyLiquiditySnapshot,
+    MarketRegimeState,
+    SupabaseClient,
+    SupabaseError,
+)
 from ..config import GatewaySettings, RiskConfig
 from ..execution_gate import ExecutionGateConfig
 from ..execution_gate import reject_reason as execution_gate_reject_reason
@@ -84,6 +98,8 @@ class BatchStats:
     rejected: int
     kill_switch_triggered: int
     acked: int
+    duplicates_suppressed: int = 0
+    ambiguous: int = 0
 
 
 @dataclass(slots=True)
@@ -137,6 +153,8 @@ class StreamRunner:
         parse_errors = 0
         approved = 0
         rejected = 0
+        duplicates_suppressed = 0
+        ambiguous = 0
         kill_switch_triggered = 0
         to_ack: list[str] = []
 
@@ -148,7 +166,11 @@ class StreamRunner:
                 continue
 
             decision = await self._process(signal)
-            if decision.approved:
+            if decision.duplicate_suppressed:
+                duplicates_suppressed += 1
+            elif decision.ambiguous:
+                ambiguous += 1
+            elif decision.approved:
                 approved += 1
             else:
                 rejected += 1
@@ -168,6 +190,8 @@ class StreamRunner:
             rejected=rejected,
             kill_switch_triggered=kill_switch_triggered,
             acked=len(to_ack),
+            duplicates_suppressed=duplicates_suppressed,
+            ambiguous=ambiguous,
         )
 
     async def _process(self, signal: UnifiedTradeSignal) -> _Decision:
@@ -175,6 +199,10 @@ class StreamRunner:
         state = kill_switch_decision.state
         trade_mode = state.trade_mode
         now = self.wall_clock()
+        event_paper = is_event_paper_execution_signal(
+            routing_intent=signal.routing_intent,
+            strategy_key=signal.strategy_key,
+        )
 
         # Kill-switch first — cheapest reject, and avoids price/position reads
         # when trading is already off or a pnl limit has been breached.
@@ -219,6 +247,11 @@ class StreamRunner:
         if self._has_pending_paper_buy_order(signal=signal, trade_mode=trade_mode):
             self._log_reject(signal, "paper_symbol_order_cooldown", trade_mode)
             return _Decision(approved=False, kill_switch_fired=False)
+
+        if event_paper:
+            resumed = await self._resume_event_paper_dispatch(signal=signal)
+            if resumed is not None:
+                return resumed
 
         if self._soft_loss_throttle_blocks_buy(signal=signal, state=state):
             reason = "soft_loss_rule_only_buy"
@@ -384,6 +417,12 @@ class StreamRunner:
                 return _Decision(approved=False, kill_switch_fired=False)
 
         topic = resolve_topic(trade_mode, self.routing)
+        if event_paper:
+            return await self._start_event_paper_dispatch(
+                signal=signal,
+                order=order,
+                topic=topic,
+            )
         try:
             await self.publisher.publish(
                 topic,
@@ -406,6 +445,255 @@ class StreamRunner:
                         reason="publish_failed",
                     )
             raise
+        self._record_published_order(signal=signal, order=order, topic=topic)
+        return _Decision(approved=True, kill_switch_fired=False)
+
+    async def _resume_event_paper_dispatch(
+        self,
+        *,
+        signal: UnifiedTradeSignal,
+    ) -> _Decision | None:
+        """Resume a prepared event order or suppress a durable replay."""
+
+        record = await self.supabase.read_event_paper_dispatch(
+            stage=EventPaperDispatchStage.GATEWAY,
+            input_signal_id=signal.signal_id,
+        )
+        if record is None:
+            return None
+        input_payload = signal.model_dump(mode="json")
+        input_payload_sha256 = canonical_payload_sha256(input_payload)
+        if (
+            record.input_payload_sha256 != input_payload_sha256
+            or record.input_payload != input_payload
+        ):
+            raise SupabaseError(
+                "event-paper gateway journal replay input payload mismatch: "
+                f"signal_id={signal.signal_id}"
+            )
+        if record.outcome is EventPaperDispatchOutcome.CONFIRMED:
+            logger.info(
+                "event-paper gateway duplicate suppressed: signal_id=%s status=confirmed",
+                signal.signal_id,
+            )
+            return _Decision(
+                approved=False,
+                kill_switch_fired=False,
+                duplicate_suppressed=True,
+            )
+        if record.outcome is EventPaperDispatchOutcome.AMBIGUOUS or record.status in {
+            EventPaperDispatchStatus.ATTEMPTING,
+            EventPaperDispatchStatus.AMBIGUOUS,
+        }:
+            logger.error(
+                "event-paper gateway dispatch is ambiguous; automatic retry blocked: "
+                "signal_id=%s status=%s",
+                signal.signal_id,
+                record.status.value,
+            )
+            return _Decision(approved=False, kill_switch_fired=False, ambiguous=True)
+        if record.outcome is not EventPaperDispatchOutcome.PREPARED:
+            raise SupabaseError(
+                "event-paper gateway journal returned unexpected replay outcome: "
+                f"signal_id={signal.signal_id} outcome={record.outcome.value}"
+            )
+        return await self._publish_prepared_event_paper_order(
+            signal=signal,
+            record=record,
+            topic=record.destination_topic,
+        )
+
+    async def _start_event_paper_dispatch(
+        self,
+        *,
+        signal: UnifiedTradeSignal,
+        order: OrderRequest,
+        topic: str,
+    ) -> _Decision:
+        """Freeze one event-paper approval before its external publication."""
+
+        input_payload = signal.model_dump(mode="json")
+        output_payload = order.model_dump(mode="json")
+        prepared = await self.supabase.prepare_event_paper_dispatch(
+            stage=EventPaperDispatchStage.GATEWAY,
+            input_signal_id=signal.signal_id,
+            input_payload=input_payload,
+            output_payload=output_payload,
+            destination_topic=topic,
+        )
+        if prepared.outcome in {
+            EventPaperDispatchOutcome.PAYLOAD_MISMATCH,
+            EventPaperDispatchOutcome.ATTEMPT_MISMATCH,
+        }:
+            raise SupabaseError(
+                "event-paper gateway journal payload mismatch: "
+                f"signal_id={signal.signal_id} outcome={prepared.outcome.value}"
+            )
+        if prepared.outcome is EventPaperDispatchOutcome.CONFIRMED:
+            return _Decision(
+                approved=False,
+                kill_switch_fired=False,
+                duplicate_suppressed=True,
+            )
+        if prepared.outcome is EventPaperDispatchOutcome.AMBIGUOUS or prepared.status in {
+            EventPaperDispatchStatus.ATTEMPTING,
+            EventPaperDispatchStatus.AMBIGUOUS,
+        }:
+            logger.error(
+                "event-paper gateway publish is ambiguous; automatic retry blocked: "
+                "signal_id=%s status=%s",
+                signal.signal_id,
+                prepared.status.value,
+            )
+            return _Decision(approved=False, kill_switch_fired=False, ambiguous=True)
+        if prepared.status is not EventPaperDispatchStatus.PREPARED:
+            raise SupabaseError(
+                "event-paper gateway journal returned unexpected prepared state: "
+                f"signal_id={signal.signal_id} status={prepared.status.value}"
+            )
+        return await self._publish_prepared_event_paper_order(
+            signal=signal,
+            record=prepared,
+            topic=topic,
+        )
+
+    async def _publish_prepared_event_paper_order(
+        self,
+        *,
+        signal: UnifiedTradeSignal,
+        record: EventPaperDispatchResult,
+        topic: str,
+    ) -> _Decision:
+        """Publish only a durable canonical event-paper OrderRequest once."""
+
+        if record.stage is not EventPaperDispatchStage.GATEWAY:
+            raise SupabaseError("event-paper gateway journal stage mismatch")
+        if record.input_signal_id != signal.signal_id:
+            raise SupabaseError("event-paper gateway journal input identity mismatch")
+        if record.status is not EventPaperDispatchStatus.PREPARED:
+            if record.status is EventPaperDispatchStatus.CONFIRMED:
+                return _Decision(
+                    approved=False,
+                    kill_switch_fired=False,
+                    duplicate_suppressed=True,
+                )
+            return _Decision(approved=False, kill_switch_fired=False, ambiguous=True)
+        if record.destination_topic != topic:
+            raise SupabaseError("event-paper gateway journal destination topic mismatch")
+        try:
+            order = OrderRequest.model_validate(record.output_payload)
+        except ValidationError as exc:
+            raise SupabaseError("event-paper gateway journal output is invalid") from exc
+        if (
+            order.unified_signal_id != signal.signal_id
+            or order.trade_mode is not TradeMode.PAPER
+            or not is_event_paper_execution_signal(
+                routing_intent=order.routing_intent,
+                strategy_key=order.strategy_key,
+            )
+        ):
+            raise SupabaseError("event-paper gateway journal output identity mismatch")
+
+        attempt_id = uuid4().hex
+        begun = await self.supabase.begin_event_paper_dispatch(
+            stage=EventPaperDispatchStage.GATEWAY,
+            input_signal_id=signal.signal_id,
+            attempt_id=attempt_id,
+            attempted_at=self.wall_clock(),
+        )
+        if begun.outcome is EventPaperDispatchOutcome.CONFIRMED:
+            return _Decision(
+                approved=False,
+                kill_switch_fired=False,
+                duplicate_suppressed=True,
+            )
+        if begun.outcome is EventPaperDispatchOutcome.AMBIGUOUS:
+            logger.error(
+                "event-paper gateway attempt already ambiguous; automatic retry blocked: "
+                "signal_id=%s",
+                signal.signal_id,
+            )
+            return _Decision(approved=False, kill_switch_fired=False, ambiguous=True)
+        if begun.outcome is not EventPaperDispatchOutcome.ATTEMPT_STARTED:
+            raise SupabaseError(
+                "event-paper gateway journal did not start publication attempt: "
+                f"signal_id={signal.signal_id} outcome={begun.outcome.value}"
+            )
+
+        try:
+            message_id = await self.publisher.publish(
+                topic,
+                data=order.model_dump_json().encode("utf-8"),
+                attributes={
+                    "symbol": order.symbol,
+                    "side": order.side.value,
+                    "trade_mode": order.trade_mode.value,
+                    "signal_source": order.signal_source.value,
+                    "routing_intent": order.routing_intent.value,
+                    "strategy_key": order.strategy_key or "",
+                    "candidate_id": order.candidate_id or "",
+                },
+            )
+        except Exception as exc:
+            logger.exception(
+                "event-paper gateway publish outcome is ambiguous: signal_id=%s",
+                signal.signal_id,
+            )
+            with contextlib.suppress(Exception):
+                await self.supabase.mark_event_paper_dispatch_ambiguous(
+                    stage=EventPaperDispatchStage.GATEWAY,
+                    input_signal_id=signal.signal_id,
+                    attempt_id=attempt_id,
+                    occurred_at=self.wall_clock(),
+                    error=f"pubsub_publish_error:{type(exc).__name__}",
+                )
+            return _Decision(approved=False, kill_switch_fired=False, ambiguous=True)
+
+        try:
+            checkpoint = await self.supabase.confirm_event_paper_dispatch(
+                stage=EventPaperDispatchStage.GATEWAY,
+                input_signal_id=signal.signal_id,
+                attempt_id=attempt_id,
+                pubsub_message_id=message_id,
+                confirmed_at=self.wall_clock(),
+            )
+        except Exception as exc:
+            logger.exception(
+                "event-paper gateway checkpoint outcome is ambiguous: signal_id=%s",
+                signal.signal_id,
+            )
+            with contextlib.suppress(Exception):
+                checkpoint = await self.supabase.mark_event_paper_dispatch_ambiguous(
+                    stage=EventPaperDispatchStage.GATEWAY,
+                    input_signal_id=signal.signal_id,
+                    attempt_id=attempt_id,
+                    occurred_at=self.wall_clock(),
+                    error=f"checkpoint_error:{type(exc).__name__}",
+                )
+                if checkpoint.outcome is EventPaperDispatchOutcome.CONFIRMED:
+                    self._record_published_order(signal=signal, order=order, topic=topic)
+                    return _Decision(approved=True, kill_switch_fired=False)
+            return _Decision(approved=False, kill_switch_fired=False, ambiguous=True)
+
+        if checkpoint.outcome is EventPaperDispatchOutcome.CONFIRMED:
+            self._record_published_order(signal=signal, order=order, topic=topic)
+            return _Decision(approved=True, kill_switch_fired=False)
+        if checkpoint.outcome is EventPaperDispatchOutcome.AMBIGUOUS:
+            return _Decision(approved=False, kill_switch_fired=False, ambiguous=True)
+        raise SupabaseError(
+            "event-paper gateway journal did not confirm publication: "
+            f"signal_id={signal.signal_id} outcome={checkpoint.outcome.value}"
+        )
+
+    def _record_published_order(
+        self,
+        *,
+        signal: UnifiedTradeSignal,
+        order: OrderRequest,
+        topic: str,
+    ) -> None:
+        """Run post-publish observability only after an external publish succeeded."""
+
         if self.order_archive is not None:
             try:
                 self.order_archive.record_order(order)
@@ -415,8 +703,8 @@ class StreamRunner:
                     order.symbol,
                     order.order_id,
                 )
-        self._mark_pending_live_order(signal=signal, trade_mode=trade_mode)
-        self._mark_pending_paper_buy_order(signal=signal, trade_mode=trade_mode)
+        self._mark_pending_live_order(signal=signal, trade_mode=order.trade_mode)
+        self._mark_pending_paper_buy_order(signal=signal, trade_mode=order.trade_mode)
         self._record_publish_summary(
             trade_mode=order.trade_mode.value,
             side=order.side.value,
@@ -461,7 +749,6 @@ class StreamRunner:
                     destination_topic=topic,
                 ),
             )
-        return _Decision(approved=True, kill_switch_fired=False)
 
     def _risk_amount_for_order(
         self, *, order: OrderRequest, entry_price: Decimal | None
@@ -1235,6 +1522,8 @@ class StreamRunner:
 class _Decision:
     approved: bool
     kill_switch_fired: bool
+    duplicate_suppressed: bool = False
+    ambiguous: bool = False
 
 
 def _parse_signal(msg: PulledMessage) -> UnifiedTradeSignal | None:
