@@ -2,9 +2,10 @@
 
 Status: the dedicated paper-only publisher is implemented and passes the local
 Pub/Sub + Supabase E2E as of 2026-07-10, but **activation against the target
-environment remains blocked**. The target OMS Paper migration/RPC health and
-event-paper claim CAS RPC health, plus the managed `event-paper-raw-books`
-subscription, must be verified. More importantly, the implemented publisher is
+environment remains blocked**. On 2026-07-11, target migration 018〜023,
+Supabase health (`OK 20`), the managed `event-paper-raw-books` book-filter
+subscription, and the production deployment were verified. More importantly,
+the implemented publisher is
 `opening_transport_stress_v1`: the local close-session profile is now wired to
 the frozen 20th-session `15:30 JST` exit, but matched-random evidence and
 target-environment readiness are still absent. It cannot be activated as
@@ -213,26 +214,21 @@ Already implemented while publication remains blocked:
   Aggregator and Gateway, exactly one OMS Paper BUY fill plus duplicate skip,
   a fill-anchored stop, deterministic scheduled exit, partial then full exit,
   position deletion, and zero messages on `live-orders`.
+- On 2026-07-11, target migration 018〜023 was applied; the required
+  Supabase columns/RPCs reported `OK 20`; `event-paper-raw-books` was created
+  with `attributes.kind = "book"`; and the merged main revision was deployed.
+  These operational checks do not authorize publication.
 
 Still required before any target publication can be reconsidered:
 
 - replace or formally resolve the cited same-symbol random evidence: random
   rows used an 8% stop while selected rows used the frozen 10% stop. Do not
   rerun/inspect the locked OOS window without ADR-required approval;
-- deployment of `contracts/sql/018_oms_paper_apply_fill_rpc.sql`,
-  `contracts/sql/019_event_paper_claim_cas_rpc.sql`,
-  `contracts/sql/020_event_paper_stage_dispatch_journal.sql`, and
-  `contracts/sql/021_oms_paper_position_generation_lineage.sql`, and
-  `contracts/sql/022_positions_scheduled_exit_time.sql` to the target
-  Supabase project, with `scripts/health-check.py --check supabase` reporting
-  both Paper OMS RPCs, `event_paper_cas_strategy_reasoning`, and
-  `event_paper_stage_dispatch` as `OK`;
-- verification that the managed `event-paper-raw-books` subscription exists,
-  is filtered to book messages, and is owned only by one designated one-shot
-  coordinator host. Never run different occurrences concurrently from separate
-  hosts: they share one seek/ack cursor. The CLI lock serializes invocations in
-  the coordinator filesystem namespace but is intentionally not a distributed
-  lease; and
+- a designated one-shot coordinator host. The target
+  `event-paper-raw-books` subscription and its book filter are verified, but
+  never run different occurrences concurrently from separate hosts: they share
+  one seek/ack cursor. The CLI lock serializes invocations in the coordinator
+  filesystem namespace but is intentionally not a distributed lease; and
 - a pre-open operational run that completes due swing exits before this
   publisher's preflight. The publisher fails closed rather than entering while
   a due exit remains.
