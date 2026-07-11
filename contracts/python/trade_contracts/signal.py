@@ -1,5 +1,5 @@
 import json
-from datetime import date, datetime
+from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Any, Self
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
@@ -75,6 +75,7 @@ ORDER_FIELD_NAMES = (
     "trailing_stop_pct",
     "max_hold_days",
     "scheduled_exit_date",
+    "scheduled_exit_time",
 )
 
 
@@ -108,6 +109,7 @@ class StrategySignal(BaseModel):
     trailing_stop_pct: Decimal | None = None
     max_hold_days: int | None = Field(default=None, ge=1)
     scheduled_exit_date: date | None = None
+    scheduled_exit_time: time | None = None
     best_bid: Decimal | None = None
     best_ask: Decimal | None = None
     spread_bps: Decimal | None = None
@@ -183,6 +185,7 @@ class UnifiedTradeSignal(BaseModel):
     trailing_stop_pct: Decimal | None = None
     max_hold_days: int | None = Field(default=None, ge=1)
     scheduled_exit_date: date | None = None
+    scheduled_exit_time: time | None = None
     best_bid: Decimal | None = None
     best_ask: Decimal | None = None
     spread_bps: Decimal | None = None

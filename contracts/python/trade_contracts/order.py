@@ -1,5 +1,5 @@
 import json
-from datetime import date, datetime
+from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Self
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
@@ -57,6 +57,7 @@ class OrderRequest(BaseModel):
     trailing_stop_pct: Decimal | None = None
     max_hold_days: int | None = Field(default=None, ge=1)
     scheduled_exit_date: date | None = None
+    scheduled_exit_time: time | None = None
     created_at: datetime
 
     @model_validator(mode="before")

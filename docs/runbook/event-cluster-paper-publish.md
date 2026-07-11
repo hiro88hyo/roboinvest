@@ -5,9 +5,10 @@ Pub/Sub + Supabase E2E as of 2026-07-10, but **activation against the target
 environment remains blocked**. The target OMS Paper migration/RPC health and
 event-paper claim CAS RPC health, plus the managed `event-paper-raw-books`
 subscription, must be verified. More importantly, the implemented publisher is
-`opening_transport_stress_v1`: it does not reproduce the frozen next-open /
-20th-session-close execution contract and cannot be activated as frozen-v1
-paper evidence.
+`opening_transport_stress_v1`: the local close-session profile is now wired to
+the frozen 20th-session `15:30 JST` exit, but matched-random evidence and
+target-environment readiness are still absent. It cannot be activated as
+frozen-v1 paper evidence.
 
 The old publisher used the future T+1 open as `StrategySignal.price` and as the
 basis of an absolute stop. The detector's old `--publish-paper` path remains
@@ -165,7 +166,8 @@ Already implemented while publication remains blocked:
 - Gateway preserves holding and exit metadata, sizes against the relative stop,
   and rejects a live BUY carrying that stop intent;
 - OMS Paper fixes a new BUY's absolute stop to its actual fill and carries
-  `holding_type=swing`, `max_hold_days`, and `scheduled_exit_date`; and
+  `holding_type=swing`, `max_hold_days`, `scheduled_exit_date`, and the frozen
+  event-only `scheduled_exit_time=15:30 JST`; and
 - the 14:50 day closeout ignores swing positions;
 - live Feeder books carry a separate `received_at`, and OMS Paper uses its wall
   clock for stale/future checks while requiring that provenance for PAPER_ONLY;
@@ -187,8 +189,9 @@ Already implemented while publication remains blocked:
   `trades_paper.order_id`; actual-RPC tests cover concurrent BUYs, redelivery,
   partial/full SELL, rollback, `opened_at` ABA rejection, persistent
   `position_generation_id` lineage, and role restrictions; and
-- health check verifies `trades_paper.order_id` / `position_generation_id` plus
-  safe executable presence of `event_paper_cas_strategy_reasoning`,
+- health check verifies `positions.scheduled_exit_time`, `trades_paper.order_id`
+  / `position_generation_id` plus safe executable presence of
+  `event_paper_cas_strategy_reasoning`,
   `event_paper_stage_dispatch`, `oms_paper_apply_fill`, and generation-checked
   `oms_paper_update_stop_loss`;
 - the one-shot publisher consumes only `event-paper-raw-books`, uses a targeted
@@ -213,16 +216,14 @@ Already implemented while publication remains blocked:
 
 Still required before any target publication can be reconsidered:
 
-- implement and verify next-open entry plus a close-session exit on the frozen
-  20th-session date. Current opening exits are mechanics/capital-ordering stress,
-  not strategy reproduction;
 - replace or formally resolve the cited same-symbol random evidence: random
   rows used an 8% stop while selected rows used the frozen 10% stop. Do not
   rerun/inspect the locked OOS window without ADR-required approval;
 - deployment of `contracts/sql/018_oms_paper_apply_fill_rpc.sql`,
   `contracts/sql/019_event_paper_claim_cas_rpc.sql`,
   `contracts/sql/020_event_paper_stage_dispatch_journal.sql`, and
-  `contracts/sql/021_oms_paper_position_generation_lineage.sql` to the target
+  `contracts/sql/021_oms_paper_position_generation_lineage.sql`, and
+  `contracts/sql/022_positions_scheduled_exit_time.sql` to the target
   Supabase project, with `scripts/health-check.py --check supabase` reporting
   both Paper OMS RPCs, `event_paper_cas_strategy_reasoning`, and
   `event_paper_stage_dispatch` as `OK`;

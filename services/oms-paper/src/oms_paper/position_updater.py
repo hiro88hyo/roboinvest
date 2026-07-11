@@ -10,7 +10,7 @@ intent はここで実際の約定価格に固定し、streaming と backtest �
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, time
 from decimal import ROUND_HALF_UP, Decimal
 
 from trade_contracts.enums import Side, TradingStyle
@@ -80,6 +80,7 @@ def apply_fill(
     target_price: Decimal | None = None,
     max_hold_days: int | None = None,
     scheduled_exit_date: date | None = None,
+    scheduled_exit_time: time | None = None,
     trailing_stop_pct: Decimal | None = None,
     executed_at: datetime,
 ) -> PositionUpdate:
@@ -113,6 +114,7 @@ def apply_fill(
                 max_hold_days=max_hold_days,
                 scheduled_exit_date=scheduled_exit_date
                 or nth_tse_business_day_after(executed_at.date(), max_hold_days),
+                scheduled_exit_time=scheduled_exit_time,
                 trailing_stop_pct=trailing_stop_pct,
                 opened_at=executed_at,
             )

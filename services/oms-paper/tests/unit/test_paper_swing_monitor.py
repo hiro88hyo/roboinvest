@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time
 from decimal import Decimal
 
 from oms_paper._testing import make_paper_position
@@ -123,6 +123,30 @@ def test_max_hold_days_not_yet_expired_holds() -> None:
         now=datetime(2026, 4, 30, 15, 0, tzinfo=UTC),
     )
     assert decision.action == "hold"
+
+
+def test_max_hold_days_waits_for_configured_jst_close_time() -> None:
+    pos = make_paper_position(
+        holding_type=TradingStyle.SWING,
+        max_hold_days=5,
+        scheduled_exit_date=date(2026, 5, 1),
+        scheduled_exit_time=time(15, 30),
+    )
+
+    before_close = evaluate_swing_exit(
+        position=pos,
+        latest_price=Decimal("1000"),
+        now=datetime(2026, 5, 1, 6, 29, tzinfo=UTC),  # 15:29 JST
+    )
+    at_close = evaluate_swing_exit(
+        position=pos,
+        latest_price=Decimal("1000"),
+        now=datetime(2026, 5, 1, 6, 30, tzinfo=UTC),  # 15:30 JST
+    )
+
+    assert before_close.action == "hold"
+    assert at_close.action == "exit"
+    assert at_close.reason == "max_hold_days"
 
 
 def test_find_max_hold_due_swing_positions_only_returns_due_swing_positions() -> None:

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Any, Self
 
@@ -114,7 +114,7 @@ class SupabaseClient:
             params={
                 "select": (
                     "symbol,quantity,entry_price,holding_type,"
-                    "target_price,stop_loss_price,max_hold_days,scheduled_exit_date,"
+                    "target_price,stop_loss_price,max_hold_days,scheduled_exit_date,scheduled_exit_time,"
                     "trailing_stop_pct,opened_at,position_generation_id,side"
                 ),
                 "symbol": f"eq.{symbol}",
@@ -142,7 +142,7 @@ class SupabaseClient:
             params={
                 "select": (
                     "symbol,quantity,entry_price,holding_type,"
-                    "target_price,stop_loss_price,max_hold_days,scheduled_exit_date,"
+                    "target_price,stop_loss_price,max_hold_days,scheduled_exit_date,scheduled_exit_time,"
                     "trailing_stop_pct,opened_at,position_generation_id,side"
                 ),
                 "trade_type": "eq.paper",
@@ -207,6 +207,7 @@ class SupabaseClient:
         new_stop_loss_price: Decimal | None = None,
         new_max_hold_days: int | None = None,
         new_scheduled_exit_date: date | None = None,
+        new_scheduled_exit_time: time | None = None,
         new_trailing_stop_pct: Decimal | None = None,
     ) -> PaperFillApplyResult:
         """約定と position 遷移を ``oms_paper_apply_fill`` で原子的に確定する。
@@ -247,6 +248,9 @@ class SupabaseClient:
             "p_new_max_hold_days": new_max_hold_days,
             "p_new_scheduled_exit_date": (
                 new_scheduled_exit_date.isoformat() if new_scheduled_exit_date is not None else None
+            ),
+            "p_new_scheduled_exit_time": (
+                new_scheduled_exit_time.isoformat() if new_scheduled_exit_time is not None else None
             ),
             "p_new_trailing_stop_pct": (
                 str(new_trailing_stop_pct) if new_trailing_stop_pct is not None else None

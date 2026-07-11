@@ -34,6 +34,7 @@ CONTRACT_MIGRATION_PAIRS = (
     ("018_oms_paper_apply_fill_rpc.sql", "019_oms_paper_apply_fill_rpc.sql"),
     ("019_event_paper_claim_cas_rpc.sql", "020_event_paper_claim_cas_rpc.sql"),
     ("020_event_paper_stage_dispatch_journal.sql", "021_event_paper_stage_dispatch_journal.sql"),
+    ("022_positions_scheduled_exit_time.sql", "023_positions_scheduled_exit_time.sql"),
     (
         "021_oms_paper_position_generation_lineage.sql",
         "022_oms_paper_position_generation_lineage.sql",

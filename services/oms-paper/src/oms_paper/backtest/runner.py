@@ -160,6 +160,7 @@ def run_backtest(
             target_price=order.target_price,
             max_hold_days=order.max_hold_days,
             scheduled_exit_date=order.scheduled_exit_date,
+            scheduled_exit_time=order.scheduled_exit_time,
             trailing_stop_pct=order.trailing_stop_pct,
             executed_at=order.created_at,
         )

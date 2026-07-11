@@ -620,6 +620,7 @@ def test_fetch_and_build_report_reconciles_exact_open_position(tmp_path: Path) -
                         "stop_loss_price": "920.70",
                         "max_hold_days": 20,
                         "scheduled_exit_date": "2026-02-18",
+                        "scheduled_exit_time": "15:30:00",
                         "opened_at": "2026-01-21T00:02:00+00:00",
                         "position_generation_id": "trade-buy",
                     }
@@ -654,6 +655,7 @@ def test_fetch_and_build_report_reconciles_exact_open_position(tmp_path: Path) -
     assert row["position_open"] is True
     assert row["position_stop_loss_price"] == "920.70"
     assert row["position_scheduled_exit_date"] == "2026-02-18"
+    assert row["position_scheduled_exit_time"] == "15:30:00"
     assert row["observed_ask"] == "1000"
     assert report_event_paper_observation.Decimal(row["entry_slippage_bps"]) == 230
 

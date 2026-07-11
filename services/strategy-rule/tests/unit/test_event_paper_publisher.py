@@ -136,6 +136,8 @@ class _SupabaseRouter:
                 json=[{"applied": applied, "reasoning": row.get("reasoning")}],
             )
         if request.method == "GET" and path == "/rest/v1/positions":
+            if request.url.params.get("select") == "scheduled_exit_time":
+                return httpx.Response(200, json=[])
             if request.url.params.get("scheduled_exit_date") == "is.null":
                 return httpx.Response(200, json=self.missing_schedule_positions)
             due_positions = (
@@ -406,6 +408,29 @@ async def test_publisher_preflight_failure_has_no_pubsub_side_effect(
     assert pubsub.published == []
     assert pubsub.acked == []
     assert supabase.strategy_logs == {}
+
+
+async def test_publisher_preflight_requires_close_session_rpc_contract(tmp_path: Path) -> None:
+    supabase = _SupabaseRouter()
+
+    with pytest.raises(EventPaperPublishError, match="exhausted pull batches"):
+        await _run(tmp_path=tmp_path, pubsub=_PubSubRouter(), supabase=supabase)
+
+    close_session_column = next(
+        request
+        for request in supabase.requests
+        if request.method == "GET"
+        and request.url.path == "/rest/v1/positions"
+        and request.url.params.get("select") == "scheduled_exit_time"
+    )
+    assert close_session_column.url.params.get("limit") == "0"
+
+    apply_fill_probe = next(
+        request
+        for request in supabase.requests
+        if request.method == "POST" and request.url.path.endswith("/rpc/oms_paper_apply_fill")
+    )
+    assert json.loads(apply_fill_probe.content.decode())["p_new_scheduled_exit_time"] is None
 
 
 async def test_existing_claim_republishes_exact_original_quote(tmp_path: Path) -> None:

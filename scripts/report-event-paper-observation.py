@@ -382,7 +382,7 @@ def fetch_supabase_rows(
                 "select": (
                     "symbol,trade_type,side,quantity,entry_price,current_price,"
                     "unrealized_pnl,holding_type,stop_loss_price,max_hold_days,"
-                    "scheduled_exit_date,opened_at,position_generation_id"
+                    "scheduled_exit_date,scheduled_exit_time,opened_at,position_generation_id"
                 ),
                 "trade_type": "eq.paper",
                 "symbol": _in_filter(symbols),
@@ -540,6 +540,9 @@ def build_report(
                 ),
                 "position_scheduled_exit_date": (
                     None if position is None else position.get("scheduled_exit_date")
+                ),
+                "position_scheduled_exit_time": (
+                    None if position is None else position.get("scheduled_exit_time")
                 ),
                 "reconciliation_status": _status(
                     strategy_signal_id=strategy_signal_id,
@@ -999,6 +1002,7 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "position_current_price",
         "position_unrealized_pnl",
         "position_scheduled_exit_date",
+        "position_scheduled_exit_time",
         "reconciliation_status",
     ]
     with path.open("w", encoding="utf-8", newline="") as f:

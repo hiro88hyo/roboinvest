@@ -374,6 +374,7 @@ async def test_apply_paper_fill_posts_exact_rpc_params_and_parses_position() -> 
         "p_new_stop_loss_price": "902.70",
         "p_new_max_hold_days": 5,
         "p_new_scheduled_exit_date": "2026-05-01",
+        "p_new_scheduled_exit_time": None,
         "p_new_trailing_stop_pct": "0.03",
     }
     assert result.outcome is PaperFillOutcome.APPLIED

@@ -1,6 +1,6 @@
 # Handoff Memo (for coding AIs)
 
-最終更新: 2026-07-11 / branch: `fix/event-paper-review-followup`
+最終更新: 2026-07-11
 
 このファイルは、次の coding AI が最初に読むための短い索引です。日次の長い運用ログはここに積まず、必要な詳細だけリンク先で確認してください。
 
@@ -19,7 +19,7 @@
 
 ## 2. Current State
 
-2026-07-10 時点の要点:
+2026-07-11 時点の要点:
 
 - 全 9 サービス + Dashboard は実装済み。
 - 現在の最優先は event candidate の因果性修正。運用候補と研究用
@@ -30,6 +30,13 @@
   holding metadata を運び、Gateway は live BUY の相対 stop を拒否し、OMS Paper
   は新規 BUY の実約定値から絶対 stop を固定する。14:50 day closeout は swing
   position を対象外にした。
+- event の固定保有退出には、`scheduled_exit_time` を追加した。event 専用の
+  `15:30 JST` は `StrategySignal` → `UnifiedTradeSignal` → `OrderRequest` →
+  OMS Paper position/RPC まで伝播し、同日15:30までは保有、以後に決済する。
+  時刻未指定の既存 position は従来どおり、予定日の開始時から決済対象となる。
+  対応する migration/RPC source は `contracts/sql/022_positions_scheduled_exit_time.sql`
+  （infra migration 023）。ローカル loopback DB への適用と RPC/E2E は確認済みで、
+  target DB には未適用、target activation は禁止のままである。
 - Feeder `received_at`、専用 `event-paper-raw-books`、PAPER_ONLY の
   Gateway/Order/OMS 防御、strategy/candidate pairing 分離、決定的 ID、OMS の
   wall-clock stale/future 判定も実装済み。
@@ -45,8 +52,9 @@
   `contracts/sql/018_oms_paper_apply_fill_rpc.sql`（infra migration 019）と
   `contracts/sql/019_event_paper_claim_cas_rpc.sql`（infra migration 020）、
   `contracts/sql/020_event_paper_stage_dispatch_journal.sql`（infra migration 021）、
-  `contracts/sql/021_oms_paper_position_generation_lineage.sql`（infra migration 022）
-  の適用、4 RPC health、および単一 coordinator が所有する managed subscription の
+  `contracts/sql/021_oms_paper_position_generation_lineage.sql`（infra migration 022）、
+  `contracts/sql/022_positions_scheduled_exit_time.sql`（infra migration 023）
+  の適用、必須列と4 RPC health、および単一 coordinator が所有する managed subscription の
   確認が publish 前提。
 - detector は feature cutoff から必須OHLCV sessionを厳密に決める（15:30 JST
   以降は signal-date、それ以前は直前TSE営業日）。当該行が欠けても古いbarを
@@ -61,6 +69,10 @@
   依存による構造的 false zero の可能性があるため unreliable / inconclusive。
   候補不在の証拠にも、実在した証拠にも使わない。
 - day `relative_momentum` の損益は swing 検証の代替にしない。
+- earnings の AI ラベル train 46,757 件は完了したが、固定2日/5日とも
+  preregistered gate は FAIL だった（PF 改善 +0.051 / +0.030）。この AI selector は
+  freeze とし、validation / locked OOS は実行しない。記録は
+  `docs/reports/event-ai-earnings-train-freeze-2026-07-11.md` を正とする。
 - 2026-07-06 JST paper observation の前日準備は完了。
   `production-preopen-check.py --expected-trade-mode paper --target-date 2026-07-06 --kabu-offline`
   で `OK 127 / WARN 2 / NG 0`。WARN は kabu station / Windows proxy 停止前提の
@@ -117,6 +129,20 @@
 ## 4. Active Follow-ups
 
 優先度が高い順:
+
+0. **2026-07-11 event paper close-session profile と AI selector freeze**
+   - `scheduled_exit_time=15:30 JST` を event paper 固定保有の execution contract に
+     追加済み。ローカル loopback Supabase の migration/RPC と event pipeline E2E で
+     確認し、`make lint-all` / `make test-all` も成功した。
+   - migration 023 は target DB に適用していない。`opening_transport_stress_v1` は
+     引き続き `comparable_to_registered_backtest=false` であり、target 実行・paper/live
+     evidence への算入はしない。
+   - 次に進める条件は、20営業日目15:30 close と -10% stop を揃えた matched-random
+     evidence、target migration/RPC health、単一 coordinator の確認である。これらが
+     揃うまで publisher の target activation は禁止する。
+   - earnings train AI labeling は 46,757/46,757 で終了したが gate FAIL。AI selector は
+     freeze し、validation と locked OOS を回さない。詳細は
+     `docs/reports/event-ai-earnings-train-freeze-2026-07-11.md`。
 
 0. **2026-07-10 event candidate causality audit**
    - 外部レビューで、event detector が T+1 OHLCV と実際の寄付値を候補生成、

@@ -325,6 +325,13 @@ class EventPaperSupabaseClient:
             params={"select": "order_id", "limit": "0"},
         )
         self._raise_for_status(column, operation="probe trades_paper.order_id")
+        close_session_column = await client.get(
+            "/rest/v1/positions",
+            params={"select": "scheduled_exit_time", "limit": "0"},
+        )
+        self._raise_for_status(
+            close_session_column, operation="probe positions.scheduled_exit_time"
+        )
         probes: tuple[tuple[str, dict[str, object], str], ...] = (
             (
                 "event_paper_cas_strategy_reasoning",
@@ -353,6 +360,7 @@ class EventPaperSupabaseClient:
                     "p_new_stop_loss_price": None,
                     "p_new_max_hold_days": None,
                     "p_new_scheduled_exit_date": None,
+                    "p_new_scheduled_exit_time": None,
                     "p_new_trailing_stop_pct": None,
                 },
                 "p_order_id and p_trade_id are required",

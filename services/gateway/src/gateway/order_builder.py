@@ -64,6 +64,7 @@ def build(
         trailing_stop_pct=signal.trailing_stop_pct,
         max_hold_days=signal.max_hold_days,
         scheduled_exit_date=signal.scheduled_exit_date,
+        scheduled_exit_time=signal.scheduled_exit_time,
         created_at=created_at or datetime.now(UTC),
     )
 
