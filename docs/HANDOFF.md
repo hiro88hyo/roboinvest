@@ -38,7 +38,11 @@
   （infra migration 023）。2026-07-11 に target DB へ migration 018〜023 を
   適用し、`health-check.py --check supabase` は必須列と4 RPCを含む `OK 20` を確認した。
   main のproduction deployと `event-paper-raw-books` のbook-filter subscription作成も
-  完了した。target activation は禁止のままである。
+  完了した。2026-07-13 JST 向けの Universe Scanner は scanner gate 通過30銘柄を
+  watchlist と OMS Live の許可リストへ同期済みで、`--kabu-offline` の pre-open check は
+  `OK 130 / WARN 1 / NG 0` を確認した（WARN は停止中の kabu station による HTTP 401）。
+  `TRADE_MODE=paper` と `OMS_LIVE_DRY_RUN=true` は維持している。event publisher の
+  target activation は禁止のままである。
 - Feeder `received_at`、専用 `event-paper-raw-books`、PAPER_ONLY の
   Gateway/Order/OMS 防御、strategy/candidate pairing 分離、決定的 ID、OMS の
   wall-clock stale/future 判定も実装済み。
@@ -138,7 +142,9 @@
      確認し、`make lint-all` / `make test-all` も成功した。
    - target DB migration 018〜023、必須列/4 RPC health（OK 20）、
      `event-paper-raw-books` subscriptionのbook filter、mainのproduction deployは
-     2026-07-11に確認済み。`opening_transport_stress_v1` は引き続き
+     2026-07-11に確認済み。2026-07-13向けのwatchlist 30件と OMS Live許可リストも
+     scanner gate通過銘柄で同期し、offline pre-open check は `OK 130 / WARN 1 / NG 0`
+     だった。`opening_transport_stress_v1` は引き続き
      `comparable_to_registered_backtest=false` であり、target 実行・paper/live evidence
      への算入はしない。
    - 次に進める条件は、20営業日目15:30 close と -10% stop を揃えた matched-random
