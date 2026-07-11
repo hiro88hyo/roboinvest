@@ -35,8 +35,10 @@
   OMS Paper position/RPC まで伝播し、同日15:30までは保有、以後に決済する。
   時刻未指定の既存 position は従来どおり、予定日の開始時から決済対象となる。
   対応する migration/RPC source は `contracts/sql/022_positions_scheduled_exit_time.sql`
-  （infra migration 023）。ローカル loopback DB への適用と RPC/E2E は確認済みで、
-  target DB には未適用、target activation は禁止のままである。
+  （infra migration 023）。2026-07-11 に target DB へ migration 018〜023 を
+  適用し、`health-check.py --check supabase` は必須列と4 RPCを含む `OK 20` を確認した。
+  main のproduction deployと `event-paper-raw-books` のbook-filter subscription作成も
+  完了した。target activation は禁止のままである。
 - Feeder `received_at`、専用 `event-paper-raw-books`、PAPER_ONLY の
   Gateway/Order/OMS 防御、strategy/candidate pairing 分離、決定的 ID、OMS の
   wall-clock stale/future 判定も実装済み。
@@ -53,9 +55,9 @@
   `contracts/sql/019_event_paper_claim_cas_rpc.sql`（infra migration 020）、
   `contracts/sql/020_event_paper_stage_dispatch_journal.sql`（infra migration 021）、
   `contracts/sql/021_oms_paper_position_generation_lineage.sql`（infra migration 022）、
-  `contracts/sql/022_positions_scheduled_exit_time.sql`（infra migration 023）
-  の適用、必須列と4 RPC health、および単一 coordinator が所有する managed subscription の
-  確認が publish 前提。
+  `contracts/sql/022_positions_scheduled_exit_time.sql`（infra migration 023）は
+  targetへ適用済みで、必須列と4 RPC healthも確認済み。残るpublish前提は、単一
+  coordinator の運用確認とmatched-random evidenceである。
 - detector は feature cutoff から必須OHLCV sessionを厳密に決める（15:30 JST
   以降は signal-date、それ以前は直前TSE営業日）。当該行が欠けても古いbarを
   代用せず、凍結済み occurrence を `feature_data_complete=false` として記録する。
@@ -134,12 +136,14 @@
    - `scheduled_exit_time=15:30 JST` を event paper 固定保有の execution contract に
      追加済み。ローカル loopback Supabase の migration/RPC と event pipeline E2E で
      確認し、`make lint-all` / `make test-all` も成功した。
-   - migration 023 は target DB に適用していない。`opening_transport_stress_v1` は
-     引き続き `comparable_to_registered_backtest=false` であり、target 実行・paper/live
-     evidence への算入はしない。
+   - target DB migration 018〜023、必須列/4 RPC health（OK 20）、
+     `event-paper-raw-books` subscriptionのbook filter、mainのproduction deployは
+     2026-07-11に確認済み。`opening_transport_stress_v1` は引き続き
+     `comparable_to_registered_backtest=false` であり、target 実行・paper/live evidence
+     への算入はしない。
    - 次に進める条件は、20営業日目15:30 close と -10% stop を揃えた matched-random
-     evidence、target migration/RPC health、単一 coordinator の確認である。これらが
-     揃うまで publisher の target activation は禁止する。
+     evidenceと単一 coordinator の確認である。これらが揃うまで publisher のtarget
+     activationは禁止する。
    - earnings train AI labeling は 46,757/46,757 で終了したが gate FAIL。AI selector は
      freeze し、validation と locked OOS を回さない。詳細は
      `docs/reports/event-ai-earnings-train-freeze-2026-07-11.md`。
@@ -177,9 +181,9 @@
      置換するには RPC interface の migration が必要なため、このレビューでは混在させない。
    - detector 内蔵の event `--publish-paper` は fail closed のまま。独立 publisher
      と実 E2E は `opening_transport_stress_v1` として完成したが、next-open / 20日目
-     close の整合と stop 条件を揃えた matched-random evidence がない。target DB の
-     4 migration/4 RPC health、managed subscription の単一 coordinator 所有も
-     含め、すべて解消するまで activation しない。
+     close の整合と stop 条件を揃えた matched-random evidence がない。target DB healthと
+     managed subscriptionのbook filterは確認済みだが、単一 coordinator 所有も含め、
+     すべて解消するまでactivationしない。
    - kill switch、PER threshold、20日 exit、-10% stop の戦略値は変更しない。
 
 0. **2026-06-23 strategy reset: 既存 intraday strategy は live 候補から外す**
