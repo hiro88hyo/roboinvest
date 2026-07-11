@@ -22,7 +22,8 @@
 
 - 複数サービスに「Phase 1/2/3 で今後実装」「下流サービス未実装」といった初期計画の文が残っている。2026-05-15 時点では 9 サービス + Dashboard は実装済み。
 - `SUPABASE_SERVICE_ROLE_KEY` 表記が一部サービス文書に残っている。現行のローカル setup と多くのサービスは `SUPABASE_SECRET_KEY` を使う。変更時は対象サービスの `config.py` / `__main__.py` を正とする。
-- Pub/Sub subscription 件数は古い文書で 7 件と書かれることがある。現行の `infra/pubsub/subscriptions.json` は 9 件。
+- Pub/Sub 件数は古い文書で固定値が残る。現行 SSOT は
+  `infra/pubsub/topics.json` 9 件 / `infra/pubsub/subscriptions.json` 13 件。
 - Feeder 文書の本番 reverse proxy は nginx 記述が残る。引き継ぎ上の現方針は Windows 上の Caddy reverse proxy。
 - Universe Scanner の実装と paid cutover の手動実行確認までは完了。次の論点は日次自動化の起動方法と、`daily_ohlcv` の大きい upsert を前提にした運用時間の見積もり。
 

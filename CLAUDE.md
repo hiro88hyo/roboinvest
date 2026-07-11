@@ -231,6 +231,7 @@ trade-ai-agent/
 - `target_price` (numeric): 利確目標価格
 - `stop_loss_price` (numeric): 現在のストップロス価格（トレーリング更新あり）
 - `max_hold_days` (int): 最大保有日数（スイング用）
+- `scheduled_exit_date` (date): fixed-hold swing の予定決済日
 - `trailing_stop_pct` (numeric): トレーリングストップ率（スイング用）
 - `opened_at` (timestamptz)
 
@@ -245,10 +246,17 @@ trade-ai-agent/
 ### `trades_paper`
 擬似約定の履歴。
 - `trade_id` (uuid PK)
+- `order_id` (uuid nullable, non-null partial unique): closeout/monitor を含む
+  OMS Paper fill の第一冪等性キー
 - `symbol`, `side`, `quantity`, `price`
 - `signal_source` (text): `RULE` | `AI` | `CONSENSUS`
-- `unified_signal_id` (uuid FK → `aggregator_logs.signal_id`): 元の統合シグナルへの参照
+- `unified_signal_id` (uuid nullable FK → `aggregator_logs.signal_id`): 元の統合シグナルへの参照。closeout/monitor fill は `NULL`
 - `executed_at` (timestamptz)
+
+OMS Paper の fill は `oms_paper_apply_fill` RPC だけで書き込み、対応する
+`positions` 遷移と同一 transaction で確定する。monitor/closeout SELL と
+`oms_paper_update_stop_loss` は `opened_at` を position generation として照合し、
+trailing stop は DB transaction 内でも引き下げを拒否する。
 
 ### `aggregator_logs`
 Aggregator が出力した統合シグナルのログ。約定テーブルの参照元。

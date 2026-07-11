@@ -34,8 +34,10 @@
   Gateway/Order/OMS 防御、strategy/candidate pairing 分離、決定的 ID、OMS の
   wall-clock stale/future 判定も実装済み。
 - event `--publish-paper` は引き続き fail closed。専用 subscription を読む
-  publisher、trade/position の atomic persistence、Pub/Sub emulator E2E が
-  揃うまで解除しない。
+  publisherと Pub/Sub emulator E2E が揃うまで解除しない。OMS Paper の
+  trade/position atomic persistence は実装・ローカル実 RPC 検証済みだが、
+  target Supabase への `contracts/sql/018_oms_paper_apply_fill_rpc.sql`
+  （infra migration 019）適用と health check は publish 前提。
 - 2026-07-09 / 2026-07-10 の legacy detector による候補 0 件は、T+1 OHLCV
   依存による構造的 false zero の可能性があるため unreliable / inconclusive。
   候補不在の証拠にも、実在した証拠にも使わない。
@@ -118,8 +120,14 @@
    - fresh quote provenance、専用 subscription、PAPER_ONLY 強制、deterministic
      ID / strategy isolation、wall-clock stale/future 判定は実装済み。
      `candidate_id` は戦略 ID ではなく cluster/observation occurrence を使う。
-   - event `--publish-paper` は、専用 subscription を読む publisher、atomic
-     trade/position persistence、Pub/Sub emulator E2E を実装するまで fail closed。
+   - OMS Paper の全 fill path は `oms_paper_apply_fill` RPC へ統一済み。
+     order/signal/trade ID 冪等性、symbol lock、rollback、partial exit cache 維持、
+     position `opened_at` 世代照合、closeout の fresh-book bounded retry、Python と
+     SQL の1円平均単価丸めを実装。ローカル実 RPC の並行 BUY・時刻/約定値が
+     変わる redelivery・partial/full SELL・FK rollback・ABA reject・並行 trailing
+     stop の単調増加・anon deny を確認済み。
+   - event `--publish-paper` は、専用 subscription を読む publisher、target DB
+     migration/health check、Pub/Sub emulator E2E を実装するまで fail closed。
    - kill switch、PER threshold、20日 exit、-10% stop の戦略値は変更しない。
 
 0. **2026-06-23 strategy reset: 既存 intraday strategy は live 候補から外す**

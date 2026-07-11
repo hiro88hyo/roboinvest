@@ -83,6 +83,66 @@ jobs:
       - name: vitest
         run: npm test
 
+  oms-paper-rpc:
+    name: OMS Paper atomic RPC (Supabase)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          version: "0.5.x"
+          enable-cache: true
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Sync workspace
+        run: uv sync --all-packages
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@v2
+        with:
+          version: latest
+
+      - name: Start Supabase local stack
+        working-directory: infra
+        run: supabase start
+
+      - name: Apply contract SQL and reload PostgREST
+        run: |
+          cat contracts/sql/*.sql infra/supabase/seed.sql \
+            | docker exec -i supabase_db_trade-ai-agent \
+                psql -U postgres -d postgres -v ON_ERROR_STOP=1
+          docker exec supabase_db_trade-ai-agent \
+            psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c "notify pgrst, 'reload schema';"
+
+      - name: Export Supabase env
+        working-directory: infra
+        run: |
+          api_url=$(supabase status -o env | sed -n 's/^API_URL=//p' | tr -d '"')
+          service_key=$(supabase status -o env | sed -n 's/^SERVICE_ROLE_KEY=//p' | tr -d '"')
+          anon_key=$(supabase status -o env | sed -n 's/^ANON_KEY=//p' | tr -d '"')
+          if [ -z "$api_url" ] || [ -z "$service_key" ] || [ -z "$anon_key" ]; then
+            echo "failed to extract supabase env"
+            exit 1
+          fi
+          echo "SUPABASE_URL=$api_url" >> "$GITHUB_ENV"
+          echo "SUPABASE_SECRET_KEY=$service_key" >> "$GITHUB_ENV"
+          echo "SUPABASE_ANON_KEY=$anon_key" >> "$GITHUB_ENV"
+
+      - name: Verify Supabase RPC health
+        run: uv run scripts/health-check.py --check supabase --timeout 10
+
+      - name: Test atomic fill and generation guards
+        run: >-
+          uv run pytest -q
+          services/oms-paper/tests/integration/test_paper_stream_runner_e2e.py
+          -k 'atomic_fill_rpc or stale_position_generation'
+
   e2e:
     name: Integration tests (Pub/Sub + Supabase)
     if: github.event_name != 'pull_request'
@@ -152,13 +212,14 @@ jobs:
         run: |
           api_url=$(supabase status -o env | sed -n 's/^API_URL=//p' | tr -d '"')
           service_key=$(supabase status -o env | sed -n 's/^SERVICE_ROLE_KEY=//p' | tr -d '"')
-          if [ -z "$api_url" ] || [ -z "$service_key" ]; then
+          anon_key=$(supabase status -o env | sed -n 's/^ANON_KEY=//p' | tr -d '"')
+          if [ -z "$api_url" ] || [ -z "$service_key" ] || [ -z "$anon_key" ]; then
             echo "failed to extract supabase env"
-            supabase status -o env
             exit 1
           fi
           echo "SUPABASE_URL=$api_url" >> "$GITHUB_ENV"
           echo "SUPABASE_SECRET_KEY=$service_key" >> "$GITHUB_ENV"
+          echo "SUPABASE_ANON_KEY=$anon_key" >> "$GITHUB_ENV"
 
       - name: pytest -m integration
         run: uv run pytest -m integration -v --durations=20

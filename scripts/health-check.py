@@ -12,8 +12,8 @@
   1. Pub/Sub: ``infra/pubsub/topics.json`` に列挙された全トピックと
      ``infra/pubsub/subscriptions.json`` に列挙された全サブスクリプションが
      エミュレータ上に存在するか
-  2. Supabase: ``contracts/sql/`` 由来の主要テーブルと運用上必須の列が
-     PostgREST 経由で可読か (``select=...&limit=0`` で空 200 を期待)
+  2. Supabase: ``contracts/sql/`` 由来の主要テーブル・必須列・安全に probe
+     できる必須 RPC が PostgREST 経由で利用可能か
   3. Services: 各サービスの ``python -m <pkg> --help`` が returncode=0 で
      起動できるか (CLI が壊れていないかの煙テスト)
 
@@ -61,7 +61,35 @@ SUPABASE_TABLES: tuple[str, ...] = (
     "market_regime",
 )
 
-SUPABASE_COLUMN_CHECKS: tuple[tuple[str, str], ...] = (("positions", "scheduled_exit_date"),)
+SUPABASE_COLUMN_CHECKS: tuple[tuple[str, str], ...] = (
+    ("positions", "scheduled_exit_date"),
+    ("trades_paper", "order_id"),
+)
+
+OMS_PAPER_APPLY_FILL_PROBE: dict[str, object] = {
+    "p_order_id": None,
+    "p_trade_id": None,
+    "p_symbol": None,
+    "p_side": None,
+    "p_filled_quantity": None,
+    "p_fill_price": None,
+    "p_signal_source": None,
+    "p_unified_signal_id": None,
+    "p_executed_at": None,
+    "p_expected_position_opened_at": None,
+    "p_new_holding_type": None,
+    "p_new_target_price": None,
+    "p_new_stop_loss_price": None,
+    "p_new_max_hold_days": None,
+    "p_new_scheduled_exit_date": None,
+    "p_new_trailing_stop_pct": None,
+}
+
+OMS_PAPER_STOP_LOSS_PROBE: dict[str, object] = {
+    "p_symbol": None,
+    "p_expected_position_opened_at": None,
+    "p_stop_loss_price": None,
+}
 
 SERVICE_MODULES: tuple[str, ...] = (
     "universe_scanner",
@@ -256,6 +284,38 @@ async def check_supabase(timeout: float, *, quiet: bool) -> CheckResult:
             if r.status_code == 200:
                 _emit("OK", label, "", quiet=quiet)
                 result.items.append(("OK", label, ""))
+            else:
+                detail = f"HTTP {r.status_code} body={r.text[:120]}"
+                _emit("NG", label, detail, quiet=quiet)
+                result.items.append(("NG", label, detail))
+
+        # Required-null validation runs before locks or writes, so this proves
+        # the function is present in PostgREST's schema cache and executable by
+        # the configured service-role key without mutating trading data.
+        rpc_probes = (
+            (
+                "oms_paper_apply_fill",
+                OMS_PAPER_APPLY_FILL_PROBE,
+                "p_order_id and p_trade_id are required",
+            ),
+            (
+                "oms_paper_update_stop_loss",
+                OMS_PAPER_STOP_LOSS_PROBE,
+                "p_symbol is required",
+            ),
+        )
+        for rpc_name, payload, expected in rpc_probes:
+            label = f"rpc:{rpc_name}"
+            try:
+                r = await client.post(f"/rest/v1/rpc/{rpc_name}", json=payload)
+            except httpx.HTTPError as exc:
+                _emit("NG", label, repr(exc), quiet=quiet)
+                result.items.append(("NG", label, repr(exc)))
+                continue
+            if r.status_code == 400 and expected in r.text:
+                detail = "present + executable"
+                _emit("OK", label, detail, quiet=quiet)
+                result.items.append(("OK", label, detail))
             else:
                 detail = f"HTTP {r.status_code} body={r.text[:120]}"
                 _emit("NG", label, detail, quiet=quiet)

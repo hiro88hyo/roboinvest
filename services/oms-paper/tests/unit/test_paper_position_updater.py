@@ -217,6 +217,7 @@ def test_build_fill_record_carries_signal_metadata() -> None:
     fill = FillResult(filled_quantity=200, fill_price=Decimal("1000"), reason="filled")
     rec = build_fill_record(order=order, fill=fill, executed_at=DEFAULT_TS)
     assert rec is not None
+    assert rec.order_id == order.order_id
     assert rec.symbol == order.symbol
     assert rec.side is Side.BUY
     assert rec.quantity == 200

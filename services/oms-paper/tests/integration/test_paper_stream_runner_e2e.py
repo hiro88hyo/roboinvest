@@ -13,10 +13,11 @@ fixture は本ファイルにインラインで定義する。新サービス追
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import os
 from collections.abc import AsyncIterator, Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
@@ -24,10 +25,18 @@ from uuid import UUID, uuid4
 import httpx
 import pytest
 from oms_paper.clients.pubsub import PubSubSubscriber
-from oms_paper.clients.supabase import SupabaseClient
+from oms_paper.clients.supabase import SupabaseClient, SupabaseError
 from oms_paper.config import OmsPaperSettings
+from oms_paper.models import (
+    PaperFillOutcome,
+    PaperFillReason,
+    PaperFillRecord,
+    PaperPositionAction,
+    PaperStopUpdateOutcome,
+    PaperStopUpdateReason,
+)
 from oms_paper.streaming.runner import StreamRunner
-from trade_contracts.enums import OrderType, Side, SignalSource, TradeMode
+from trade_contracts.enums import OrderType, Side, SignalSource, TradeMode, TradingStyle
 from trade_contracts.market import OrderBookSnapshot, PriceLevel
 from trade_contracts.order import OrderRequest
 
@@ -83,6 +92,14 @@ def supabase_secret_key() -> str:
     key = os.environ.get("SUPABASE_SECRET_KEY")
     if not key:
         pytest.skip("SUPABASE_SECRET_KEY not set")
+    return key
+
+
+@pytest.fixture(scope="session")
+def supabase_anon_key() -> str:
+    key = os.environ.get("SUPABASE_ANON_KEY")
+    if not key:
+        pytest.skip("SUPABASE_ANON_KEY not set")
     return key
 
 
@@ -256,6 +273,7 @@ async def _insert_paper_position(
     target_price: Decimal | None = None,
     trailing_stop_pct: Decimal | None = None,
     max_hold_days: int | None = None,
+    opened_at: datetime | None = None,
 ) -> None:
     """swing position を Supabase に直接 INSERT する (Phase 4 e2e seed 用)。"""
     row: dict[str, Any] = {
@@ -267,7 +285,7 @@ async def _insert_paper_position(
         "current_price": str(entry_price),
         "unrealized_pnl": "0",
         "holding_type": holding_type,
-        "opened_at": datetime.now(UTC).isoformat(),
+        "opened_at": (opened_at or datetime.now(UTC)).isoformat(),
     }
     if stop_loss_price is not None:
         row["stop_loss_price"] = str(stop_loss_price)
@@ -432,6 +450,318 @@ async def _drain_until_swing(
 # --- tests -----------------------------------------------------------------
 
 
+async def test_atomic_fill_rpc_serializes_buys_rounds_and_is_idempotent(
+    supabase_url: str,
+    supabase_secret_key: str,
+    test_symbol: str,
+) -> None:
+    """Exercise the actual PostgREST function, not the Python runner mock."""
+
+    executed_at = datetime.now(UTC)
+    first = PaperFillRecord(
+        order_id=uuid4(),
+        symbol=test_symbol,
+        side=Side.BUY,
+        quantity=1,
+        price=Decimal("1000"),
+        signal_source=SignalSource.CONSENSUS,
+        executed_at=executed_at,
+    )
+    second = PaperFillRecord(
+        order_id=uuid4(),
+        symbol=test_symbol,
+        side=Side.BUY,
+        quantity=1,
+        price=Decimal("1001"),
+        signal_source=SignalSource.CONSENSUS,
+        executed_at=executed_at,
+    )
+
+    try:
+        async with SupabaseClient(
+            url=supabase_url,
+            secret_key=supabase_secret_key,
+        ) as client:
+            first_result, second_result = await asyncio.gather(
+                client.apply_paper_fill(
+                    record=first,
+                    new_holding_type=TradingStyle.DAY,
+                ),
+                client.apply_paper_fill(
+                    record=second,
+                    new_holding_type=TradingStyle.DAY,
+                ),
+            )
+            assert first_result.outcome is PaperFillOutcome.APPLIED
+            assert second_result.outcome is PaperFillOutcome.APPLIED
+
+            # A Gateway redelivery rebuilds the deterministic order_id but can
+            # carry a new timestamp and be re-simulated against a different
+            # book. It must still be a duplicate, not a poison mismatch.
+            redelivery = PaperFillRecord(
+                order_id=first.order_id,
+                symbol=test_symbol,
+                side=Side.BUY,
+                quantity=7,
+                price=Decimal("1234"),
+                signal_source=SignalSource.CONSENSUS,
+                executed_at=executed_at + timedelta(seconds=30),
+            )
+            duplicate = await client.apply_paper_fill(
+                record=redelivery,
+                new_holding_type=TradingStyle.DAY,
+            )
+            assert duplicate.outcome is PaperFillOutcome.DUPLICATE
+            assert duplicate.position_action is PaperPositionAction.UNCHANGED
+
+            partial_sell = PaperFillRecord(
+                order_id=uuid4(),
+                symbol=test_symbol,
+                side=Side.SELL,
+                quantity=1,
+                price=Decimal("999"),
+                signal_source=SignalSource.CONSENSUS,
+                executed_at=executed_at,
+            )
+            partial_result = await client.apply_paper_fill(
+                record=partial_sell,
+                new_holding_type=None,
+            )
+            assert partial_result.position_action is PaperPositionAction.UPDATED
+            assert partial_result.resulting_position is not None
+            assert partial_result.resulting_position.quantity == 1
+
+            full_sell = PaperFillRecord(
+                order_id=uuid4(),
+                symbol=test_symbol,
+                side=Side.SELL,
+                quantity=1,
+                price=Decimal("998"),
+                signal_source=SignalSource.CONSENSUS,
+                executed_at=executed_at,
+            )
+            full_result = await client.apply_paper_fill(
+                record=full_sell,
+                new_holding_type=None,
+            )
+            assert full_result.position_action is PaperPositionAction.DELETED
+            assert full_result.resulting_position is None
+
+        trades = await _read_trades(
+            url=supabase_url,
+            key=supabase_secret_key,
+            symbol=test_symbol,
+        )
+        assert len(trades) == 4
+        assert all(trade["order_id"] is not None for trade in trades)
+
+        # The state before the SELLs proves 1000.5 used the same one-yen
+        # ROUND_HALF_UP contract as position_updater.py.
+        assert duplicate.resulting_position is not None
+        assert duplicate.resulting_position.quantity == 2
+        assert duplicate.resulting_position.entry_price == Decimal("1001")
+        assert (
+            await _read_paper_position(
+                url=supabase_url,
+                key=supabase_secret_key,
+                symbol=test_symbol,
+            )
+            is None
+        )
+    finally:
+        await _delete_trades(url=supabase_url, key=supabase_secret_key, symbol=test_symbol)
+        await _delete_position(url=supabase_url, key=supabase_secret_key, symbol=test_symbol)
+
+
+async def test_atomic_fill_rpc_rolls_back_position_when_trade_fk_fails(
+    supabase_url: str,
+    supabase_secret_key: str,
+    test_symbol: str,
+) -> None:
+    record = PaperFillRecord(
+        order_id=uuid4(),
+        symbol=test_symbol,
+        side=Side.BUY,
+        quantity=100,
+        price=Decimal("1000"),
+        signal_source=SignalSource.CONSENSUS,
+        unified_signal_id=uuid4(),  # intentionally absent from aggregator_logs
+        executed_at=datetime.now(UTC),
+    )
+
+    try:
+        async with SupabaseClient(
+            url=supabase_url,
+            secret_key=supabase_secret_key,
+        ) as client:
+            with pytest.raises(SupabaseError):
+                await client.apply_paper_fill(
+                    record=record,
+                    new_holding_type=TradingStyle.DAY,
+                )
+
+        assert (
+            await _read_paper_position(
+                url=supabase_url,
+                key=supabase_secret_key,
+                symbol=test_symbol,
+            )
+            is None
+        )
+        assert (
+            await _read_trades(
+                url=supabase_url,
+                key=supabase_secret_key,
+                symbol=test_symbol,
+            )
+            == []
+        )
+    finally:
+        await _delete_trades(url=supabase_url, key=supabase_secret_key, symbol=test_symbol)
+        await _delete_position(url=supabase_url, key=supabase_secret_key, symbol=test_symbol)
+
+
+async def test_paper_rpcs_reject_stale_position_generation(
+    supabase_url: str,
+    supabase_secret_key: str,
+    test_symbol: str,
+) -> None:
+    original_opened_at = datetime(2026, 4, 25, 9, 0, tzinfo=UTC)
+    replacement_opened_at = datetime(2026, 4, 25, 10, 0, tzinfo=UTC)
+    try:
+        await _insert_paper_position(
+            url=supabase_url,
+            key=supabase_secret_key,
+            symbol=test_symbol,
+            quantity=100,
+            entry_price=Decimal("1000"),
+            holding_type="swing",
+            stop_loss_price=Decimal("900"),
+            opened_at=original_opened_at,
+        )
+        await _delete_position(url=supabase_url, key=supabase_secret_key, symbol=test_symbol)
+        await _insert_paper_position(
+            url=supabase_url,
+            key=supabase_secret_key,
+            symbol=test_symbol,
+            quantity=100,
+            entry_price=Decimal("2000"),
+            holding_type="swing",
+            stop_loss_price=Decimal("1800"),
+            opened_at=replacement_opened_at,
+        )
+
+        stale_sell = PaperFillRecord(
+            order_id=uuid4(),
+            symbol=test_symbol,
+            side=Side.SELL,
+            quantity=100,
+            price=Decimal("1900"),
+            signal_source=SignalSource.CONSENSUS,
+            executed_at=datetime.now(UTC),
+        )
+        async with SupabaseClient(
+            url=supabase_url,
+            secret_key=supabase_secret_key,
+        ) as client:
+            sell_result = await client.apply_paper_fill(
+                record=stale_sell,
+                new_holding_type=None,
+                expected_position_opened_at=original_opened_at,
+            )
+            assert sell_result.outcome is PaperFillOutcome.REJECTED
+            assert sell_result.reason is PaperFillReason.POSITION_GENERATION_MISMATCH
+
+            stop_result = await client.update_paper_position_stop_loss(
+                symbol=test_symbol,
+                expected_opened_at=original_opened_at,
+                stop_loss_price="1700",
+            )
+            assert stop_result.outcome is PaperStopUpdateOutcome.REJECTED
+            assert stop_result.reason is PaperStopUpdateReason.POSITION_GENERATION_MISMATCH
+
+            higher_stop, lower_stop = await asyncio.gather(
+                client.update_paper_position_stop_loss(
+                    symbol=test_symbol,
+                    expected_opened_at=replacement_opened_at,
+                    stop_loss_price="1900",
+                ),
+                client.update_paper_position_stop_loss(
+                    symbol=test_symbol,
+                    expected_opened_at=replacement_opened_at,
+                    stop_loss_price="1850",
+                ),
+            )
+            assert higher_stop.outcome is PaperStopUpdateOutcome.APPLIED
+            assert lower_stop.outcome in {
+                PaperStopUpdateOutcome.APPLIED,
+                PaperStopUpdateOutcome.REJECTED,
+            }
+            if lower_stop.outcome is PaperStopUpdateOutcome.REJECTED:
+                assert lower_stop.reason is PaperStopUpdateReason.STOP_NOT_RAISED
+
+        position = await _read_paper_position(
+            url=supabase_url,
+            key=supabase_secret_key,
+            symbol=test_symbol,
+        )
+        assert position is not None
+        assert Decimal(str(position["entry_price"])) == Decimal("2000")
+        assert Decimal(str(position["stop_loss_price"])) == Decimal("1900")
+        assert (
+            await _read_trades(
+                url=supabase_url,
+                key=supabase_secret_key,
+                symbol=test_symbol,
+            )
+            == []
+        )
+    finally:
+        await _delete_trades(url=supabase_url, key=supabase_secret_key, symbol=test_symbol)
+        await _delete_position(url=supabase_url, key=supabase_secret_key, symbol=test_symbol)
+
+
+async def test_atomic_fill_rpc_is_not_executable_by_anon(
+    supabase_url: str,
+    supabase_anon_key: str,
+) -> None:
+    params = {
+        "p_order_id": None,
+        "p_trade_id": None,
+        "p_symbol": None,
+        "p_side": None,
+        "p_filled_quantity": None,
+        "p_fill_price": None,
+        "p_signal_source": None,
+        "p_unified_signal_id": None,
+        "p_executed_at": None,
+        "p_expected_position_opened_at": None,
+        "p_new_holding_type": None,
+        "p_new_target_price": None,
+        "p_new_stop_loss_price": None,
+        "p_new_max_hold_days": None,
+        "p_new_scheduled_exit_date": None,
+        "p_new_trailing_stop_pct": None,
+    }
+    async with httpx.AsyncClient(base_url=supabase_url.rstrip("/"), timeout=10.0) as client:
+        response = await client.post(
+            "/rest/v1/rpc/oms_paper_apply_fill",
+            headers=_supabase_headers(supabase_anon_key),
+            json=params,
+        )
+        stop_response = await client.post(
+            "/rest/v1/rpc/oms_paper_update_stop_loss",
+            headers=_supabase_headers(supabase_anon_key),
+            json={
+                "p_symbol": None,
+                "p_expected_position_opened_at": None,
+                "p_stop_loss_price": None,
+            },
+        )
+    assert response.status_code in {401, 403, 404}
+    assert stop_response.status_code in {401, 403, 404}
+
+
 async def test_buy_order_with_fresh_book_creates_position_and_trade_row(
     provisioned_subs: dict[str, str],
     pubsub_project_id: str,
@@ -485,6 +815,7 @@ async def test_buy_order_with_fresh_book_creates_position_and_trade_row(
         assert trades[0]["side"] == "BUY"
         assert trades[0]["quantity"] == 100
         assert Decimal(str(trades[0]["price"])) == Decimal("1000")
+        assert trades[0]["order_id"] == str(order.order_id)
         assert trades[0]["unified_signal_id"] == str(order.unified_signal_id)
     finally:
         await _delete_trades(url=supabase_url, key=supabase_secret_key, symbol=test_symbol)
@@ -594,7 +925,7 @@ async def test_swing_stop_loss_breach_triggers_exit(
     test_symbol: str,
 ) -> None:
     """swing position を pre-seed → 損切り条件を満たす板を publish →
-    自動 SELL 約定 + position DELETE + trades_paper INSERT(unified_signal_id=NULL)。"""
+    atomic RPC で自動 SELL + position DELETE (unified_signal_id=NULL)。"""
     # 板の bids[0] = 950, swing position の stop_loss_price = 950 → 損切り発火
     book = OrderBookSnapshot(
         symbol=test_symbol,

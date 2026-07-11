@@ -137,7 +137,14 @@ Already implemented while publication remains blocked:
 - `routing_intent=PAPER_ONLY` is preserved through Aggregator/Gateway/Order and
   rejected at every live boundary; and
 - `strategy_key` plus per-occurrence `candidate_id` isolates pairing, while
-  StrategySignal/UnifiedTradeSignal/Order IDs are deterministic on redelivery.
+  StrategySignal/UnifiedTradeSignal/Order IDs are deterministic on redelivery;
+- OMS Paper persists every normal/closeout/swing/day-stop fill and its position
+  transition through one `oms_paper_apply_fill` transaction, keyed primarily by
+  `trades_paper.order_id`; actual-RPC tests cover concurrent BUYs, redelivery,
+  partial/full SELL, rollback, position-generation ABA rejection, and role
+  restrictions; and
+- health check verifies `trades_paper.order_id` plus safe executable presence of
+  `oms_paper_apply_fill` and generation-checked `oms_paper_update_stop_loss`.
 
 Locally defined but not yet wired into an event publisher:
 
@@ -150,10 +157,11 @@ Still required before publication can be restored:
 - an event publisher that consumes `event-paper-raw-books`, selects a fresh
   observed ask, performs paper-mode preflight, and emits the implemented
   PAPER_ONLY identity contract;
-- atomic, idempotent persistence of each `trades_paper` fill and its resulting
-  `positions` mutation; and
 - Pub/Sub emulator E2E covering publication, aggregation, Gateway, OMS Paper,
-  redelivery, and position creation.
+  redelivery, position creation, and scheduled/partial exit ordering; and
+- deployment of `contracts/sql/018_oms_paper_apply_fill_rpc.sql` to the target
+  Supabase project, with `scripts/health-check.py --check supabase` reporting
+  `trades_paper.order_id` and both OMS Paper RPC probes as `OK`.
 
 For identity, `strategy_key` is the frozen strategy/version and `candidate_id`
 must be unique to the concrete cluster/observation occurrence. Do not copy the

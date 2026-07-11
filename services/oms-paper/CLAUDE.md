@@ -1,6 +1,8 @@
 # services/oms-paper/
 
-`paper-orders` を購読し、`raw-market-data`（`OrderBookSnapshot`）を擬似約定の判定材料として、約定を `trades_paper` に書き込み `positions`（`trade_type=paper`）を更新する Paper OMS。
+`paper-orders` を購読し、`raw-market-data`（`OrderBookSnapshot`）を擬似約定の
+判定材料として、約定と `positions`（`trade_type=paper`）遷移を同一 RPC
+transaction で確定する Paper OMS。
 
 アーキテクチャ全体・スキーマはルート [CLAUDE.md](../../CLAUDE.md) と [contracts/](../../contracts/) を参照。ここは `services/oms-paper/` 配下で作業するときの運用ルール。
 
@@ -10,8 +12,8 @@
 - `paper-orders` (OrderRequest) の購読
 - `raw-market-data` (OrderBookSnapshot) の購読・symbol 別の最新板キャッシュ
 - 板情報を元にした擬似約定判定（フル約定 / 部分約定 / 不約定）
-- 約定行を Supabase `trades_paper` に INSERT
-- `positions`（`trade_type=paper`）の UPSERT（BUY=新規 or 平均取得単価更新、SELL=全決済で DELETE）
+- Supabase `oms_paper_apply_fill` RPC による `trades_paper` と `positions` の
+  atomic / idempotent な確定（BUY=新規 or 平均取得単価更新、SELL=部分更新 or 全決済 DELETE）
 - `system_status.trading_style=day` のとき 14:50 (JST) に
   `holding_type=day` の paper 建玉だけを仮想成行決済（swing は保持）
 - `holding_type=swing` の paper 建玉に対する自動決済（`stop_loss_price` 割れ / `target_price` 到達 / `max_hold_days` 経過）と `trailing_stop_pct` による `stop_loss_price` 切り上げ。板更新トリガで評価し、決済時は closeout と同形式の `unified_signal_id=None` / `signal_source=CONSENSUS` で約定行を書く
@@ -66,10 +68,12 @@ aggregator / strategy-rule / gateway と同じ 3 フェーズパターン。段�
 
 ### Phase 3: ストリーミング実装
 
-- 3a: `clients/pubsub.py`（subscriber × 2、publisher は不要）/ `clients/supabase.py`（`positions`, `trades_paper`, `system_status` の R/W）
+- 3a: `clients/pubsub.py`（subscriber × 2、publisher は不要）/
+  `clients/supabase.py`（`positions`, `system_status` の read、fill / trailing stop
+  用の generation-checked RPC）
 - 3b: `streaming/runner.py` — paper-orders と raw-market-data を joiner で突き合わせる
   - シンボル別に最新の `OrderBookSnapshot` をメモリ保持
-  - paper-orders 受信時、対応シンボルの板を引いて擬似約定 → Supabase 書き込み → ack
+  - paper-orders 受信時、対応シンボルの板を引いて擬似約定 → atomic RPC → ack
   - 板未受信のシンボルへの注文は短時間（数百 ms）待機 → タイムアウトで不約定 ack（再配信は冪等性のため避ける）
   - 14:50 (JST) cron タスクが `system_status.trading_style=day` を確認し、
     `holding_type=day` の paper positions だけを closeout へ
@@ -78,15 +82,21 @@ aggregator / strategy-rule / gateway と同じ 3 フェーズパターン。段�
 ### Phase 4: スイング自動決済
 
 - `swing_monitor.py` (純関数 `evaluate_swing_exit`): `PaperPosition` + 最新価格 + `now` から `SwingDecision`（`exit` / `trail` / `hold`）を返す。判定優先順位は `stop_loss > target > max_hold_days > trail > hold`。trailing は単調増加のみで `ROUND_HALF_UP` で 1 円丸め
-- `clients/supabase.py` に `update_paper_position_stop_loss`（`stop_loss_price` 列のみ PATCH）を追加
+- `clients/supabase.py` の `update_paper_position_stop_loss` は
+  `oms_paper_update_stop_loss` RPC を使い、`opened_at` generation を照合する
 - `streaming/runner.py`:
   - `swing_position_cache: dict[symbol, PaperPosition]` を 30 秒 TTL で `list_paper_positions` から再フェッチ（`holding_type=swing` のみ保持）
   - `_consume_books` で更新があった symbol について `evaluate_swing_exit` を呼ぶ
-  - `exit` → closeout と同形式の SELL 注文を組んで `simulate_fill` → `apply_fill` → `trades_paper` INSERT → `positions` DELETE。`unified_signal_id=None`、`signal_source=CONSENSUS`
+  - `exit` → closeout と同形式の SELL 注文を組んで `simulate_fill` → atomic RPC。
+    `unified_signal_id=None`、`signal_source=CONSENSUS`。板不足の部分約定は
+    `partial_exit` として残数量を authoritative cache に維持し、全決済扱いしない
+  - exit 判断後に position を再読し、判断元と `opened_at` が異なる場合は新世代を
+    売らず authoritative cache の同期だけを行う。再読後の競合は RPC 側でも照合する
   - `trail` → `update_paper_position_stop_loss` のみ。`trades_paper` には書かない
   - 評価に使う最新価格は `book.bids[0].price`（最良買気配）。bids 空なら `swing_no_fills` で計上してスキップ
   - 書込失敗時は cache を維持し、次の板で retry
-- `BatchStats` に `swing_exits` / `swing_trails` / `swing_no_fills` / `swing_write_errors` を追加（default=0）
+- `BatchStats` に `swing_exits` / `swing_partial_exits` / `swing_trails` /
+  `swing_no_fills` / `swing_write_errors` を追加（day stop も同じ区分）
 
 ## ディレクトリ構成（想定）
 
@@ -143,15 +153,23 @@ services/oms-paper/
 
 ## Supabase 連携の規約（Phase 3）
 
-- `positions` は `(symbol, trade_type='paper')` で UPSERT / DELETE
-  - DELETE は `quantity=0` になったとき（部分約定で残量があれば UPDATE）
-- `trades_paper` INSERT は約定 1 回につき 1 行
+- 通常注文、14:50 closeout、swing exit、day stop exit の全 fill は
+  `oms_paper_apply_fill` RPC 1 回だけで永続化する。fill 用の direct table write
+  API は `SupabaseClient` に公開しない
+- RPC は symbol 単位の transaction advisory lock を取り、DB 上の authoritative
+  position から BUY の数量/1円丸め平均単価、SELL の残数量を計算する
+- `trades_paper.order_id` を第一冪等性キーとし、`unified_signal_id` と `trade_id`
+  も防御的に確認する。duplicate / rejected は position を変更しない
+- RPC の `resulting_position` が唯一の authoritative state。部分 SELL なら cache に
+  残し、DELETE 後だけ全決済として cache から除く
+- trailing stop は fill を伴わない専用 `oms_paper_update_stop_loss` RPC を使う。
+  fill と同じ symbol lock と `opened_at` generation check を通し、古い判断で
+  同 symbol の新しい position を更新しない。同一 generation 内でも DB 上の
+  現在値以下は `stop_not_raised` で拒否し、並行 monitor 間で単調増加を守る
 - `system_status` は 14:50 cron で `.eq("id", 1).single()` のみ読み取り（OMS Paper は更新しない）
-- `unrealized_pnl` 更新は **Feature Engine の責務**。OMS Paper は `entry_price` / `quantity` のみ書く
-- 書き込み順序: `trades_paper` INSERT → `positions` UPSERT/DELETE → ack
-- 上記 2 書き込みは現状 1 transaction ではない。trade INSERT 後の position
-  書き込み失敗を redelivery だけでは修復できないため、event publisher を
-  解除する前に idempotent な transactional RPC へ置き換える
+- `unrealized_pnl` / `current_price` の継続更新は **Feature Engine の責務**
+- ack は RPC が applied / duplicate / business rejection を返した後。transport / DB
+  error は ack せず Pub/Sub redelivery に委ねる
 
 ## Pub/Sub 連携の規約（Phase 3）
 
@@ -160,8 +178,8 @@ services/oms-paper/
   - `raw-market-data`（env `PUBSUB_SUBSCRIPTION_RAW_MARKET_DATA`、デフォルト `oms-paper-raw-market-data`）
 - メッセージ型は payload 中の `symbol` / 板構造で `OrderBookSnapshot` か `TickData` を判別。`TickData` は無視
 - `ack` は Supabase 書き込み成功後のみ（書き込み失敗時は `nack` して再配信）
-- `OrderRequest.order_id` の重複 trade は検出するが、trade と position の
-  atomicity は未解決。上記 transactional RPC と emulator E2E が必要
+- `OrderRequest.order_id` の重複は同じ atomic RPC 内で判定する。事前 SELECT による
+  TOCTOU 冪等性チェックを追加しない
 - `trade_mode != paper` の誤配送は DB read 前に structured reject し safe-ack
 - 通常注文の板鮮度は OMS wall clock から評価し、`received_at` があれば exchange
   timestamp より優先する。PAPER_ONLY は設定値に関係なく `received_at` 必須で、
@@ -203,9 +221,11 @@ services/oms-paper/
 
 - **OMS Paper はキルスイッチに影響しない**。`daily_pnl` は live のみ集計するため、paper の約定で `system_status` を書き換えない
 - **純関数とサイドエフェクトを厳密に分離**: fill_simulator / position_updater / closeout は I/O を持たない。I/O は `clients/` と `streaming/runner.py` に閉じる
-- **fail-closed**: 板が無い場合は約定しない。Supabase 書き込み失敗時は nack
-  するが、現行の trade/position 分割書き込みは trade だけが残り得るため、
-  transactional RPC 完了までは event publication の安全条件を満たさない
+- **fail-closed**: 板が無い場合は約定しない。RPC 失敗時は nack。closeout の
+  partial exit は `closed` に数えず、同じ板を再利用せず新しい板を待って
+  bounded same-day retry する。system status / positions の preflight read failure も
+  retry 対象とし、解消しなければ `paper_closeout_incomplete` / scheduler error log を
+  残して、残 position を翌処理から見失わない
 - **`trade-contracts` を破らない**: 既存型で表現できないなら `contracts/` の 3 層同期手順に従って拡張
 - **Phase 1 では Pub/Sub / Supabase を触らない**。Phase 3 で `clients/` にまとめて導入
 - **空売りは contracts レベルで `PositionSide=LONG` のみ**。SELL は LONG 決済のみ。Gateway で弾かれているはずだが、OMS でも防御的にチェックする

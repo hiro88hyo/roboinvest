@@ -63,7 +63,8 @@ ADR-0001「本番デプロイアーキテクチャ」を実装に落とすため
 - [x] 本番用 topic/subscription 作成スクリプトと runbook を追加する（`scripts/gcp-pubsub-admin.py`, `docs/runbook/adr-0001-gcp-pubsub.md`）
 - [x] LAN host から emulator なしで `scripts/gcp-pubsub-admin.py --smoke-test --cleanup-smoke` を通す（2026-05-21: runtime SA に Pub/Sub 編集者権限を付与して `--apply` 実行後、dedicated smoke resource を再利用する smoke test が `RESULT OK`）
 
-注意: subscription は `infra/pubsub/subscriptions.json` を正とする。ADR/HANDOFF の古い記述に 7 件とある場合でも、production pipeline 用は `raw-market-data` と order 系を含めて 9 件、さらに runtime smoke test 用の dedicated subscription 1 件を加えて現行ファイルでは 10 件になっている。
+注意: topic / subscription は各 JSON を正とする。ADR/HANDOFF の固定件数は
+当時の記録であり、現行ファイルは topics 9 件 / subscriptions 13 件。
 
 ## 3. Supabase Cloud
 

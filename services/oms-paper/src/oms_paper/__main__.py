@@ -31,7 +31,7 @@ from .clients.pubsub import PubSubSubscriber
 from .clients.supabase import SupabaseClient
 from .config import OmsPaperSettings
 from .scheduler import parse_hhmm, run_closeout_scheduler
-from .streaming.runner import StreamRunner
+from .streaming.runner import OpeningSwingExitStats, StreamRunner
 
 logger = logging.getLogger(__name__)
 
@@ -252,6 +252,12 @@ async def _run_stream_cmd(*, iterations: int | None, no_closeout: bool) -> int:
     return 0
 
 
+def _opening_swing_exit_status_code(stats: OpeningSwingExitStats) -> int:
+    """Return non-zero while any due opening exit remains unresolved."""
+
+    return 1 if stats.write_errors or stats.partial_exits or stats.no_fills else 0
+
+
 async def _run_opening_swing_exits_cmd(*, book_warmup_batches: int) -> int:
     settings = OmsPaperSettings()
     configure_logging(service="oms-paper", level=settings.log_level)
@@ -300,14 +306,16 @@ async def _run_opening_swing_exits_cmd(*, book_warmup_batches: int) -> int:
         stats = await runner.run_opening_swing_max_hold_exits()
 
     logger.info(
-        "opening swing exits: positions_seen=%d due=%d closed=%d no_fills=%d write_errors=%d",
+        "opening swing exits: positions_seen=%d due=%d closed=%d partial_exits=%d "
+        "no_fills=%d write_errors=%d",
         stats.positions_seen,
         stats.due_positions,
         stats.closed,
+        stats.partial_exits,
         stats.no_fills,
         stats.write_errors,
     )
-    return 1 if stats.write_errors else 0
+    return _opening_swing_exit_status_code(stats)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

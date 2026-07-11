@@ -58,6 +58,7 @@ def build_fill_record(
     if fill.filled_quantity <= 0 or fill.fill_price is None:
         return None
     return PaperFillRecord(
+        order_id=order.order_id,
         symbol=order.symbol,
         side=order.side,
         quantity=fill.filled_quantity,

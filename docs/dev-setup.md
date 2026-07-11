@@ -59,12 +59,15 @@ npx supabase start
 4. **マイグレーション & シード適用**
    `supabase start` が `infra/supabase/migrations/` を自動適用する（`contracts/sql/` への symlink）。
    シードは `supabase db reset` 時に `seed.sql` が実行される。
+   `ls -la infra/supabase/migrations/` で symlink 切れがないこと、
+   `cd infra && supabase migration list --local` で末尾の migration まで揃うことを確認する。
 
 5. **Pub/Sub エミュレータ起動**
    ```bash
    docker compose -f infra/docker-compose.dev.yml up -d
    ```
-   `pubsub-init` が `infra/pubsub/topics.json` / `infra/pubsub/subscriptions.json` を元に、7 トピック + 9 サブスクリプションを作成して終了する。
+   `pubsub-init` が `infra/pubsub/topics.json` / `infra/pubsub/subscriptions.json`
+   を SSOT として、現行 9 トピック + 13 サブスクリプションを作成して終了する。
 
 ## 日常運用コマンド
 
@@ -106,11 +109,11 @@ psql postgresql://postgres:postgres@127.0.0.1:54322/postgres -c '\dt'
 
 # Pub/Sub のトピック一覧（REST API を直接叩く、gcloud 不要）
 curl -s http://localhost:8085/v1/projects/trade-ai-dev/topics | python3 -m json.tool
-# → { "topics": [ { "name": "projects/trade-ai-dev/topics/raw-market-data" }, ... ] } 計 7 件
+# → topics.json と同じ現行 9 件
 
 # Pub/Sub のサブスクリプション一覧
 curl -s http://localhost:8085/v1/projects/trade-ai-dev/subscriptions | python3 -m json.tool
-# → subscriptions.json と同じ 9 件
+# → subscriptions.json と同じ現行 13 件
 
 # アドホックに gcloud コマンドを使いたい場合（host にインストール不要、docker 経由）
 docker run --rm --network host \
@@ -142,5 +145,5 @@ psql postgresql://postgres:postgres@127.0.0.1:54322/postgres \
 |---|---|
 | `supabase start` がポート競合で失敗 | 他プロセスの 54321-54324 を停止、または `infra/supabase/config.toml` のポートを変更 |
 | `docker compose up` で `pubsub-init` が繰り返し再起動 | `restart: "no"` 指定済み。1 回成功して exit 0 で終わるのが正常 |
-| マイグレーションが適用されない | symlink 切れを確認 `ls -la infra/supabase/migrations/`。切れていたら再作成 |
+| マイグレーションが適用されない | symlink 切れを `ls -la infra/supabase/migrations/` で確認し、`cd infra && supabase migration list --local` と照合。切れていたら再作成 |
 | Studio で DB スキーマが空 | `supabase db reset` でマイグレーション＋シードを再適用 |

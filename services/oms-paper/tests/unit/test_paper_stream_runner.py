@@ -6,7 +6,7 @@ import logging
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 import httpx
@@ -92,13 +92,26 @@ class _SupabaseRouter:
     paper_position_rows: list[list[dict[str, Any]]] = field(default_factory=list)
     list_position_rows: list[list[dict[str, Any]]] = field(default_factory=list)
     system_status_rows: list[dict[str, Any]] = field(default_factory=list)
-    # True → 冪等性チェックで「既存あり」を返す (重複とみなす)
-    signal_exists_responses: list[bool] = field(default_factory=list)
-    insert_trade_status: int = 204
-    insert_position_status: int = 204
-    update_position_status: int = 204
-    delete_position_status: int = 204
+    # True → atomic RPC が duplicate を返す。
+    rpc_duplicate_responses: list[bool] = field(default_factory=list)
+    rpc_status: int = 200
+    trail_update_status: int = 200
+    replace_position_before_fill: dict[str, Any] | None = None
+    replace_position_before_stop_update: dict[str, Any] | None = None
     requests: list[httpx.Request] = field(default_factory=list)
+    position_state: dict[str, dict[str, Any]] = field(default_factory=dict, init=False)
+    committed_orders: dict[str, str] = field(default_factory=dict, init=False)
+    committed_signals: dict[str, str] = field(default_factory=dict, init=False)
+
+    def __post_init__(self) -> None:
+        """Seed the RPC's authoritative state from the first configured read."""
+
+        if self.list_position_rows:
+            for row in self.list_position_rows[0]:
+                self.position_state[str(row["symbol"])] = dict(row)
+        if self.paper_position_rows:
+            for row in self.paper_position_rows[0]:
+                self.position_state[str(row["symbol"])] = dict(row)
 
     async def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
@@ -110,23 +123,209 @@ class _SupabaseRouter:
         if method == "GET" and path == "/rest/v1/positions":
             symbol = request.url.params.get("symbol")
             if symbol is None:  # list_paper_positions (no symbol filter)
-                rows = self.list_position_rows.pop(0) if self.list_position_rows else []
+                if self.list_position_rows:
+                    rows = self.list_position_rows.pop(0)
+                    self.position_state = {str(row["symbol"]): dict(row) for row in rows}
+                else:
+                    rows = [dict(row) for row in self.position_state.values()]
                 return httpx.Response(200, json=rows)
-            rows = self.paper_position_rows.pop(0) if self.paper_position_rows else []
+            symbol_value = symbol.removeprefix("eq.")
+            if self.paper_position_rows:
+                rows = self.paper_position_rows.pop(0)
+                if rows:
+                    self.position_state[symbol_value] = dict(rows[0])
+                else:
+                    self.position_state.pop(symbol_value, None)
+            else:
+                current = self.position_state.get(symbol_value)
+                rows = [dict(current)] if current is not None else []
             return httpx.Response(200, json=rows)
-        if method == "GET" and path == "/rest/v1/trades_paper":
-            # 冪等性チェック: signal_exists_responses が空なら「重複なし」(デフォルト)
-            exists = self.signal_exists_responses.pop(0) if self.signal_exists_responses else False
-            return httpx.Response(200, json=[{"trade_id": "x"}] if exists else [])
-        if method == "POST" and path == "/rest/v1/positions":
-            return httpx.Response(self.insert_position_status, content=b"")
-        if method == "PATCH" and path == "/rest/v1/positions":
-            return httpx.Response(self.update_position_status, content=b"")
-        if method == "DELETE" and path == "/rest/v1/positions":
-            return httpx.Response(self.delete_position_status, content=b"")
-        if method == "POST" and path == "/rest/v1/trades_paper":
-            return httpx.Response(self.insert_trade_status, content=b"")
+        if method == "POST" and path == "/rest/v1/rpc/oms_paper_update_stop_loss":
+            if self.trail_update_status >= 300:
+                return httpx.Response(self.trail_update_status, text="injected trail failure")
+            if self.replace_position_before_stop_update is not None:
+                replacement = dict(self.replace_position_before_stop_update)
+                self.position_state[str(replacement["symbol"])] = replacement
+                self.replace_position_before_stop_update = None
+            return httpx.Response(200, json=[self._update_stop_loss_rpc(request)])
+        if method == "POST" and path == "/rest/v1/rpc/oms_paper_apply_fill":
+            if self.rpc_status >= 300:
+                return httpx.Response(self.rpc_status, text="injected RPC failure")
+            if self.replace_position_before_fill is not None:
+                replacement = dict(self.replace_position_before_fill)
+                self.position_state[str(replacement["symbol"])] = replacement
+                self.replace_position_before_fill = None
+            return httpx.Response(200, json=[self._apply_fill_rpc(request)])
         return httpx.Response(404, text=f"unmocked: {method} {path}")
+
+    def _apply_fill_rpc(self, request: httpx.Request) -> dict[str, Any]:
+        """Small stateful model of ``oms_paper_apply_fill`` for runner tests."""
+
+        body = json.loads(request.content.decode())
+        order_id = str(body["p_order_id"])
+        trade_id = str(body["p_trade_id"])
+        signal_id = body["p_unified_signal_id"]
+        symbol = str(body["p_symbol"])
+        current = self.position_state.get(symbol)
+
+        committed_trade_id = self.committed_orders.get(order_id)
+        if committed_trade_id is not None:
+            return self._rpc_row(
+                outcome="duplicate",
+                reason="order_id",
+                committed_trade_id=committed_trade_id,
+                position_action="unchanged",
+                resulting_position=current,
+            )
+        if signal_id is not None and str(signal_id) in self.committed_signals:
+            return self._rpc_row(
+                outcome="duplicate",
+                reason="unified_signal_id",
+                committed_trade_id=self.committed_signals[str(signal_id)],
+                position_action="unchanged",
+                resulting_position=current,
+            )
+
+        injected_duplicate = (
+            self.rpc_duplicate_responses.pop(0) if self.rpc_duplicate_responses else False
+        )
+        if injected_duplicate:
+            return self._rpc_row(
+                outcome="duplicate",
+                reason="unified_signal_id" if signal_id is not None else "order_id",
+                committed_trade_id=trade_id,
+                position_action="unchanged",
+                resulting_position=current,
+            )
+
+        quantity = int(body["p_filled_quantity"])
+        fill_price = Decimal(str(body["p_fill_price"]))
+        side = str(body["p_side"])
+        if side == "BUY":
+            if current is None:
+                resulting_position = _position_row(
+                    symbol=symbol,
+                    quantity=quantity,
+                    entry_price=str(fill_price),
+                    holding_type=body["p_new_holding_type"],
+                    target_price=body["p_new_target_price"],
+                    stop_loss_price=body["p_new_stop_loss_price"],
+                    max_hold_days=body["p_new_max_hold_days"],
+                    scheduled_exit_date=body["p_new_scheduled_exit_date"],
+                    trailing_stop_pct=body["p_new_trailing_stop_pct"],
+                    opened_at=body["p_executed_at"],
+                )
+                action = "inserted"
+            else:
+                old_quantity = int(current["quantity"])
+                next_quantity = old_quantity + quantity
+                next_entry = (
+                    (Decimal(str(current["entry_price"])) * old_quantity) + (fill_price * quantity)
+                ) / next_quantity
+                resulting_position = dict(current)
+                resulting_position["quantity"] = next_quantity
+                resulting_position["entry_price"] = str(
+                    next_entry.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+                )
+                action = "updated"
+            self.position_state[symbol] = resulting_position
+        elif current is None:
+            return self._rpc_row(
+                outcome="rejected",
+                reason="no_position_for_sell",
+                committed_trade_id=None,
+                position_action="unchanged",
+                resulting_position=None,
+            )
+        elif body["p_expected_position_opened_at"] is not None and datetime.fromisoformat(
+            str(current["opened_at"])
+        ) != datetime.fromisoformat(str(body["p_expected_position_opened_at"])):
+            return self._rpc_row(
+                outcome="rejected",
+                reason="position_generation_mismatch",
+                committed_trade_id=None,
+                position_action="unchanged",
+                resulting_position=current,
+            )
+        elif quantity > int(current["quantity"]):
+            return self._rpc_row(
+                outcome="rejected",
+                reason="oversell",
+                committed_trade_id=None,
+                position_action="unchanged",
+                resulting_position=current,
+            )
+        elif quantity == int(current["quantity"]):
+            self.position_state.pop(symbol)
+            resulting_position = None
+            action = "deleted"
+        else:
+            resulting_position = dict(current)
+            resulting_position["quantity"] = int(current["quantity"]) - quantity
+            self.position_state[symbol] = resulting_position
+            action = "updated"
+
+        self.committed_orders[order_id] = trade_id
+        if signal_id is not None:
+            self.committed_signals[str(signal_id)] = trade_id
+        return self._rpc_row(
+            outcome="applied",
+            reason=None,
+            committed_trade_id=trade_id,
+            position_action=action,
+            resulting_position=resulting_position,
+        )
+
+    def _update_stop_loss_rpc(self, request: httpx.Request) -> dict[str, Any]:
+        body = json.loads(request.content.decode())
+        symbol = str(body["p_symbol"])
+        current = self.position_state.get(symbol)
+        if current is None:
+            return {
+                "outcome": "rejected",
+                "reason": "no_position_for_update",
+                "resulting_position": None,
+            }
+        expected_opened_at = datetime.fromisoformat(body["p_expected_position_opened_at"])
+        if datetime.fromisoformat(str(current["opened_at"])) != expected_opened_at:
+            return {
+                "outcome": "rejected",
+                "reason": "position_generation_mismatch",
+                "resulting_position": current,
+            }
+        requested_stop = Decimal(str(body["p_stop_loss_price"]))
+        current_stop = current.get("stop_loss_price")
+        if current_stop is not None and requested_stop <= Decimal(str(current_stop)):
+            return {
+                "outcome": "rejected",
+                "reason": "stop_not_raised",
+                "resulting_position": current,
+            }
+        resulting_position = dict(current)
+        resulting_position["stop_loss_price"] = body["p_stop_loss_price"]
+        self.position_state[symbol] = resulting_position
+        return {
+            "outcome": "applied",
+            "reason": None,
+            "resulting_position": resulting_position,
+        }
+
+    @staticmethod
+    def _rpc_row(
+        *,
+        outcome: str,
+        reason: str | None,
+        committed_trade_id: str | None,
+        position_action: str,
+        resulting_position: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        return {
+            "outcome": outcome,
+            "reason": reason,
+            "committed_trade_id": committed_trade_id,
+            "position_action": position_action,
+            "resulting_position": resulting_position,
+        }
 
 
 def _system_status_row(**overrides: Any) -> dict[str, Any]:
@@ -163,6 +362,41 @@ def _position_row(**overrides: Any) -> dict[str, Any]:
     }
     row.update(overrides)
     return row
+
+
+APPLY_FILL_RPC_PATH = "/rest/v1/rpc/oms_paper_apply_fill"
+STOP_UPDATE_RPC_PATH = "/rest/v1/rpc/oms_paper_update_stop_loss"
+
+
+def _apply_fill_requests(supabase: _SupabaseRouter) -> list[httpx.Request]:
+    return [
+        request
+        for request in supabase.requests
+        if request.method == "POST" and request.url.path == APPLY_FILL_RPC_PATH
+    ]
+
+
+def _apply_fill_body(request: httpx.Request) -> dict[str, Any]:
+    body = json.loads(request.content.decode())
+    assert isinstance(body, dict)
+    return body
+
+
+def _stop_update_requests(supabase: _SupabaseRouter) -> list[httpx.Request]:
+    return [
+        request
+        for request in supabase.requests
+        if request.method == "POST" and request.url.path == STOP_UPDATE_RPC_PATH
+    ]
+
+
+def _direct_fill_writes(supabase: _SupabaseRouter) -> list[httpx.Request]:
+    return [
+        request
+        for request in supabase.requests
+        if request.method in {"POST", "PATCH", "DELETE"}
+        and request.url.path in {"/rest/v1/trades_paper", "/rest/v1/positions"}
+    ]
 
 
 async def _with_runner(
@@ -241,27 +475,17 @@ async def test_book_pulled_first_then_order_fills() -> None:
     assert stats.no_fills == 0
     assert stats.write_errors == 0
 
-    posts = [r for r in supabase.requests if r.method == "POST"]
-    paths = [r.url.path for r in posts]
-    assert "/rest/v1/trades_paper" in paths
-    assert "/rest/v1/positions" in paths
-
-    insert_trade = next(r for r in posts if r.url.path == "/rest/v1/trades_paper")
-    body = json.loads(insert_trade.content.decode())
-    assert body[0]["symbol"] == "7203"
-    assert body[0]["price"] == "1000"
-    assert body[0]["quantity"] == 100
-
-    insert_pos = next(r for r in posts if r.url.path == "/rest/v1/positions")
-    pos_body = json.loads(insert_pos.content.decode())[0]
-    assert pos_body["trade_type"] == "paper"
-    assert pos_body["entry_price"] == "1000"
-    assert pos_body["current_price"] == "1000"
-    assert pos_body["stop_loss_price"] == "950"
-    assert pos_body["target_price"] == "1100"
-    assert pos_body["trailing_stop_pct"] == "0.02"
-    assert pos_body["max_hold_days"] == 5
-    assert pos_body["scheduled_exit_date"] == "2026-05-07"
+    [rpc_request] = _apply_fill_requests(supabase)
+    body = _apply_fill_body(rpc_request)
+    assert body["p_symbol"] == "7203"
+    assert body["p_fill_price"] == "1000"
+    assert body["p_filled_quantity"] == 100
+    assert body["p_new_stop_loss_price"] == "950"
+    assert body["p_new_target_price"] == "1100"
+    assert body["p_new_trailing_stop_pct"] == "0.02"
+    assert body["p_new_max_hold_days"] == 5
+    assert body["p_new_scheduled_exit_date"] == "2026-05-07"
+    assert _direct_fill_writes(supabase) == []
 
 
 async def test_swing_buy_persists_fill_anchored_stop_and_order_metadata() -> None:
@@ -297,17 +521,14 @@ async def test_swing_buy_persists_fill_anchored_stop_and_order_metadata() -> Non
     )
 
     assert stats.filled == 1
-    insert_pos = next(
-        request
-        for request in supabase.requests
-        if request.method == "POST" and request.url.path == "/rest/v1/positions"
-    )
-    position_row = json.loads(insert_pos.content.decode())[0]
-    assert position_row["entry_price"] == "1005"
-    assert position_row["holding_type"] == "swing"
-    assert position_row["stop_loss_price"] == "904.50"
-    assert position_row["max_hold_days"] == 10
-    assert position_row["scheduled_exit_date"] == scheduled_exit.isoformat()
+    [rpc_request] = _apply_fill_requests(supabase)
+    body = _apply_fill_body(rpc_request)
+    assert body["p_fill_price"] == "1005"
+    assert body["p_new_holding_type"] == "swing"
+    assert body["p_new_stop_loss_price"] == "904.50"
+    assert body["p_new_max_hold_days"] == 10
+    assert body["p_new_scheduled_exit_date"] == scheduled_exit.isoformat()
+    assert _direct_fill_writes(supabase) == []
 
 
 async def test_day_stop_loss_breach_triggers_exit() -> None:
@@ -349,18 +570,40 @@ async def test_day_stop_loss_breach_triggers_exit() -> None:
     assert stats.day_stop_write_errors == 0
     assert stats.swing_exits == 0
 
-    insert_trade = next(
-        r for r in supabase.requests if r.method == "POST" and r.url.path == "/rest/v1/trades_paper"
-    )
-    body = json.loads(insert_trade.content.decode())[0]
-    assert body["symbol"] == "7203"
-    assert body["side"] == "SELL"
-    assert body["quantity"] == 100
-    assert body["price"] == "950"
-    assert body["unified_signal_id"] is None
+    [rpc_request] = _apply_fill_requests(supabase)
+    body = _apply_fill_body(rpc_request)
+    assert body["p_symbol"] == "7203"
+    assert body["p_side"] == "SELL"
+    assert body["p_filled_quantity"] == 100
+    assert body["p_fill_price"] == "950"
+    assert body["p_unified_signal_id"] is None
+    assert "7203" not in supabase.position_state
+    assert _direct_fill_writes(supabase) == []
 
-    deletes = [r for r in supabase.requests if r.method == "DELETE"]
-    assert len(deletes) == 1
+
+async def test_day_stop_partial_exit_keeps_authoritative_remaining_position() -> None:
+    book = make_order_book(symbol="7203", bids=(("950", 40),))
+    position = _position_row(quantity=100, stop_loss_price="950", target_price="1100")
+    pubsub = _PubSubRouter(
+        book_batches=[_pull_response([("bk-1", book.model_dump_json().encode("utf-8"))])],
+    )
+    supabase = _SupabaseRouter(
+        list_position_rows=[[position]],
+        paper_position_rows=[[position]],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        stats = await runner.run_once()
+        return stats, runner.day_position_cache["7203"]
+
+    stats, cached = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+
+    assert stats.day_stop_exits == 0
+    assert stats.day_stop_partial_exits == 1
+    assert stats.day_stop_no_fills == 0
+    assert cached.quantity == 60
+    assert supabase.position_state["7203"]["quantity"] == 60
+    assert _apply_fill_body(_apply_fill_requests(supabase)[0])["p_filled_quantity"] == 40
 
 
 async def test_day_stop_monitor_rejects_stale_received_book() -> None:
@@ -435,6 +678,40 @@ async def test_day_stop_stale_cached_position_does_not_emit_phantom_sell() -> No
     assert write_reqs == []
 
 
+async def test_day_stop_does_not_sell_replacement_position_generation() -> None:
+    book = make_order_book(symbol="7203", bids=(("950", 500),))
+    original = _position_row(
+        stop_loss_price="950",
+        target_price="1100",
+        opened_at="2026-04-25T09:00:00+00:00",
+    )
+    replacement = _position_row(
+        stop_loss_price="500",
+        target_price=None,
+        opened_at="2026-04-25T10:00:00+00:00",
+    )
+    pubsub = _PubSubRouter(
+        book_batches=[_pull_response([("bk-1", book.model_dump_json().encode("utf-8"))])],
+    )
+    supabase = _SupabaseRouter(
+        list_position_rows=[[original]],
+        paper_position_rows=[[replacement]],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        stats = await runner.run_once()
+        return stats, runner.day_position_cache["7203"]
+
+    stats, cached = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+
+    assert stats.day_stop_exits == 0
+    assert stats.day_stop_no_fills == 1
+    assert cached.opened_at == datetime(2026, 4, 25, 10, 0, tzinfo=UTC)
+    assert cached.stop_loss_price == Decimal("500")
+    assert _apply_fill_requests(supabase) == []
+    assert supabase.position_state["7203"]["opened_at"] == replacement["opened_at"]
+
+
 async def test_day_trailing_stop_patches_stop_loss_only() -> None:
     book = make_order_book(symbol="7203", bids=(("1100", 500),))
     pubsub = _PubSubRouter(
@@ -453,11 +730,45 @@ async def test_day_trailing_stop_patches_stop_loss_only() -> None:
 
     assert stats.day_stop_trails == 1
     assert stats.day_stop_exits == 0
-    patches = [r for r in supabase.requests if r.method == "PATCH"]
-    assert len(patches) == 1
-    assert json.loads(patches[0].content.decode()) == {"stop_loss_price": "1078"}
-    writes = [r for r in supabase.requests if r.method in {"POST", "DELETE"}]
-    assert writes == []
+    [rpc_request] = _stop_update_requests(supabase)
+    body = json.loads(rpc_request.content.decode())
+    assert body["p_symbol"] == "7203"
+    assert body["p_stop_loss_price"] == "1078"
+    assert body["p_expected_position_opened_at"] == "2026-04-25T09:00:00+00:00"
+    assert _direct_fill_writes(supabase) == []
+
+
+async def test_day_trail_rejects_replacement_position_generation() -> None:
+    book = make_order_book(symbol="7203", bids=(("1100", 500),))
+    original = _position_row(
+        stop_loss_price="980",
+        trailing_stop_pct="0.02",
+        opened_at="2026-04-25T09:00:00+00:00",
+    )
+    replacement = _position_row(
+        stop_loss_price="500",
+        trailing_stop_pct=None,
+        opened_at="2026-04-25T10:00:00+00:00",
+    )
+    pubsub = _PubSubRouter(
+        book_batches=[_pull_response([("bk-1", book.model_dump_json().encode("utf-8"))])],
+    )
+    supabase = _SupabaseRouter(
+        list_position_rows=[[original]],
+        replace_position_before_stop_update=replacement,
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        stats = await runner.run_once()
+        return stats, runner.day_position_cache["7203"]
+
+    stats, cached = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+
+    assert stats.day_stop_trails == 0
+    assert stats.day_stop_no_fills == 1
+    assert cached.opened_at == datetime(2026, 4, 25, 10, 0, tzinfo=UTC)
+    assert cached.stop_loss_price == Decimal("500")
+    assert supabase.position_state["7203"]["stop_loss_price"] == "500"
 
 
 async def test_order_with_no_book_in_cache_is_no_fill_and_acked() -> None:
@@ -792,11 +1103,8 @@ async def test_raw_books_are_drained_before_order_processing() -> None:
     assert stats.books_applied == 2
     assert stats.filled == 1
     assert stats.no_fills == 0
-    insert_trade = next(
-        r for r in supabase.requests if r.method == "POST" and r.url.path == "/rest/v1/trades_paper"
-    )
-    body = json.loads(insert_trade.content.decode())
-    assert body[0]["price"] == "1000"
+    [rpc_request] = _apply_fill_requests(supabase)
+    assert _apply_fill_body(rpc_request)["p_fill_price"] == "1000"
 
 
 async def test_older_book_does_not_overwrite_newer_cache() -> None:
@@ -831,11 +1139,8 @@ async def test_older_book_does_not_overwrite_newer_cache() -> None:
 
     assert stats.books_applied == 1
     assert stats.filled == 1
-    insert_trade = next(
-        r for r in supabase.requests if r.method == "POST" and r.url.path == "/rest/v1/trades_paper"
-    )
-    body = json.loads(insert_trade.content.decode())
-    assert body[0]["price"] == "1000"
+    [rpc_request] = _apply_fill_requests(supabase)
+    assert _apply_fill_body(rpc_request)["p_fill_price"] == "1000"
 
 
 async def test_older_receive_does_not_overwrite_newer_when_market_times_disagree() -> None:
@@ -872,13 +1177,8 @@ async def test_older_receive_does_not_overwrite_newer_when_market_times_disagree
 
     assert stats.books_applied == 1
     assert stats.filled == 1
-    insert_trade = next(
-        request
-        for request in supabase.requests
-        if request.method == "POST" and request.url.path == "/rest/v1/trades_paper"
-    )
-    body = json.loads(insert_trade.content.decode())
-    assert body[0]["price"] == "1000"
+    [rpc_request] = _apply_fill_requests(supabase)
+    assert _apply_fill_body(rpc_request)["p_fill_price"] == "1000"
 
 
 async def test_latest_book_timestamp_keeps_global_max_across_symbols() -> None:
@@ -931,13 +1231,12 @@ async def test_buy_into_existing_position_patches_quantity_and_entry() -> None:
     stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
 
     assert stats.filled == 1
-    patch = next(r for r in supabase.requests if r.method == "PATCH")
-    body = json.loads(patch.content.decode())
-    assert body["quantity"] == 200
-    assert body["entry_price"] == "1050"  # (1000*100 + 1100*100)/200 = 1050
-    assert "current_price" not in body
-    posts = [r for r in supabase.requests if r.method == "POST"]
-    assert all(r.url.path != "/rest/v1/positions" for r in posts)
+    [rpc_request] = _apply_fill_requests(supabase)
+    assert _apply_fill_body(rpc_request)["p_fill_price"] == "1100"
+    position = supabase.position_state["7203"]
+    assert position["quantity"] == 200
+    assert Decimal(position["entry_price"]) == Decimal("1050")
+    assert _direct_fill_writes(supabase) == []
 
 
 async def test_full_sell_deletes_position() -> None:
@@ -957,9 +1256,9 @@ async def test_full_sell_deletes_position() -> None:
     stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
 
     assert stats.filled == 1
-    deletes = [r for r in supabase.requests if r.method == "DELETE"]
-    assert len(deletes) == 1
-    assert deletes[0].url.params.get("symbol") == "eq.7203"
+    assert len(_apply_fill_requests(supabase)) == 1
+    assert "7203" not in supabase.position_state
+    assert _direct_fill_writes(supabase) == []
 
 
 async def test_partial_sell_patches_remaining_quantity() -> None:
@@ -979,10 +1278,11 @@ async def test_partial_sell_patches_remaining_quantity() -> None:
     stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
 
     assert stats.filled == 1
-    patch = next(r for r in supabase.requests if r.method == "PATCH")
-    body = json.loads(patch.content.decode())
-    assert body["quantity"] == 60
-    assert body["entry_price"] == "900"  # SELL doesn't change average
+    assert len(_apply_fill_requests(supabase)) == 1
+    position = supabase.position_state["7203"]
+    assert position["quantity"] == 60
+    assert Decimal(position["entry_price"]) == Decimal("900")
+    assert _direct_fill_writes(supabase) == []
 
 
 async def test_oversell_is_no_fill_and_acked_without_writes() -> None:
@@ -1002,7 +1302,9 @@ async def test_oversell_is_no_fill_and_acked_without_writes() -> None:
     stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
 
     assert stats.no_fills == 1
-    assert all(r.method == "GET" for r in supabase.requests)
+    assert len(_apply_fill_requests(supabase)) == 1
+    assert supabase.position_state["7203"]["quantity"] == 100
+    assert _direct_fill_writes(supabase) == []
 
 
 async def test_sell_without_position_logs_specific_no_fill_reason(caplog: Any) -> None:
@@ -1023,7 +1325,9 @@ async def test_sell_without_position_logs_specific_no_fill_reason(caplog: Any) -
     stats = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
 
     assert stats.no_fills == 1
-    assert all(r.method == "GET" for r in supabase.requests)
+    assert len(_apply_fill_requests(supabase)) == 1
+    assert "7203" not in supabase.position_state
+    assert _direct_fill_writes(supabase) == []
     no_fill_reasons = [
         getattr(record, "reason", None)
         for record in caplog.records
@@ -1104,7 +1408,7 @@ async def test_supabase_write_error_skips_ack() -> None:
     )
     supabase = _SupabaseRouter(
         paper_position_rows=[[]],
-        insert_trade_status=500,  # transient error → SupabaseError
+        rpc_status=500,  # transient error → SupabaseError
     )
 
     async def _body(runner: StreamRunner) -> Any:
@@ -1188,10 +1492,79 @@ async def test_closeout_fills_each_position_with_book_in_cache() -> None:
     assert stats.triggered is True
     assert stats.closed == 1
     assert stats.no_fills == 0
-    deletes = [r for r in supabase.requests if r.method == "DELETE"]
-    assert len(deletes) == 1
-    posts = [r for r in supabase.requests if r.method == "POST"]
-    assert any(r.url.path == "/rest/v1/trades_paper" for r in posts)
+    [rpc_request] = _apply_fill_requests(supabase)
+    body = _apply_fill_body(rpc_request)
+    assert body["p_symbol"] == "7203"
+    assert body["p_side"] == "SELL"
+    assert "7203" not in supabase.position_state
+    assert _direct_fill_writes(supabase) == []
+
+
+async def test_closeout_partial_exit_then_newer_book_closes_remaining_position() -> None:
+    pubsub = _PubSubRouter()
+    supabase = _SupabaseRouter(
+        system_status_rows=[
+            _system_status_row(trading_style="day"),
+            _system_status_row(trading_style="day"),
+        ],
+        list_position_rows=[[_position_row(symbol="7203", quantity=100)]],
+    )
+    first_book = make_order_book(symbol="7203", bids=(("1100", 40),))
+    second_book = make_order_book(
+        symbol="7203",
+        bids=(("1099", 60),),
+        timestamp=DEFAULT_TS + timedelta(seconds=1),
+        received_at=DEFAULT_TS + timedelta(seconds=1),
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        first = await runner.run_closeout()
+        runner.book_cache["7203"] = second_book
+        second = await runner.run_closeout()
+        return first, second
+
+    first, second = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        run_body=_body,
+        book_cache={"7203": first_book},
+    )
+
+    assert first.closed == 0
+    assert first.partial_exits == 1
+    assert first.no_fills == 0
+    assert second.closed == 1
+    assert second.partial_exits == 0
+    assert second.no_fills == 0
+    assert "7203" not in supabase.position_state
+    assert len(_apply_fill_requests(supabase)) == 2
+
+
+async def test_closeout_does_not_sell_replacement_position_generation() -> None:
+    original = _position_row(opened_at="2026-04-25T09:00:00+00:00")
+    replacement = _position_row(opened_at="2026-04-25T10:00:00+00:00")
+    pubsub = _PubSubRouter()
+    supabase = _SupabaseRouter(
+        system_status_rows=[_system_status_row(trading_style="day")],
+        list_position_rows=[[original]],
+        replace_position_before_fill=replacement,
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_closeout()
+
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        run_body=_body,
+        book_cache={"7203": make_order_book(symbol="7203", bids=(("1100", 500),))},
+    )
+
+    assert stats.closed == 0
+    assert stats.partial_exits == 0
+    assert stats.no_fills == 1
+    assert supabase.position_state["7203"]["opened_at"] == replacement["opened_at"]
+    assert supabase.committed_orders == {}
 
 
 async def test_closeout_preserves_swing_position_in_mixed_portfolio() -> None:
@@ -1234,16 +1607,11 @@ async def test_closeout_preserves_swing_position_in_mixed_portfolio() -> None:
     assert stats.positions_seen == 1
     assert stats.closed == 1
     assert stats.no_fills == 0
-    trade_posts = [
-        request
-        for request in supabase.requests
-        if request.method == "POST" and request.url.path == "/rest/v1/trades_paper"
-    ]
-    assert len(trade_posts) == 1
-    assert json.loads(trade_posts[0].content.decode())[0]["symbol"] == "DAY"
-    deletes = [request for request in supabase.requests if request.method == "DELETE"]
-    assert len(deletes) == 1
-    assert deletes[0].url.params.get("symbol") == "eq.DAY"
+    [rpc_request] = _apply_fill_requests(supabase)
+    assert _apply_fill_body(rpc_request)["p_symbol"] == "DAY"
+    assert "DAY" not in supabase.position_state
+    assert supabase.position_state["SWING"]["quantity"] == 200
+    assert _direct_fill_writes(supabase) == []
 
 
 async def test_closeout_no_book_is_no_fill_and_no_writes_for_that_symbol() -> None:
@@ -1305,7 +1673,7 @@ async def test_swing_no_positions_in_cache_is_skip() -> None:
 
 
 async def test_swing_stop_loss_breach_triggers_exit() -> None:
-    """bids[0] が stop_loss 以下 → SELL 約定 + trades_paper INSERT + position DELETE。"""
+    """bids[0] が stop_loss 以下 → atomic RPC で SELL 約定 + position delete。"""
     book = make_order_book(symbol="7203", bids=(("950", 500),))
     pubsub = _PubSubRouter(
         book_batches=[_pull_response([("bk-1", book.model_dump_json().encode("utf-8"))])],
@@ -1342,21 +1710,74 @@ async def test_swing_stop_loss_breach_triggers_exit() -> None:
     assert stats.swing_no_fills == 0
     assert stats.swing_write_errors == 0
 
-    posts = [r for r in supabase.requests if r.method == "POST"]
-    paths = [r.url.path for r in posts]
-    assert "/rest/v1/trades_paper" in paths
-    insert_trade = next(r for r in posts if r.url.path == "/rest/v1/trades_paper")
-    body = json.loads(insert_trade.content.decode())[0]
-    assert body["symbol"] == "7203"
-    assert body["side"] == "SELL"
-    assert body["quantity"] == 100
-    assert body["price"] == "950"
-    assert body["unified_signal_id"] is None  # swing exit は aggregator_logs 行なし
-    assert body["signal_source"] == "CONSENSUS"
+    [rpc_request] = _apply_fill_requests(supabase)
+    body = _apply_fill_body(rpc_request)
+    assert body["p_symbol"] == "7203"
+    assert body["p_side"] == "SELL"
+    assert body["p_filled_quantity"] == 100
+    assert body["p_fill_price"] == "950"
+    assert body["p_unified_signal_id"] is None  # swing exit は aggregator_logs 行なし
+    assert body["p_signal_source"] == "CONSENSUS"
+    assert "7203" not in supabase.position_state
+    assert _direct_fill_writes(supabase) == []
 
-    deletes = [r for r in supabase.requests if r.method == "DELETE"]
-    assert len(deletes) == 1
-    assert deletes[0].url.params.get("symbol") == "eq.7203"
+
+async def test_swing_partial_exit_remains_in_monitor_cache() -> None:
+    book = make_order_book(symbol="7203", bids=(("950", 40),))
+    position = _swing_position_row(quantity=100, stop_loss_price="950", target_price="1100")
+    pubsub = _PubSubRouter(
+        book_batches=[_pull_response([("bk-1", book.model_dump_json().encode("utf-8"))])],
+    )
+    supabase = _SupabaseRouter(
+        list_position_rows=[[position]],
+        paper_position_rows=[[position]],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        stats = await runner.run_once()
+        return stats, runner.swing_position_cache["7203"]
+
+    stats, cached = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+
+    assert stats.swing_exits == 0
+    assert stats.swing_partial_exits == 1
+    assert stats.swing_no_fills == 0
+    assert cached.quantity == 60
+    assert supabase.position_state["7203"]["quantity"] == 60
+
+
+async def test_swing_exit_does_not_sell_replacement_position_generation() -> None:
+    book = make_order_book(symbol="7203", bids=(("950", 500),))
+    original = _swing_position_row(
+        stop_loss_price="950",
+        target_price="1100",
+        opened_at="2026-04-25T09:00:00+00:00",
+    )
+    replacement = _swing_position_row(
+        stop_loss_price="500",
+        target_price=None,
+        opened_at="2026-04-25T10:00:00+00:00",
+    )
+    pubsub = _PubSubRouter(
+        book_batches=[_pull_response([("bk-1", book.model_dump_json().encode("utf-8"))])],
+    )
+    supabase = _SupabaseRouter(
+        list_position_rows=[[original]],
+        paper_position_rows=[[replacement]],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        stats = await runner.run_once()
+        return stats, runner.swing_position_cache["7203"]
+
+    stats, cached = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
+
+    assert stats.swing_exits == 0
+    assert stats.swing_no_fills == 1
+    assert cached.opened_at == datetime(2026, 4, 25, 10, 0, tzinfo=UTC)
+    assert cached.stop_loss_price == Decimal("500")
+    assert _apply_fill_requests(supabase) == []
+    assert supabase.position_state["7203"]["opened_at"] == replacement["opened_at"]
 
 
 async def test_swing_monitor_rejects_stale_received_book() -> None:
@@ -1465,21 +1886,11 @@ async def test_swing_max_hold_exit_is_written_before_same_cycle_buy_entry() -> N
     assert stats.no_fills == 0
     assert stats.write_errors == 0
 
-    delete_exit_idx = next(
-        idx
-        for idx, request in enumerate(supabase.requests)
-        if request.method == "DELETE"
-        and request.url.path == "/rest/v1/positions"
-        and request.url.params.get("symbol") == "eq.7203"
-    )
-    buy_position_insert_idx = next(
-        idx
-        for idx, request in enumerate(supabase.requests)
-        if request.method == "POST"
-        and request.url.path == "/rest/v1/positions"
-        and json.loads(request.content.decode())[0]["symbol"] == "6758"
-    )
-    assert delete_exit_idx < buy_position_insert_idx
+    rpc_symbols = [
+        _apply_fill_body(request)["p_symbol"] for request in _apply_fill_requests(supabase)
+    ]
+    assert rpc_symbols == ["7203", "6758"]
+    assert _direct_fill_writes(supabase) == []
 
 
 async def test_opening_swing_max_hold_exit_batch_closes_due_positions(caplog: Any) -> None:
@@ -1526,22 +1937,48 @@ async def test_opening_swing_max_hold_exit_batch_closes_due_positions(caplog: An
     assert stats.no_fills == 0
     assert stats.write_errors == 0
 
-    writes = [request for request in supabase.requests if request.method in {"POST", "DELETE"}]
-    assert [request.url.path for request in writes] == [
-        "/rest/v1/trades_paper",
-        "/rest/v1/positions",
-    ]
-    trade_body = json.loads(writes[0].content.decode())[0]
-    assert trade_body["symbol"] == "7203"
-    assert trade_body["side"] == "SELL"
-    assert trade_body["price"] == "1005"
-    assert writes[1].url.params.get("symbol") == "eq.7203"
+    [rpc_request] = _apply_fill_requests(supabase)
+    body = _apply_fill_body(rpc_request)
+    assert body["p_symbol"] == "7203"
+    assert body["p_side"] == "SELL"
+    assert body["p_fill_price"] == "1005"
+    assert "7203" not in supabase.position_state
+    assert _direct_fill_writes(supabase) == []
     sequence_stages = [
         getattr(record, "stage", None)
         for record in caplog.records
         if getattr(record, "event", None) == "opening_swing_exit_sequence"
     ]
     assert sequence_stages == ["sell_fill", "position_delete"]
+
+
+async def test_opening_swing_exit_reports_partial_and_keeps_remaining_position() -> None:
+    due = _swing_position_row(
+        quantity=100,
+        max_hold_days=10,
+        scheduled_exit_date="2026-04-25",
+        opened_at="2026-04-10T09:00:00+00:00",
+    )
+    pubsub = _PubSubRouter()
+    supabase = _SupabaseRouter(
+        list_position_rows=[[due]],
+        paper_position_rows=[[due]],
+    )
+
+    async def _body(runner: StreamRunner) -> Any:
+        return await runner.run_opening_swing_max_hold_exits()
+
+    stats = await _with_runner(
+        pubsub=pubsub,
+        supabase=supabase,
+        book_cache={"7203": make_order_book(symbol="7203", bids=(("1005", 40),))},
+        run_body=_body,
+    )
+
+    assert stats.closed == 0
+    assert stats.partial_exits == 1
+    assert stats.no_fills == 0
+    assert supabase.position_state["7203"]["quantity"] == 60
 
 
 async def test_opening_swing_max_hold_exit_batch_no_fill_without_cached_bid() -> None:
@@ -1595,16 +2032,14 @@ async def test_swing_trail_only_patches_stop_loss() -> None:
     assert stats.swing_trails == 1
     assert stats.swing_exits == 0
 
-    patches = [r for r in supabase.requests if r.method == "PATCH"]
-    assert len(patches) == 1
-    body = json.loads(patches[0].content.decode())
+    [rpc_request] = _stop_update_requests(supabase)
+    body = json.loads(rpc_request.content.decode())
     # 1100 * 0.98 = 1078
-    assert body == {"stop_loss_price": "1078"}
+    assert body["p_stop_loss_price"] == "1078"
+    assert body["p_expected_position_opened_at"] == "2026-04-25T09:00:00+00:00"
     # trades_paper への書き込みはなし
-    posts = [r for r in supabase.requests if r.method == "POST"]
-    assert all(r.url.path != "/rest/v1/trades_paper" for r in posts)
-    deletes = [r for r in supabase.requests if r.method == "DELETE"]
-    assert deletes == []
+    assert _apply_fill_requests(supabase) == []
+    assert _direct_fill_writes(supabase) == []
 
 
 async def test_swing_hold_no_writes() -> None:
@@ -1689,8 +2124,8 @@ async def test_swing_consecutive_books_only_exit_once() -> None:
     [s1, s2] = await _with_runner(pubsub=pubsub, supabase=supabase, run_body=_body)
     assert s1.swing_exits == 1
     assert s2.swing_exits == 0
-    deletes = [r for r in supabase.requests if r.method == "DELETE"]
-    assert len(deletes) == 1  # 1 回だけ DELETE
+    assert len(_apply_fill_requests(supabase)) == 1
+    assert _direct_fill_writes(supabase) == []
 
 
 async def test_swing_no_bids_in_book_is_no_fill() -> None:
@@ -1714,7 +2149,7 @@ async def test_swing_no_bids_in_book_is_no_fill() -> None:
 
 
 async def test_swing_supabase_write_failure_keeps_position_in_cache() -> None:
-    """exit 経路で trades_paper INSERT が 5xx → write_error 計上、cache 維持。"""
+    """exit 経路で atomic RPC が 5xx → write_error 計上、cache 維持。"""
     book = make_order_book(symbol="7203", bids=(("950", 500),))
     pubsub = _PubSubRouter(
         book_batches=[
@@ -1728,7 +2163,7 @@ async def test_swing_supabase_write_failure_keeps_position_in_cache() -> None:
             [_swing_position_row(quantity=100, stop_loss_price="950")],
             [_swing_position_row(quantity=100, stop_loss_price="950")],
         ],
-        insert_trade_status=500,
+        rpc_status=500,
     )
 
     async def _body(runner: StreamRunner) -> Any:
@@ -1840,7 +2275,7 @@ async def test_duplicate_buy_is_skipped_and_acked() -> None:
         book_batches=[_pull_response([("bk-1", book.model_dump_json().encode("utf-8"))])],
     )
     # 冪等性チェックで「既存あり」を返す → 重複
-    supabase = _SupabaseRouter(signal_exists_responses=[True])
+    supabase = _SupabaseRouter(rpc_duplicate_responses=[True])
 
     async def _body(runner: StreamRunner) -> Any:
         return await runner.run_once()
@@ -1850,9 +2285,9 @@ async def test_duplicate_buy_is_skipped_and_acked() -> None:
     assert stats.skipped_duplicate == 1
     assert stats.filled == 0
     assert stats.no_fills == 0
-    # trades_paper INSERT も positions 書き込みも発生しない
-    write_reqs = [r for r in supabase.requests if r.method in {"POST", "PATCH", "DELETE"}]
-    assert write_reqs == []
+    # 重複判定も同じ RPC 内で行い、direct table write は発生しない。
+    assert len(_apply_fill_requests(supabase)) == 1
+    assert _direct_fill_writes(supabase) == []
     # ack はされる
     ack_paths = [r.url.path for r in pubsub.acked]
     assert any(PAPER_ORDERS_SUB in p for p in ack_paths)
@@ -1876,7 +2311,7 @@ async def test_first_delivery_fills_second_delivery_skipped() -> None:
     # 1 通目: 重複なし → 約定。2 通目: 重複あり → skip
     supabase = _SupabaseRouter(
         paper_position_rows=[[]],  # 1 通目の read_paper_position
-        signal_exists_responses=[False, True],
+        rpc_duplicate_responses=[False, True],
     )
 
     async def _body(runner: StreamRunner) -> Any:

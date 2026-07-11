@@ -11,7 +11,7 @@ Validate this sequence:
 1. Opening book data is available for symbols with due swing exits.
 2. `oms-paper opening-swing-exits` closes fixed-hold swing positions whose
    `scheduled_exit_date` has arrived.
-3. `trades_paper` receives SELL fills and `positions` deletes are committed.
+3. One atomic RPC commits each SELL fill and its `positions` update/delete.
 4. Gateway BUY processing reads the updated `positions` state.
 5. BUY budget is calculated after exited positions are no longer counted in
    `capital_in_use`.
@@ -30,7 +30,9 @@ Do not run this against live positions.
   - `SUPABASE_SECRET_KEY`
   - `PUBSUB_PROJECT_ID` when book warmup is enabled
   - `PUBSUB_EMULATOR_HOST` or managed Pub/Sub configuration, matching the environment
-- Supabase schema health check passes, including `positions.scheduled_exit_date`.
+- Supabase schema health check passes, including `positions.scheduled_exit_date`,
+  `trades_paper.order_id`, `rpc:oms_paper_apply_fill`, and
+  `rpc:oms_paper_update_stop_loss`.
 - Raw book subscription for `oms-paper` is receiving order book messages.
 - Gateway is not processing the corresponding BUY signals before this command completes.
 
@@ -43,9 +45,10 @@ op run --env-file infra/env.production -- \
   uv run python scripts/health-check.py --check supabase --timeout 30
 ```
 
-If `positions.scheduled_exit_date` is `NG`, apply
-`contracts/sql/017_positions_scheduled_exit_date.sql` to the Cloud project before
-running this gate.
+If `positions.scheduled_exit_date` is `NG`, apply migration 017. If
+`trades_paper.order_id` or either OMS Paper RPC is `NG`, apply
+`contracts/sql/018_oms_paper_apply_fill_rpc.sql`. Do not run this gate against a
+target where any of these checks fail.
 
 ## Command
 
@@ -77,7 +80,7 @@ Look for:
 
 ```text
 opening swing exits: book warmup pulled=N applied=M acked=K symbols=S
-opening swing exits: positions_seen=P due=D closed=C no_fills=F write_errors=0
+opening swing exits: positions_seen=P due=D closed=C partial_exits=R no_fills=F write_errors=0
 ```
 
 For JSON logs, verify this `event=opening_swing_exit_sequence` stage order for
@@ -95,6 +98,8 @@ Interpretation:
 - `due=0`: no fixed-hold swing positions reached `scheduled_exit_date`. The gate cannot be
   observed that day.
 - `closed=due` and `write_errors=0`: opening exit batch wrote all due exits.
+- `partial_exits>0`: SELL fills were committed but shares remain. Do not process
+  dependent BUY signals; wait for a fresh book and reconcile/retry.
 - `no_fills>0`: some due symbols had no cached executable bid. Do not treat the
   backtest assumption as reproduced for those symbols.
 - `write_errors>0`: stop. Do not process dependent BUY signals until positions
@@ -117,7 +122,7 @@ Due symbols that logged `closed` should no longer be present.
 Confirm corresponding SELL fills:
 
 ```sql
-select symbol, side, quantity, price, executed_at
+select order_id, symbol, side, quantity, price, executed_at
 from trades_paper
 where side = 'SELL'
 order by executed_at desc

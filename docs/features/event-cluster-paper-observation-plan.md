@@ -8,7 +8,7 @@ open into the signal price and absolute stop. Phase 1 is now causal dry-run
 detection only. The relative-stop/fill contract, paper-only routing identity,
 and truthful live-book receive timestamp are implemented, but Phase 2 paper
 publication remains blocked regardless of environment flags until the publisher,
-atomic persistence, and end-to-end safety requirements are complete.
+target-database migration check, and end-to-end safety requirements are complete.
 
 This plan covers paper observation for
 `event_cluster_earnings_dividend_value_guard_fixed20_stop_v1_research`.
@@ -184,15 +184,22 @@ eventually enabled, that frozen strategy value maps to the contract's positive
 loss-distance representation `stop_loss_pct=0.10`.
 
 These changes do not authorize publication. Paper publication may be restored
-only after a separate implementation:
+only after the remaining implementation and deployment gates:
 
 - consumes the dedicated subscription, chooses a fresh observed entry quote,
   performs the paper-mode preflight, and emits the implemented identity/routing
   contract without reintroducing a future-price assumption;
-- persists the paper trade and resulting position mutation atomically and
-  idempotently; and
 - passes the complete event-to-fill path in the Pub/Sub emulator while leaving
-  existing day signals unchanged.
+  existing day signals unchanged; and
+- confirms `contracts/sql/018_oms_paper_apply_fill_rpc.sql` (infra migration
+  019) and both atomic OMS Paper RPCs are available in the target Supabase
+  environment via the canonical health check.
+
+OMS Paper atomic persistence is implemented: all fill paths use one
+`oms_paper_apply_fill` transaction with order-ID idempotency, symbol-level
+serialization, authoritative position results, rollback on trade failure, and
+explicit partial-exit handling. Actual local PostgREST RPC tests cover these
+properties; this completed item does not authorize publication by itself.
 
 Until those conditions are met, there is no supported event publisher.
 
@@ -243,9 +250,10 @@ position's `holding_type` from `OrderRequest`, resolves an absolute stop from th
 actual BUY fill, and carries `max_hold_days` and `scheduled_exit_date`. Its 14:50
 day closeout ignores swing positions.
 
-Before publication can be restored, OMS Paper still must persist
-`trades_paper` and the corresponding `positions` mutation in one idempotent
-transaction and pass an emulator E2E covering new entry, redelivery, and
+OMS Paper persists `trades_paper` and the corresponding `positions` mutation in
+one idempotent transaction. Before publication can be restored, apply migration
+018 to the target Supabase project, require the RPC health probe to pass, and
+complete an emulator E2E covering new entry, redelivery, partial/full exit, and
 scheduled exit ordering. Its PAPER_ONLY path already requires a fresh
 wall-clock-checked `received_at`.
 
@@ -336,10 +344,11 @@ Phase 2:
   Pub/Sub side effect.
 - The relative-stop contract, `OrderRequest` holding metadata, fill-anchored
   paper stop, day/swing closeout isolation, receive provenance, PAPER_ONLY
-  enforcement, deterministic IDs, and strategy isolation are implemented.
+  enforcement, deterministic IDs, strategy isolation, and atomic OMS Paper
+  persistence are implemented.
 - Restore only after a publisher consumes the dedicated fresh-book
-  subscription, atomic trade/position persistence is complete, and the Pub/Sub
-  emulator E2E passes.
+  subscription, the target DB passes migration/RPC health checks, and the
+  Pub/Sub emulator E2E passes.
 - Runbook: [Event Cluster Paper Publish](../runbook/event-cluster-paper-publish.md).
 - Live routes remain untouched.
 

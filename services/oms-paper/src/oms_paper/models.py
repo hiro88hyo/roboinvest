@@ -15,10 +15,11 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Literal
+from enum import StrEnum
+from typing import Literal, Self
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from trade_contracts.enums import Side, SignalSource, TradingStyle
 
 
@@ -63,6 +64,7 @@ class PaperFillRecord(BaseModel):
     Supabase 側の FK は nullable (NOT NULL 制約なし)。
     """
 
+    order_id: UUID
     trade_id: UUID = Field(default_factory=uuid4)
     symbol: str
     side: Side
@@ -71,6 +73,158 @@ class PaperFillRecord(BaseModel):
     signal_source: SignalSource
     unified_signal_id: UUID | None = None
     executed_at: datetime
+
+
+class PaperFillOutcome(StrEnum):
+    """``oms_paper_apply_fill`` が返すトランザクション結果。"""
+
+    APPLIED = "applied"
+    DUPLICATE = "duplicate"
+    REJECTED = "rejected"
+
+
+class PaperFillReason(StrEnum):
+    """RPC の重複判定または約定拒否理由。"""
+
+    ORDER_ID = "order_id"
+    UNIFIED_SIGNAL_ID = "unified_signal_id"
+    TRADE_ID = "trade_id"
+    NO_POSITION_FOR_SELL = "no_position_for_sell"
+    OVERSELL = "oversell"
+    POSITION_GENERATION_MISMATCH = "position_generation_mismatch"
+
+
+class PaperPositionAction(StrEnum):
+    """RPC が同一トランザクション内で行った position 操作。"""
+
+    INSERTED = "inserted"
+    UPDATED = "updated"
+    DELETED = "deleted"
+    UNCHANGED = "unchanged"
+
+
+class PaperFillApplyResult(BaseModel):
+    """``oms_paper_apply_fill`` の型付き 1 行レスポンス。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    outcome: PaperFillOutcome
+    reason: PaperFillReason | None
+    committed_trade_id: UUID | None
+    position_action: PaperPositionAction
+    resulting_position: PaperPosition | None
+
+    @model_validator(mode="after")
+    def validate_rpc_invariants(self) -> Self:
+        """Fail closed when the RPC response contradicts its declared outcome."""
+
+        duplicate_reasons = {
+            PaperFillReason.ORDER_ID,
+            PaperFillReason.UNIFIED_SIGNAL_ID,
+            PaperFillReason.TRADE_ID,
+        }
+        rejected_reasons = {
+            PaperFillReason.NO_POSITION_FOR_SELL,
+            PaperFillReason.OVERSELL,
+            PaperFillReason.POSITION_GENERATION_MISMATCH,
+        }
+
+        if self.outcome is PaperFillOutcome.APPLIED:
+            if self.reason is not None or self.committed_trade_id is None:
+                raise ValueError("applied fill requires committed_trade_id and no reason")
+            if self.position_action is PaperPositionAction.UNCHANGED:
+                raise ValueError("applied fill cannot leave the position action unchanged")
+        elif self.outcome is PaperFillOutcome.DUPLICATE:
+            if self.reason not in duplicate_reasons or self.committed_trade_id is None:
+                raise ValueError("duplicate fill requires an idempotency reason and trade id")
+            if self.position_action is not PaperPositionAction.UNCHANGED:
+                raise ValueError("duplicate fill must leave the position unchanged")
+        else:
+            if self.reason not in rejected_reasons or self.committed_trade_id is not None:
+                raise ValueError("rejected fill requires a rejection reason and no trade id")
+            if self.position_action is not PaperPositionAction.UNCHANGED:
+                raise ValueError("rejected fill must leave the position unchanged")
+
+        if (
+            self.position_action
+            in {
+                PaperPositionAction.INSERTED,
+                PaperPositionAction.UPDATED,
+            }
+            and self.resulting_position is None
+        ):
+            raise ValueError("inserted/updated position action requires resulting_position")
+        if (
+            self.position_action is PaperPositionAction.DELETED
+            and self.resulting_position is not None
+        ):
+            raise ValueError("deleted position action cannot return resulting_position")
+        if (
+            self.outcome is PaperFillOutcome.REJECTED
+            and self.reason is PaperFillReason.NO_POSITION_FOR_SELL
+            and self.resulting_position is not None
+        ):
+            raise ValueError("no_position_for_sell cannot return resulting_position")
+        if (
+            self.outcome is PaperFillOutcome.REJECTED
+            and self.reason
+            in {
+                PaperFillReason.OVERSELL,
+                PaperFillReason.POSITION_GENERATION_MISMATCH,
+            }
+            and self.resulting_position is None
+        ):
+            raise ValueError("position-aware rejection must return the authoritative position")
+        return self
+
+
+class PaperStopUpdateOutcome(StrEnum):
+    """``oms_paper_update_stop_loss`` の結果。"""
+
+    APPLIED = "applied"
+    REJECTED = "rejected"
+
+
+class PaperStopUpdateReason(StrEnum):
+    """Trailing-stop mutation rejection reason."""
+
+    NO_POSITION_FOR_UPDATE = "no_position_for_update"
+    POSITION_GENERATION_MISMATCH = "position_generation_mismatch"
+    STOP_NOT_RAISED = "stop_not_raised"
+
+
+class PaperStopUpdateResult(BaseModel):
+    """Generation-checked trailing-stop RPC response."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    outcome: PaperStopUpdateOutcome
+    reason: PaperStopUpdateReason | None
+    resulting_position: PaperPosition | None
+
+    @model_validator(mode="after")
+    def validate_rpc_invariants(self) -> Self:
+        if self.outcome is PaperStopUpdateOutcome.APPLIED:
+            if self.reason is not None or self.resulting_position is None:
+                raise ValueError("applied stop update requires the resulting position")
+            return self
+        if self.reason is None:
+            raise ValueError("rejected stop update requires a reason")
+        if (
+            self.reason is PaperStopUpdateReason.NO_POSITION_FOR_UPDATE
+            and self.resulting_position is not None
+        ):
+            raise ValueError("missing position rejection cannot return a position")
+        if (
+            self.reason
+            in {
+                PaperStopUpdateReason.POSITION_GENERATION_MISMATCH,
+                PaperStopUpdateReason.STOP_NOT_RAISED,
+            }
+            and self.resulting_position is None
+        ):
+            raise ValueError("position-aware rejection must return the authoritative position")
+        return self
 
 
 class PositionUpdate(BaseModel):
