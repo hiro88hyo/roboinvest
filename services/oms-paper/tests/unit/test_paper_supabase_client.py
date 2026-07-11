@@ -8,9 +8,18 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from oms_paper._testing import make_paper_position
-from oms_paper.clients.supabase import SupabaseClient, SupabaseError
-from oms_paper.models import FillResult, PaperFillRecord
+from oms_paper.clients.supabase import (
+    SupabaseClient,
+    SupabaseError,
+    _parse_apply_fill_result,
+)
+from oms_paper.models import (
+    FillResult,
+    PaperFillOutcome,
+    PaperFillRecord,
+    PaperPositionAction,
+    PaperStopUpdateOutcome,
+)
 from oms_paper.position_updater import build_fill_record
 from trade_contracts.enums import Side, TradingStyle
 from trade_contracts.risk import KillSwitchState
@@ -191,134 +200,48 @@ async def test_list_paper_positions_raises_on_non_list() -> None:
             await client.list_paper_positions()
 
 
-# --- insert_paper_position ---------------------------------------------------
+# --- update_paper_position_stop_loss -----------------------------------------
 
 
-async def test_insert_paper_position_posts_full_row() -> None:
+async def test_update_paper_position_stop_loss_posts_generation_checked_rpc() -> None:
     captured: list[httpx.Request] = []
+    opened_at = datetime(2026, 4, 25, 9, 0, tzinfo=UTC)
 
     async def _handler(request: httpx.Request) -> httpx.Response:
         captured.append(request)
-        return httpx.Response(204, content=b"")
-
-    pos = make_paper_position(
-        symbol="7203",
-        quantity=100,
-        entry_price=Decimal("1000"),
-        target_price=Decimal("1200"),
-        stop_loss_price=Decimal("950"),
-        holding_type=TradingStyle.SWING,
-        max_hold_days=5,
-        scheduled_exit_date=date(2026, 5, 1),
-        trailing_stop_pct=Decimal("0.03"),
-    )
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "outcome": "applied",
+                    "reason": None,
+                    "resulting_position": _position_row(
+                        opened_at=opened_at.isoformat(),
+                        stop_loss_price="1078",
+                    ),
+                }
+            ],
+        )
 
     async with _build_client(_handler) as client:
-        await client.insert_paper_position(pos)
+        result = await client.update_paper_position_stop_loss(
+            symbol="7203",
+            expected_opened_at=opened_at,
+            stop_loss_price="1078",
+        )
 
     assert len(captured) == 1
     req = captured[0]
     assert req.method == "POST"
-    assert req.url.path == "/rest/v1/positions"
-    body = json.loads(req.content.decode())
-    assert isinstance(body, list)
-    row = body[0]
-    assert row["symbol"] == "7203"
-    assert row["trade_type"] == "paper"
-    assert row["side"] == "LONG"
-    assert row["quantity"] == 100
-    assert row["entry_price"] == "1000"
-    assert row["current_price"] == "1000"  # entry_price で初期化
-    assert row["unrealized_pnl"] == "0"
-    assert row["holding_type"] == "swing"
-    assert row["target_price"] == "1200"
-    assert row["stop_loss_price"] == "950"
-    assert row["max_hold_days"] == 5
-    assert row["scheduled_exit_date"] == "2026-05-01"
-    assert row["trailing_stop_pct"] == "0.03"
-    assert req.headers.get("Prefer") == "return=minimal"
-
-
-async def test_insert_paper_position_omits_optional_fields() -> None:
-    captured: list[httpx.Request] = []
-
-    async def _handler(request: httpx.Request) -> httpx.Response:
-        captured.append(request)
-        return httpx.Response(204, content=b"")
-
-    pos = make_paper_position()  # 全 optional は None
-    async with _build_client(_handler) as client:
-        await client.insert_paper_position(pos)
-    row = json.loads(captured[0].content.decode())[0]
-    for key in (
-        "target_price",
-        "stop_loss_price",
-        "max_hold_days",
-        "scheduled_exit_date",
-        "trailing_stop_pct",
-    ):
-        assert key not in row
-
-
-async def test_insert_paper_position_raises_on_4xx() -> None:
-    async def _handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(409, text="conflict")
-
-    async with _build_client(_handler) as client:
-        with pytest.raises(SupabaseError, match="insert failed"):
-            await client.insert_paper_position(make_paper_position())
-
-
-# --- update_paper_position_quantity ------------------------------------------
-
-
-async def test_update_paper_position_quantity_patches_only_quantity_and_entry() -> None:
-    captured: list[httpx.Request] = []
-
-    async def _handler(request: httpx.Request) -> httpx.Response:
-        captured.append(request)
-        return httpx.Response(204, content=b"")
-
-    async with _build_client(_handler) as client:
-        await client.update_paper_position_quantity(symbol="7203", quantity=300, entry_price="1050")
-
-    assert len(captured) == 1
-    req = captured[0]
-    assert req.method == "PATCH"
-    assert req.url.path == "/rest/v1/positions"
-    assert req.url.params.get("symbol") == "eq.7203"
-    assert req.url.params.get("trade_type") == "eq.paper"
-    body = json.loads(req.content.decode())
-    assert body == {"quantity": 300, "entry_price": "1050"}
-    assert "current_price" not in body
-    assert "unrealized_pnl" not in body
-
-
-# --- update_paper_position_stop_loss -----------------------------------------
-
-
-async def test_update_paper_position_stop_loss_patches_only_stop_loss() -> None:
-    captured: list[httpx.Request] = []
-
-    async def _handler(request: httpx.Request) -> httpx.Response:
-        captured.append(request)
-        return httpx.Response(204, content=b"")
-
-    async with _build_client(_handler) as client:
-        await client.update_paper_position_stop_loss(symbol="7203", stop_loss_price="1078")
-
-    assert len(captured) == 1
-    req = captured[0]
-    assert req.method == "PATCH"
-    assert req.url.path == "/rest/v1/positions"
-    assert req.url.params.get("symbol") == "eq.7203"
-    assert req.url.params.get("trade_type") == "eq.paper"
-    body = json.loads(req.content.decode())
-    assert body == {"stop_loss_price": "1078"}
-    # quantity / entry_price / current_price は触らない
-    assert "quantity" not in body
-    assert "entry_price" not in body
-    assert "current_price" not in body
+    assert req.url.path == "/rest/v1/rpc/oms_paper_update_stop_loss"
+    assert json.loads(req.content.decode()) == {
+        "p_symbol": "7203",
+        "p_expected_position_opened_at": opened_at.isoformat(),
+        "p_stop_loss_price": "1078",
+    }
+    assert result.outcome is PaperStopUpdateOutcome.APPLIED
+    assert result.resulting_position is not None
+    assert result.resulting_position.stop_loss_price == Decimal("1078")
 
 
 async def test_update_paper_position_stop_loss_raises_on_4xx() -> None:
@@ -326,8 +249,25 @@ async def test_update_paper_position_stop_loss_raises_on_4xx() -> None:
         return httpx.Response(404, text="row not found")
 
     async with _build_client(_handler) as client:
-        with pytest.raises(SupabaseError, match="update_stop_loss failed"):
-            await client.update_paper_position_stop_loss(symbol="missing", stop_loss_price="1000")
+        with pytest.raises(SupabaseError, match="rpc failed"):
+            await client.update_paper_position_stop_loss(
+                symbol="missing",
+                expected_opened_at=datetime(2026, 4, 25, 9, 0, tzinfo=UTC),
+                stop_loss_price="1000",
+            )
+
+
+async def test_update_paper_position_stop_loss_rejects_zero_updated_rows() -> None:
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[])
+
+    async with _build_client(_handler) as client:
+        with pytest.raises(SupabaseError, match="expected one row"):
+            await client.update_paper_position_stop_loss(
+                symbol="missing",
+                expected_opened_at=datetime(2026, 4, 25, 9, 0, tzinfo=UTC),
+                stop_loss_price="1000",
+            )
 
 
 async def test_update_paper_position_stop_loss_retries_on_5xx() -> None:
@@ -338,44 +278,25 @@ async def test_update_paper_position_stop_loss_retries_on_5xx() -> None:
         calls += 1
         if calls < 3:
             return httpx.Response(503, text="boom")
-        return httpx.Response(204, content=b"")
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "outcome": "applied",
+                    "reason": None,
+                    "resulting_position": _position_row(stop_loss_price="1078"),
+                }
+            ],
+        )
 
     async with _build_client(_handler) as client:
-        await client.update_paper_position_stop_loss(symbol="7203", stop_loss_price="1078")
+        await client.update_paper_position_stop_loss(
+            symbol="7203",
+            expected_opened_at=datetime(2026, 4, 25, 9, 0, tzinfo=UTC),
+            stop_loss_price="1078",
+        )
 
     assert calls == 3  # 5xx 2 回 → 3 回目で成功
-
-
-# --- delete_paper_position ---------------------------------------------------
-
-
-async def test_delete_paper_position_uses_filter() -> None:
-    captured: list[httpx.Request] = []
-
-    async def _handler(request: httpx.Request) -> httpx.Response:
-        captured.append(request)
-        return httpx.Response(204, content=b"")
-
-    async with _build_client(_handler) as client:
-        await client.delete_paper_position(symbol="7203")
-
-    req = captured[0]
-    assert req.method == "DELETE"
-    assert req.url.path == "/rest/v1/positions"
-    assert req.url.params.get("symbol") == "eq.7203"
-    assert req.url.params.get("trade_type") == "eq.paper"
-
-
-async def test_delete_paper_position_raises_on_5xx() -> None:
-    async def _handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(500, text="boom")
-
-    async with _build_client(_handler) as client:
-        with pytest.raises(SupabaseError, match="transient"):
-            await client.delete_paper_position(symbol="7203")
-
-
-# --- insert_trade_paper ------------------------------------------------------
 
 
 def _build_fill_record() -> PaperFillRecord:
@@ -390,68 +311,161 @@ def _build_fill_record() -> PaperFillRecord:
     return rec
 
 
-async def test_insert_trade_paper_posts_serialized_row() -> None:
+# --- apply_paper_fill --------------------------------------------------------
+
+
+async def test_apply_paper_fill_posts_exact_rpc_params_and_parses_position() -> None:
     captured: list[httpx.Request] = []
+    rec = _build_fill_record()
 
     async def _handler(request: httpx.Request) -> httpx.Response:
         captured.append(request)
-        return httpx.Response(204, content=b"")
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "outcome": "applied",
+                    "reason": None,
+                    "committed_trade_id": str(rec.trade_id),
+                    "position_action": "inserted",
+                    "resulting_position": _position_row(
+                        holding_type="swing",
+                        entry_price="1000",
+                        target_price="1200",
+                        stop_loss_price="902.70",
+                        max_hold_days=5,
+                        scheduled_exit_date="2026-05-01",
+                        trailing_stop_pct="0.03",
+                    ),
+                }
+            ],
+        )
 
-    rec = _build_fill_record()
     async with _build_client(_handler) as client:
-        await client.insert_trade_paper(rec)
+        result = await client.apply_paper_fill(
+            record=rec,
+            new_holding_type=TradingStyle.SWING,
+            new_target_price=Decimal("1200"),
+            new_stop_loss_price=Decimal("902.70"),
+            new_max_hold_days=5,
+            new_scheduled_exit_date=date(2026, 5, 1),
+            new_trailing_stop_pct=Decimal("0.03"),
+        )
 
+    assert len(captured) == 1
     req = captured[0]
     assert req.method == "POST"
-    assert req.url.path == "/rest/v1/trades_paper"
-    body = json.loads(req.content.decode())
-    row = body[0]
-    assert row["trade_id"] == str(rec.trade_id)
-    assert row["symbol"] == "7203"
-    assert row["side"] == "BUY"
-    assert row["quantity"] == 100
-    assert row["price"] == "1000"
-    assert row["signal_source"] == rec.signal_source.value
-    assert row["unified_signal_id"] == str(rec.unified_signal_id)
-    assert row["executed_at"] == rec.executed_at.isoformat()
-    assert req.headers.get("Prefer") == "return=minimal"
+    assert req.url.path == "/rest/v1/rpc/oms_paper_apply_fill"
+    assert json.loads(req.content.decode()) == {
+        "p_order_id": str(rec.order_id),
+        "p_trade_id": str(rec.trade_id),
+        "p_symbol": "7203",
+        "p_side": "BUY",
+        "p_filled_quantity": 100,
+        "p_fill_price": "1000",
+        "p_signal_source": rec.signal_source.value,
+        "p_unified_signal_id": str(rec.unified_signal_id),
+        "p_executed_at": rec.executed_at.isoformat(),
+        "p_expected_position_opened_at": None,
+        "p_new_holding_type": "swing",
+        "p_new_target_price": "1200",
+        "p_new_stop_loss_price": "902.70",
+        "p_new_max_hold_days": 5,
+        "p_new_scheduled_exit_date": "2026-05-01",
+        "p_new_trailing_stop_pct": "0.03",
+    }
+    assert result.outcome is PaperFillOutcome.APPLIED
+    assert result.position_action is PaperPositionAction.INSERTED
+    assert result.committed_trade_id == rec.trade_id
+    assert result.resulting_position is not None
+    assert result.resulting_position.symbol == "7203"
+    assert result.resulting_position.holding_type is TradingStyle.SWING
+    assert result.resulting_position.stop_loss_price == Decimal("902.70")
+    assert result.resulting_position.scheduled_exit_date == date(2026, 5, 1)
 
 
-async def test_insert_trade_paper_raises_on_4xx() -> None:
+async def test_apply_paper_fill_posts_null_new_position_params_for_sell() -> None:
+    captured: list[httpx.Request] = []
+    order = make_order_request(symbol="7203", side=Side.SELL, quantity=100)
+    fill = FillResult(filled_quantity=100, fill_price=Decimal("1100"), reason="filled")
+    rec = build_fill_record(order=order, fill=fill, executed_at=order.created_at)
+    assert rec is not None
+
     async def _handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(400, text="bad")
+        captured.append(request)
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "outcome": "applied",
+                    "reason": None,
+                    "committed_trade_id": str(rec.trade_id),
+                    "position_action": "deleted",
+                    "resulting_position": None,
+                }
+            ],
+        )
 
+    expected_opened_at = datetime(2026, 4, 24, 9, 0, tzinfo=UTC)
     async with _build_client(_handler) as client:
-        with pytest.raises(SupabaseError, match="insert failed"):
-            await client.insert_trade_paper(_build_fill_record())
+        result = await client.apply_paper_fill(
+            record=rec,
+            new_holding_type=None,
+            expected_position_opened_at=expected_opened_at,
+        )
+
+    body = json.loads(captured[0].content.decode())
+    assert body["p_unified_signal_id"] == str(rec.unified_signal_id)
+    assert body["p_expected_position_opened_at"] == expected_opened_at.isoformat()
+    assert body["p_new_holding_type"] is None
+    assert body["p_new_target_price"] is None
+    assert body["p_new_stop_loss_price"] is None
+    assert body["p_new_max_hold_days"] is None
+    assert body["p_new_scheduled_exit_date"] is None
+    assert body["p_new_trailing_stop_pct"] is None
+    assert result.position_action is PaperPositionAction.DELETED
+    assert result.resulting_position is None
 
 
-# --- paper_trade_exists_for_signal -------------------------------------------
+def test_parse_apply_fill_result_requires_exactly_one_row() -> None:
+    payloads: tuple[object, ...] = ([], [{}, {}], {})
+    for payload in payloads:
+        response = httpx.Response(200, json=payload)
+        with pytest.raises(SupabaseError, match="expected exactly one row"):
+            _parse_apply_fill_result(response)
 
 
-async def test_paper_trade_exists_returns_true_when_row_found() -> None:
-    signal_id = uuid4()
+def test_parse_apply_fill_result_rejects_invalid_authoritative_position() -> None:
+    response = httpx.Response(
+        200,
+        json=[
+            {
+                "outcome": "applied",
+                "reason": None,
+                "committed_trade_id": str(uuid4()),
+                "position_action": "inserted",
+                "resulting_position": _position_row(side="SHORT"),
+            }
+        ],
+    )
 
-    async def _handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.params["unified_signal_id"] == f"eq.{signal_id}"
-        return httpx.Response(200, json=[{"trade_id": str(uuid4())}])
-
-    async with _build_client(_handler) as client:
-        assert await client.paper_trade_exists_for_signal(signal_id) is True
+    with pytest.raises(SupabaseError, match="unexpected non-LONG paper position"):
+        _parse_apply_fill_result(response)
 
 
-async def test_paper_trade_exists_returns_false_when_no_row() -> None:
-    async def _handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=[])
+def test_parse_apply_fill_result_rejects_status_invariant_mismatch() -> None:
+    response = httpx.Response(
+        200,
+        json=[
+            {
+                "outcome": "duplicate",
+                "reason": "order_id",
+                "committed_trade_id": str(uuid4()),
+                "position_action": "deleted",
+                "resulting_position": None,
+            }
+        ],
+    )
 
-    async with _build_client(_handler) as client:
-        assert await client.paper_trade_exists_for_signal(uuid4()) is False
-
-
-async def test_paper_trade_exists_raises_on_5xx() -> None:
-    async def _handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(500, text="err")
-
-    async with _build_client(_handler) as client:
-        with pytest.raises(SupabaseError, match="transient error"):
-            await client.paper_trade_exists_for_signal(uuid4())
+    with pytest.raises(SupabaseError, match="invalid oms_paper_apply_fill response"):
+        _parse_apply_fill_result(response)

@@ -25,7 +25,11 @@ from trade_contracts.market import OrderBookSnapshot, PriceLevel, TickData
 JST = timezone(timedelta(hours=9), name="JST")
 
 
-def parse_push_message(payload: dict[str, Any]) -> list[TickData | OrderBookSnapshot]:
+def parse_push_message(
+    payload: dict[str, Any],
+    *,
+    received_at: datetime | None = None,
+) -> list[TickData | OrderBookSnapshot]:
     """1 件の PUSH JSON から派生する contracts レコードを返す。
 
     判別ルール:
@@ -33,6 +37,9 @@ def parse_push_message(payload: dict[str, Any]) -> list[TickData | OrderBookSnap
     - ``Bid1``/``Ask1`` のいずれかに ``Price`` があれば ``OrderBookSnapshot``
     - どちらにも該当しなければ空リスト (無視)
     """
+    if received_at is not None and received_at.tzinfo is None:
+        raise ValueError("received_at must be timezone-aware")
+
     symbol = _extract_symbol(payload)
     if symbol is None:
         return []
@@ -43,7 +50,7 @@ def parse_push_message(payload: dict[str, Any]) -> list[TickData | OrderBookSnap
     if tick is not None:
         results.append(tick)
 
-    book = _try_build_book(symbol, payload)
+    book = _try_build_book(symbol, payload, received_at=received_at)
     if book is not None:
         results.append(book)
 
@@ -81,7 +88,12 @@ def _try_build_tick(symbol: str, payload: dict[str, Any]) -> TickData | None:
     return TickData(symbol=symbol, timestamp=ts, price=price, volume=volume)
 
 
-def _try_build_book(symbol: str, payload: dict[str, Any]) -> OrderBookSnapshot | None:
+def _try_build_book(
+    symbol: str,
+    payload: dict[str, Any],
+    *,
+    received_at: datetime | None,
+) -> OrderBookSnapshot | None:
     # kabu PUSH/REST uses Buy1-Buy10 for bids and Sell1-Sell10 for asks
     bids = _collect_levels(payload, prefix="Buy")
     asks = _collect_levels(payload, prefix="Sell")
@@ -110,6 +122,7 @@ def _try_build_book(symbol: str, payload: dict[str, Any]) -> OrderBookSnapshot |
     return OrderBookSnapshot(
         symbol=symbol,
         timestamp=ts,
+        received_at=received_at,
         bids=bids,
         asks=asks,
     )

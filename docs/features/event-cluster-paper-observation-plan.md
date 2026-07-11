@@ -2,10 +2,19 @@
 
 Created: 2026-07-04
 
-Status: Phase 0 approved on 2026-07-04. Phase 1 dry-run detection, Phase 2
-paper-only publication, and Phase 3 observation reporting are implemented.
-Publication remains disabled by default unless
-`EVENT_CLUSTER_PAPER_PUBLISH_ENABLED=true` and `--publish-paper` are both set.
+Status: Phase 0 was approved on 2026-07-04. On 2026-07-10 an external audit
+found that operational detection depended on T+1 OHLCV and copied the future
+open into the signal price and absolute stop. Phase 1 remains causal dry-run
+detection only. A separate fresh-book paper publisher, the relative-stop/fill
+contract, paper-only routing identity, and full local entry/partial/full-exit
+E2E are now implemented as `opening_transport_stress_v1`. That E2E proves
+transport, routing, idempotency, atomic persistence, and exit mechanics; it
+does **not** reproduce the frozen `next_open_unconditional` / 20th-session-close
+execution contract and is explicitly marked
+`comparable_to_registered_backtest=false`. Phase 2 target activation remains
+blocked until execution timing is aligned, the target database/RPC health and
+managed subscription are verified, and the evidence mismatch below is
+resolved. An environment flag alone never authorizes it.
 
 This plan covers paper observation for
 `event_cluster_earnings_dividend_value_guard_fixed20_stop_v1_research`.
@@ -48,26 +57,30 @@ ADR-0004 Paper Observation Gate:
 |---|---:|---|---|
 | Aggregate OOS PF | `> 1.10`, target `1.15` | Locked OOS portfolio PF: 1M `2.036`, 2M `2.193`, 5M `2.904` | PASS |
 | Aggregate OOS max DD | `< capital * 0.12` | 1M `41,194`, 2M `117,894`, 5M `161,253` | PASS |
-| Matched random p75 or better | target p75 | Locked OOS portfolio percentile: 1M `0.737`, 2M `0.853`, 5M `0.927` | 1M FAIL, 2M/5M PASS |
-| `same_symbol_random_date` percentile | `>= 0.65` | 1M `0.737`, 2M `0.853`, 5M `0.927` | PASS |
+| Matched random p75 or better | target p75 | Reported percentile: 1M `0.737`, 2M `0.853`, 5M `0.927`, but random rows used an 8% stop while selected rows used 10% | NOT COMPARABLE / BLOCKED |
+| `same_symbol_random_date` percentile | `>= 0.65` | Same mismatched-stop percentile series | NOT COMPARABLE / BLOCKED |
 | Execution stress does not materially break result | positive stressed result | entry10_exit25: 1M PF `1.784`, 2M `2.015`, 5M `2.655`; exit50: 1M PF `1.808`, 2M `1.975`, 5M `2.568` | PASS |
-| Backtest data timing matches paper ordering | point-in-time event data, next open entry | Research dataset has point-in-time fields; live/paper event detection path still needs implementation and audit | BORROWED/IMPLEMENTATION NEEDED |
+| Backtest data timing matches paper ordering | disclosure-time PIT features, next-open entry, 20th-session close exit | Detector now preserves the frozen disclosure-time feature vintage. The local fresh-ask/opening-exit E2E is a separate transport stress | SELECTION FIXED / EXECUTION REPRODUCTION PENDING |
 | Prompt/model/feature schema can be frozen | required for AI path | This is LLM-free rule-only. Rule definition is frozen instead. | PASS BY SCOPE |
 
-The only numerical gap is 1M matched-random p75: `0.737 < 0.75`. The argument
-for paper observation is that 2M and 5M pass p75, all tested capital levels
-pass the `>= 0.65` paper gate, and paper observation collects operational
-evidence with zero capital risk. Because the latest cluster report still marks
-v1 as research-continuation only, starting paper observation requires explicit
-user approval.
+The earlier paper-observation argument is no longer sufficient: in addition to
+the 1M p75 shortfall, the cited same-symbol random cohort used
+`entry_price * 0.92` while selected observations used the frozen 10% stop. Do
+not reinterpret those percentiles as gate evidence and do not inspect/rerun the
+locked OOS window without the ADR-required approval. The simulator is corrected
+for future runs, but that code fix does not retroactively validate the cited
+locked report.
 
 ## Paper Observation Decision
 
-Proposed decision:
+Current decision:
 
-- Start paper observation only after this Phase 0 document is approved.
-- Treat the 1M percentile shortfall as an accepted paper-observation exception,
-  not as a live gate exception.
+- Do not start frozen-v1 paper observation with the current opening transport
+  stress path.
+- Do not treat transport-stress fills/PnL as the frozen candidate's paper/live
+  evidence.
+- Require next-open/20th-session-close implementation alignment and a valid
+  matched-random comparison before a new activation decision.
 - Keep all candidate parameters frozen.
 - Do not inspect the frozen locked OOS window again.
 
@@ -77,7 +90,7 @@ The initial observation horizon is the earlier of:
 - 6 calendar months of eligible market days after activation, or
 - 15 opened paper trades for this candidate.
 
-Success criteria:
+Future frozen-v1 success criteria (not satisfied by the current stress E2E):
 
 - Event detection, signal publication, Gateway approval/rejection, OMS Paper
   fill, position creation, and scheduled exit ordering are reproducible from
@@ -86,9 +99,11 @@ Success criteria:
   `stop_loss_price`, `max_hold_days=20`, and a deterministic
   `scheduled_exit_date`.
 - Entry fills are attributable to the intended next-session opening sequence,
-  with entry slippage versus the research assumption reported in basis points.
-- Exit fills are attributable to `opening-swing-exits`, catastrophic stop, or
-  an explicitly recorded no-fill/manual intervention reason.
+  with entry slippage versus the publisher's selected fresh ask reported in
+  basis points. The valuation reference remains non-executable context.
+- Fixed-horizon exit fills are attributable to a close-session execution on the
+  frozen 20th-session date; catastrophic stops and explicit no-fill/manual
+  intervention remain separately attributable.
 - Fill rate, no-fill rate, entry slippage, exit slippage, skipped symbols, and
   sequencing errors are reported without changing the registered strategy.
 
@@ -109,76 +124,141 @@ These criteria must not be loosened after observing paper results.
 
 ### Data Flow
 
-Use the existing Pub/Sub route. Do not add service-to-service direct calls.
+The detector path remains intentionally non-executable:
 
 ```text
 J-Quants /fins/summary
   -> event cluster paper batch
-  -> StrategySignal(source=RULE) on strategy-signals-a
-  -> aggregator
-  -> UnifiedTradeSignal on trade-signals
-  -> gateway risk checks and trade_mode routing
-  -> paper-orders
-  -> oms-paper
-  -> positions / trades_paper
+  -> causal candidate/exclusion artifact
+  -> production-preopen-check artifact validation
+  -> watchlist market-data capture
+  -> no signal or order publication
 ```
 
-The event batch is a daily batch similar in shape to `universe-scanner`, but it
-does not bypass aggregator or Gateway. Gateway remains the only risk executor
-for 2% rule sizing, lot calculation, kill switch state, duplicate-position
-checks, and paper/live routing.
+The separately gated path below is an operational stress profile, not frozen-v1
+execution reproduction:
+
+```text
+schema v2 causal artifact + dedicated event-paper-raw-books
+  -> strategy_rule event-paper-publish (opening_transport_stress_v1)
+  -> durable first-quote claim + single-attempt CAS journal + separate receipt
+  -> strategy-signals-a (RULE / SWING / PAPER_ONLY)
+  -> Aggregator
+  -> Gateway
+  -> paper-orders only
+  -> OMS Paper atomic fill + fill-anchored stop + scheduled exit
+```
+
+It uses the existing Pub/Sub route and never calls a downstream service
+directly or bypasses Gateway. Gateway remains the only risk executor for 2%
+rule sizing, lot calculation, kill switch state, duplicate-position checks,
+and paper/live routing.
 
 ### Timing
 
-Separate event detection from order publication:
+Current causal dry-run sequence:
 
-1. Evening detection batch, after J-Quants financial summaries are available:
-   fetch the day's `/fins/summary` disclosures, evaluate the frozen cluster v1
-   rule, and write dry-run/event-candidate output.
+1. After the signal date has ended in JST, and before 09:00 JST on the next TSE
+   business day, fetch that date's `/fins/summary` disclosures with
+   exporter-recorded receipt provenance. Evaluate the frozen cluster v1 rule
+   at each disclosure's original `data_available_at/feature_cutoff_at`; the
+   later local `source_received_at` must not advance that feature vintage.
+   Write candidate and exclusion output without consulting T+1 OHLCV. If the
+   latest expected signal-date bar is absent after close, preserve the frozen
+   selection with `feature_data_complete=false`; pre-open/watchlist/publisher
+   reject execution rather than changing the research cohort.
 2. Next trading day pre-open preparation: ensure event symbols are in the
-   watchlist for market-data capture and verify `system_status.trade_mode =
-   paper`.
-3. Opening exit batch: run `oms-paper opening-swing-exits` before new entries
-   so due fixed-hold positions can close before same-day BUYs.
-4. Entry publication: publish fresh `StrategySignal` messages shortly before or
-   during the intended opening entry window. Do not publish the previous
-   evening because Gateway rejects stale signals after 300 seconds by default
-   and, more importantly, immediate downstream processing would no longer
-   represent next-session entry.
-5. Gateway routes only while `trade_mode=paper`; otherwise the event batch must
-   refuse to publish and leave a dry-run report.
+   watchlist for market-data capture only after
+   `production-preopen-check.py --swing-candidates-json` validates causality,
+   dates, receipt provenance, and the absence of executable price fields.
+3. In the current transport stress, process all due paper swing exits before
+   entry. This capital-release ordering differs from the frozen 20th-session
+   close contract and cannot count as v1 evidence.
+4. At 09:00–09:30 JST, the separately gated publisher targets only
+   `event-paper-raw-books` and accepts a best ask whose `received_at` is at most
+   10 seconds old (future skew at most 5 seconds). The detector's own
+   `--publish-paper` remains fail closed.
+5. Claim the exact quote in `strategy_logs`, ack its raw book, recheck readiness,
+   and atomically mark one attempt immediately before emitting the immutable
+   PAPER_ONLY stress signal through Aggregator/Gateway/OMS Paper. The external
+   Pub/Sub RPC is never retried. A success checkpoint yields a confirmed
+   digest-bound receipt; an attempt without a checkpoint is retained as
+   ambiguous and is never republished. Every receipt/report records
+   `execution_profile=opening_transport_stress_v1` and
+   `comparable_to_registered_backtest=false`.
+6. Reconcile the receipt and downstream lineage in the observation report.
 
-### StrategySignal Contract Gap
+### Execution Contract Status and Remaining Gaps
 
-Current `StrategySignal` carries stop, target, trailing stop, `max_hold_days`,
-and `scheduled_exit_date`, but it does not carry `holding_type`. Aggregator
-sets `UnifiedTradeSignal.holding_type` from its global `default_holding_type`.
-Setting the global default to `swing` would affect unrelated signals and is not
-acceptable.
+`StrategySignal`, `UnifiedTradeSignal`, and `OrderRequest` now carry
+`stop_loss_pct`, constrained to `0 < stop_loss_pct < 1`. A relative stop and an
+absolute `stop_loss_price` are mutually exclusive. `OrderRequest` also carries
+`holding_type`, `max_hold_days`, and `scheduled_exit_date`; Gateway preserves
+those fields and Aggregator includes the relative stop in its order-field
+passthrough.
 
-Phase 1 must therefore include a small contract change:
+Gateway uses `entry_price * (1 - stop_loss_pct)` for pre-fill risk sizing, but
+keeps the relative intent on the paper order instead of treating that estimate
+as an actual stop fill. A live BUY carrying `stop_loss_pct` is rejected with
+`relative_stop_live_unsupported`. OMS Paper resolves the persisted absolute
+stop for a new BUY from the actual paper fill as
+`fill_price * (1 - stop_loss_pct)`. Existing positions keep their existing
+holding and exit metadata on an add-on fill. The 14:50 day closeout now creates
+orders only for `holding_type=day`; swing positions are not closed by that job.
 
-- Add `holding_type: TradingStyle | None = None` to `StrategySignal`.
-- Update aggregator to use the signal's `holding_type` when present; otherwise
-  keep `ConsensusConfig.default_holding_type`.
-- Keep the default behavior unchanged for existing day-trading signals.
+Identity-bearing event signals also carry `routing_intent=PAPER_ONLY`, the
+separate execution key
+`<frozen-selection-key>__opening_transport_stress_v1`, and a per-occurrence
+`candidate_id` (the detector cluster/observation identity). This prevents the
+stress path from being mistaken for frozen-v1 evidence while isolating the
+Aggregator pairing bucket. Strategy, unified, and order IDs are deterministic
+under redelivery. Gateway rejects PAPER_ONLY in live mode, and the OrderRequest
+contract cannot represent PAPER_ONLY with `trade_mode=live`.
 
-The event batch should publish:
+Live Feeder books carry `OrderBookSnapshot.received_at` separately from kabu's
+`CurrentPriceTime`. OMS Paper evaluates freshness against its wall clock,
+rejects excessive future skew, and requires `received_at` unconditionally for
+PAPER_ONLY orders. `event-paper-raw-books` is defined as a dedicated filtered
+subscription so the one-shot publisher does not consume another service's
+stream.
 
-- `source=RULE`
-- `action=BUY`
-- `holding_type=swing`
-- `confidence >= MIN_CONFIDENCE_RULE_ONLY` (default threshold is `0.5`)
-- `max_hold_days=20`
-- `stop_loss_price` equal to `entry_price * (1 + CAT_STOP_PCT)`, using the
-  frozen research value `CAT_STOP_PCT=-0.10`
-  and current entry-price assumption
-- `reasoning` with candidate ID, event IDs, disclosure timestamps, PER guard
-  status, and intended entry date
+The candidate artifact is intentionally non-executable. It contains the
+valuation reference and frozen `CAT_STOP_PCT=-0.10`, but contains neither an
+entry-price assumption nor an absolute `stop_loss_price`. In the publisher,
+that frozen strategy value maps to the contract's positive
+loss-distance representation `stop_loss_pct=0.10`.
 
-`scheduled_exit_date` may be supplied by the batch when the TSE calendar is
-available. If omitted, OMS Paper currently derives it from `max_hold_days` at
-fill time via `nth_tse_business_day_after`.
+The local plumbing and safety verification gates are complete:
+
+- the publisher uses the dedicated subscription, fresh observed ask,
+  paper/allowed/RPC/due-exit preflight, PAPER_ONLY identity, double latch, and a
+  durable claim-before-publish protocol. It executes exactly one occurrence per
+  invocation; multi-candidate artifacts require an explicit occurrence ID and
+  separate receipt paths. A body-based CAS RPC owns the single external
+  attempt, and Pub/Sub success is checkpointed back into the claim, allowing an
+  atomic confirmed or ambiguous stress receipt to be reconstructed without
+  another publish. Same-filesystem-namespace invocations are locked; operations
+  must also use one designated coordinator because the cursor is shared;
+- the real emulator + PostgREST path verifies publisher redelivery,
+  Aggregator/Gateway duplication, exactly one BUY fill, fill-anchored stop,
+  scheduled partial/full SELLs, position deletion, and no live message; and
+- CI runs that focused path on pull requests alongside the actual atomic RPC
+  tests.
+
+These changes do not authorize target publication. Frozen-v1 activation first
+requires an execution path matching next-open entry and a close-session exit on
+the frozen 20th-session date, plus a valid matched-random comparison. Database
+migrations/RPC health and the managed dedicated subscription remain additional,
+not sufficient, gates.
+
+OMS Paper atomic persistence is implemented: all fill paths use one
+`oms_paper_apply_fill` transaction with order-ID idempotency, symbol-level
+serialization, authoritative position results, rollback on trade failure, and
+explicit partial-exit handling. Actual local PostgREST RPC tests cover these
+properties; this completed item does not authorize publication by itself.
+
+Until those target conditions are met, the command remains operationally
+blocked even though its implementation exists.
 
 ### Aggregator
 
@@ -187,13 +267,18 @@ RULE-only input becomes `signal_source=RULE` when confidence is above
 `MIN_CONFIDENCE_RULE_ONLY`. No consensus requirement is needed for this paper
 candidate.
 
-Acceptance checks for Phase 1:
+Locally verified acceptance checks:
 
 - RULE-only event signal emits exactly one `UnifiedTradeSignal`.
-- `holding_type=swing`, stop, `max_hold_days`, and `scheduled_exit_date` fields
-  survive aggregation.
+- `holding_type=swing`, relative stop intent, `max_hold_days`, and
+  `scheduled_exit_date` survive aggregation; contract tests now cover this
+  passthrough.
 - Below-threshold confidence is rejected by existing source-specific threshold
   behavior.
+- Candidate-specific strategy isolation and deterministic IDs prevent a
+  redelivery or an unrelated AI/day signal from changing the unified result.
+
+These checks are evidence, not target authorization.
 
 ### Gateway
 
@@ -206,73 +291,93 @@ Gateway must remain unchanged in responsibility:
 - calculate lot size and enforce risk limits
 - route by `system_status.trade_mode`
 
-Event paper publication must add a preflight that refuses to publish when
-`system_status.trade_mode != paper`. This is an event-batch safety check; it
-does not replace Gateway's routing responsibility.
+The current detector refuses all publication. The separate publisher refuses
+to publish unless `system_status.trade_mode=paper` and trading is allowed, then
+rechecks mode after its durable claim and immediately before publish. That
+preflight is not sufficient by itself: it emits explicit `PAPER_ONLY`, and
+Gateway enforces it again at routing time. Gateway also rejects a live BUY
+carrying a relative stop, but that guard does not replace the broader routing
+intent.
 
 ### OMS Paper
 
-OMS Paper already supports swing positions, catastrophic stop monitoring, and
-`opening-swing-exits` for fixed-hold exits. Required Phase 1/2 checks:
+OMS Paper already supports swing positions, absolute-stop monitoring, and
+`opening-swing-exits` for its current fixed-hold stress path. The order path now
+derives a new
+position's `holding_type` from `OrderRequest`, resolves an absolute stop from the
+actual BUY fill, and carries `max_hold_days` and `scheduled_exit_date`. Its 14:50
+day closeout ignores swing positions.
 
-- New BUY position persists `holding_type=swing`.
-- `stop_loss_price` persists.
-- `max_hold_days=20` persists.
-- `scheduled_exit_date` is set either from the signal/order or by OMS Paper
-  from the fill date plus 20 TSE business days.
-- `opening-swing-exits` closes due positions before new event entries.
+OMS Paper persists `trades_paper` and the corresponding `positions` mutation in
+one idempotent transaction. The emulator E2E now covers new entry, redelivery,
+partial/full exit, and scheduled opening-exit ordering. These checks do not
+prove the frozen 20th-session-close contract. Before any frozen-v1 activation,
+add and verify a propagated close-session exit profile; migration/RPC health is
+necessary but not sufficient. Its PAPER_ONLY path requires a fresh
+wall-clock-checked `received_at`.
 
 ## Operational Timeline
 
 ```text
-T day 15:30-18:00 JST
-  J-Quants summaries become available
-  event batch detects cluster v1 candidates
-  dry-run report written; no order publish
+T day through 23:59 JST
+  J-Quants disclosures accumulate; no final zero-candidate conclusion is made
 
-T+1 pre-open
+After T day ends, before next TSE business day 09:00 JST
+  exporter records the complete signal-date response and receipt provenance
+  event batch detects cluster v1 candidates without consulting T+1 OHLCV
+  schema v2 causal dry-run artifact is written; detector cannot publish
+  production-preopen-check validates the candidate artifact
   event candidates are added to watchlist for data capture
-  Supabase health, Pub/Sub health, trade_mode=paper, and kill switch checked
-  due swing exits are identified
+  all due swing exits complete before entry preflight
 
-T+1 open
-  oms-paper opening-swing-exits runs first
-  event batch publishes fresh RULE StrategySignal for approved candidates
-  aggregator emits RULE UnifiedTradeSignal
-  gateway validates and publishes paper-orders
-  oms-paper simulates fills from current book
+T+1 09:00-09:30 JST (transport stress only; target use is not authorized)
+  Feeder captures fresh market data for candidate symbols
+  dedicated publisher targeted-seeks only event-paper-raw-books
+  one explicit occurrence is selected for this invocation
+  paper/RPC/exit preflight passes; first fresh ask is durably claimed
+  RULE/SWING/PAPER_ONLY stress signal follows Aggregator -> Gateway -> OMS Paper
+  receipt records opening_transport_stress_v1 / comparable=false
 
-T+1 through scheduled exit
-  OMS Paper monitors catastrophic stop on book updates
-  opening-swing-exits closes due fixed-hold positions
-  observation report reconciles detected events, orders, fills, positions, and exits
+After execution
+  observation report joins receipt signal ID to unified signal and paper fills
+  fill-anchored stop and opening-exit mechanics are reconciled as plumbing stress
 ```
 
 ## Observation Log Design
 
-The paper observation report needs enough information to reconcile each trade
-against the research assumption:
+The paper observation report needs enough information to reconcile each
+selection, publication, and trade without reintroducing a future-price
+assumption:
 
 - `candidate_id`
 - event cluster ID and source event IDs
 - symbol and symbol name
-- disclosed_at and data_available_at for each source event
+- disclosure-time `data_available_at/feature_cutoff_at` and later local
+  `source_received_at` for each source event
 - signal generation timestamp and intended entry date
 - rule pass/fail fields: earnings present, dividend increase present, minimum
   forecast PER, missing PER treatment
 - exclusion reason for every detected but unpublished candidate
+- publication status (`confirmed` or `ambiguous`), durable attempt ID/time, and
+  confirmed Pub/Sub message ID/time only when checkpointed
+- execution profile and `comparable_to_registered_backtest` (currently false)
 - signal ID, unified signal ID, order ID, and paper trade IDs
-- intended entry price assumption from research
-- Gateway entry price source (`signal`, `positions`, or `daily_ohlcv`)
+- valuation reference price, bar date, and availability timestamp; this is not
+  an executable entry price
+- fresh observed entry price and timestamp after the execution path is restored
 - paper fill price, quantity, fill timestamp, fill reason, and slippage bps
-- stop loss price, max hold days, scheduled exit date
-- exit trigger (`opening_max_hold_days`, `stop_loss`, manual/no-fill)
+- relative stop intent, fill-anchored absolute stop loss price, max hold days,
+  and scheduled exit date
+- exit trigger (`opening_max_hold_days` stress, `stop_loss`, manual/no-fill)
 - exit fill price and exit slippage bps
 - open-position status and unrealized PnL for still-open positions
 
 Write observation artifacts to `out/event-paper-observation/` locally and, when
 the batch is connected to Supabase/PubSub, ensure the same IDs can be joined
-from `aggregator_logs`, `trades_paper`, and `positions`.
+from `aggregator_logs`, `trades_paper`, and `positions`. The reporter consumes
+the separate publication receipt, verifies its exact artifact digest and
+occurrence coverage, and never treats an unrelated same-symbol BUY or later
+position generation as event evidence.
 
 ## Phase Plan After Approval
 
@@ -283,10 +388,12 @@ Phase 1:
 - Reuses `event_research_common` cluster rule helpers rather than duplicating
   selection code.
 - Added a 1-week J-Quants-shaped fixture test covering PASS, PER-guard
-  exclusion, missing-PER PASS, and `--signal-date` filtering.
-- Added contract and aggregator tests for `StrategySignal.holding_type`.
-- The Phase 1 command remains dry-run: without `--publish-paper`, it writes
-  JSON/CSV artifacts only and never calls Pub/Sub.
+  exclusion, missing-PER PASS, and `--signal-date` filtering, plus a regression
+  proving next-morning receipt does not replace the disclosure-time PER vintage.
+- Added contract and aggregator tests for `holding_type`, mutually exclusive
+  absolute/relative stops, and relative-stop metadata passthrough.
+- The Phase 1 command writes JSON/CSV artifacts only and never calls Pub/Sub.
+  Passing `--publish-paper` fails closed.
 
 Dry-run command:
 
@@ -304,12 +411,25 @@ side effect and cannot route to Gateway, OMS Paper, or OMS Live.
 
 Phase 2:
 
-- Implemented paper-only publish behind
-  `EVENT_CLUSTER_PAPER_PUBLISH_ENABLED=true`; default is off.
-- `--publish-paper` requires Supabase preflight
-  `system_status.trade_mode = paper` before any Pub/Sub publish.
-- Published messages go only to `strategy-signals-a` as `StrategySignal`
-  `source=RULE`, `holding_type=swing`, `max_hold_days=20`.
+- The detector's `--publish-paper` remains fail closed before any Supabase or
+  Pub/Sub side effect. A separate `strategy_rule event-paper-publish` command
+  is implemented with an explicit CLI latch plus
+  `EVENT_CLUSTER_PAPER_PUBLISH_ENABLED=true`.
+- The only callable stress configuration is explicit `--no-seek` with a
+  loopback Pub/Sub emulator, a loopback Supabase URL, and an allowlisted
+  development project ID. Managed Pub/Sub, remote emulators, and cloud Supabase
+  are rejected before network clients open; Supabase and emulator gRPC proxy
+  inheritance are off.
+- The relative-stop contract, `OrderRequest` holding metadata, fill-anchored
+  paper stop, day/swing closeout isolation, receive provenance, PAPER_ONLY
+  enforcement, deterministic IDs, strategy isolation, and atomic OMS Paper
+  persistence are implemented.
+- The dedicated fresh-book publisher and complete local Pub/Sub/Supabase E2E,
+  including redelivery and scheduled partial/full opening exits, pass under the
+  separate `opening_transport_stress_v1` identity.
+- Target activation remains blocked on next-open/20th-session-close alignment,
+  valid matched-random evidence, target DB migration/RPC health, and managed
+  dedicated subscription verification.
 - Runbook: [Event Cluster Paper Publish](../runbook/event-cluster-paper-publish.md).
 - Live routes remain untouched.
 
@@ -323,7 +443,16 @@ Phase 3:
   realized PnL.
 - Candidate-only reports are supported with `--skip-supabase`; Supabase-backed
   reports join `strategy_logs`, `aggregator_logs`, `trades_paper`, and
-  `positions`.
+  `positions` through the receipt's deterministic signal ID.
+- `--publish-receipt-json` validates artifact SHA-256, target date, complete
+  `execution_candidate_id` coverage, fixed topic/strategy, and deterministic
+  signal IDs. It distinguishes confirmed delivery from
+  `publication_ambiguous` without authorizing a resend. Null-lineage
+  scheduled/stop SELLs are attributed only after an exactly linked BUY and
+  before a later BUY generation.
+- Reports expose `execution_profile=opening_transport_stress_v1` and
+  `comparable_to_registered_backtest=false`; their PnL/trades cannot satisfy
+  frozen-v1 paper/live gates.
 
 ## Explicit Non-Goals
 

@@ -3,9 +3,13 @@ from __future__ import annotations
 import base64
 import json
 from collections.abc import Callable, Coroutine
+from datetime import UTC, datetime
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import httpx
 import pytest
+import trade_contracts.pubsub_client as pubsub_module
 from strategy_rule.clients.pubsub import (
     PubSubError,
     PubSubPublisher,
@@ -13,6 +17,27 @@ from strategy_rule.clients.pubsub import (
 )
 
 Handler = Callable[[httpx.Request], Coroutine[None, None, httpx.Response]]
+
+
+def test_emulator_grpc_channel_disables_ambient_proxy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    insecure_channel = MagicMock()
+    monkeypatch.setattr(
+        "trade_contracts.pubsub_client.grpc.insecure_channel",
+        insecure_channel,
+    )
+
+    channel = pubsub_module._direct_emulator_channel("127.0.0.1:8085")
+
+    assert channel is insecure_channel.return_value
+    insecure_channel.assert_called_once_with(
+        "127.0.0.1:8085",
+        options=(
+            ("grpc.enable_http_proxy", 0),
+            ("grpc.address_http_proxy_enabled_addresses", ""),
+        ),
+    )
 
 
 def _build_publisher(handler: Handler) -> PubSubPublisher:
@@ -53,6 +78,31 @@ async def test_publisher_sends_base64_payload_and_returns_message_id() -> None:
     msg = body["messages"][0]
     assert base64.b64decode(msg["data"]) == b'{"symbol":"7203"}'
     assert msg["attributes"] == {"source": "strategy-rule"}
+
+
+async def test_publisher_can_disable_managed_client_internal_retry() -> None:
+    client = MagicMock()
+    client.topic_path.return_value = "projects/trade-ai-dev/topics/strategy-signals-a"
+    future = MagicMock()
+    future.result.return_value = "message-1"
+    client.publish.return_value = future
+    publisher = PubSubPublisher(project_id="trade-ai-dev", timeout_seconds=2.0)
+    publisher._client = client
+
+    message_id = await publisher.publish(
+        "strategy-signals-a",
+        data=b"{}",
+        attributes={"mode": "paper"},
+        disable_internal_retry=True,
+    )
+
+    assert message_id == "message-1"
+    client.publish.assert_called_once_with(
+        "projects/trade-ai-dev/topics/strategy-signals-a",
+        b"{}",
+        mode="paper",
+        retry=None,
+    )
 
 
 async def test_publisher_raises_on_missing_message_ids() -> None:
@@ -132,6 +182,30 @@ async def test_subscriber_pull_returns_empty_when_no_messages() -> None:
     assert msgs == []
 
 
+async def test_subscriber_google_pull_forwards_return_immediately() -> None:
+    client = MagicMock()
+    client.subscription_path.return_value = "projects/trade-ai-dev/subscriptions/features-sub"
+    client.pull.return_value = SimpleNamespace(received_messages=[])
+    subscriber = PubSubSubscriber(project_id="trade-ai-dev", timeout_seconds=2.0)
+    subscriber._client = client
+
+    msgs = await subscriber.pull(
+        "features-sub",
+        max_messages=5,
+        return_immediately=True,
+    )
+
+    assert msgs == []
+    client.pull.assert_called_once_with(
+        request={
+            "subscription": "projects/trade-ai-dev/subscriptions/features-sub",
+            "max_messages": 5,
+            "return_immediately": True,
+        },
+        timeout=2.0,
+    )
+
+
 async def test_subscriber_pull_returns_empty_on_read_timeout() -> None:
     """long-poll deadline 切れの ReadTimeout はアイドル扱いで空配列を返す。"""
 
@@ -180,6 +254,41 @@ async def test_subscriber_acknowledge_posts_ack_ids() -> None:
         captured[0].url.path == "/v1/projects/trade-ai-dev/subscriptions/features-sub:acknowledge"
     )
     assert json.loads(captured[0].content.decode()) == {"ackIds": ["a1", "a2"]}
+
+
+async def test_subscriber_seek_targets_only_named_subscription() -> None:
+    captured: list[httpx.Request] = []
+
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json={})
+
+    target = datetime(2026, 7, 10, 0, 0, tzinfo=UTC)
+    async with _build_subscriber(_handler) as sub:
+        await sub.seek("event-paper-raw-books", target_time=target)
+
+    assert len(captured) == 1
+    assert captured[0].url.path == (
+        "/v1/projects/trade-ai-dev/subscriptions/event-paper-raw-books:seek"
+    )
+    assert json.loads(captured[0].content.decode()) == {"time": target.isoformat()}
+
+
+async def test_subscriber_seek_rejects_naive_time_without_request() -> None:
+    called = False
+
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        nonlocal called
+        called = True
+        return httpx.Response(200, json={})
+
+    async with _build_subscriber(_handler) as sub:
+        with pytest.raises(ValueError):
+            await sub.seek(
+                "event-paper-raw-books",
+                target_time=datetime(2026, 7, 10, 9, 0),
+            )
+    assert called is False
 
 
 async def test_subscriber_raises_on_4xx() -> None:

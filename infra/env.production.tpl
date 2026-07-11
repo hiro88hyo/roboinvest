@@ -111,6 +111,9 @@ PUBSUB_SUBSCRIPTION_AI_FEATURES=strategy-ai-rule-signals
 # Feature storage
 STORAGE_TICK_RESOLUTION=1s
 ORDER_BOOK_MAX_AGE_SECONDS=45
+ORDER_BOOK_MAX_FUTURE_SKEW_SECONDS=5
+# Production Feeder supplies received_at; fail closed if provenance is missing.
+ORDER_BOOK_REQUIRE_RECEIVED_AT=true
 
 # Risk defaults
 CAPITAL=1000000

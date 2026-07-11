@@ -1,4 +1,4 @@
-.PHONY: lint-all test-all pre-push dashboard-lint dashboard-test
+.PHONY: lint-all test-all pre-push dashboard-lint dashboard-test review-profitability
 
 lint-all:
 	uv run ruff format --check .
@@ -19,3 +19,6 @@ dashboard-lint:
 
 dashboard-test:
 	cd dashboard && npm test
+
+review-profitability:
+	uv run python scripts/check-profitability-review.py

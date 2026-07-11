@@ -95,6 +95,64 @@ def test_events_without_next_trading_day_are_skipped() -> None:
     assert events == []
 
 
+def test_operational_event_date_uses_tse_calendar_without_future_ohlcv() -> None:
+    bars = [bar for bar in _bars() if bar.date <= date(2026, 1, 21)]
+    events = event_research.build_events_from_financial_rows(
+        [_raw()],
+        ohlcv_rows=bars,
+        fetched_at=datetime(2026, 1, 21, 7, tzinfo=UTC),
+        entry_date_resolver=event_research.next_tse_business_date,
+    )
+
+    assert len(events) == 1
+    assert events[0].entry_date == "2026-01-22"
+
+
+def test_event_prefers_row_level_fetch_provenance() -> None:
+    bars = _bars()
+    event = _event(
+        _raw(_roboinvest_fetched_at="2026-01-21T07:05:00+00:00"),
+        bars,
+    )
+
+    assert event.fetched_at == datetime(2026, 1, 21, 7, 5, tzinfo=UTC)
+
+
+def test_tse_calendar_skips_weekend_and_national_holiday() -> None:
+    assert event_research.next_tse_business_date(date(2026, 1, 16)) == date(2026, 1, 19)
+    assert event_research.next_tse_business_date(date(2026, 4, 28)) == date(2026, 4, 30)
+
+
+def test_candidate_features_do_not_require_or_attach_entry_bar() -> None:
+    full_bars = _bars()
+    event = _event(_raw(), full_bars)
+    causal_bars = [bar for bar in full_bars if bar.date <= date(2026, 1, 21)]
+
+    candidate = event_research.build_candidate_features(
+        [event],
+        ohlcv_rows=causal_bars,
+    )[0]
+
+    assert candidate.entry_date == "2026-01-22"
+    assert candidate.entry_price is None
+    assert candidate.labels == {}
+    assert candidate.valuation_price == Decimal("1100")
+    assert (
+        event_research.attach_forward_labels(
+            [candidate],
+            ohlcv_rows=causal_bars,
+        )
+        == []
+    )
+
+    observation = event_research.attach_forward_labels(
+        [candidate],
+        ohlcv_rows=full_bars,
+    )[0]
+    assert observation.entry_price == Decimal("1103")
+    assert observation.labels["forward_return_20d"] is not None
+
+
 def test_next_open_features_use_signal_close_not_entry_open() -> None:
     bars = _bars()
     event = _event(_raw(), bars)

@@ -24,7 +24,12 @@ def test_bucket_fast_path_fires_when_both_sources_present(signal_factory) -> Non
     ready = buf.drain_ready(100.2)
     assert len(ready) == 1
     bucket = ready[0]
-    assert bucket.key == ("7203", int(ts.timestamp() * 1000) // 1000)
+    assert bucket.key == (
+        "7203",
+        int(ts.timestamp() * 1000) // 1000,
+        None,
+        None,
+    )
     assert bucket.ack_ids_a == ["a1"]
     assert bucket.ack_ids_b == ["b1"]
     assert {s.source for s in bucket.signals} == {SignalSource.RULE, SignalSource.AI}
@@ -78,6 +83,24 @@ def test_different_symbols_do_not_pair(signal_factory) -> None:  # type: ignore[
         now_monotonic=0.0,
     )
     assert buf.drain_ready(0.1) == []
+
+
+def test_event_signal_does_not_fast_pair_with_unrelated_ai(signal_factory) -> None:  # type: ignore[no-untyped-def]
+    buf = _buf(window_ms=5000)
+    ts = datetime(2026, 4, 20, 9, 0, 0, tzinfo=UTC)
+    event_rule = signal_factory(
+        source=SignalSource.RULE,
+        created_at=ts,
+        strategy_key="event-cluster-v1",
+        candidate_id="cluster-1",
+    )
+    unrelated_ai = signal_factory(source=SignalSource.AI, created_at=ts)
+
+    buf.add(signal=event_rule, origin="a", ack_id="a1", now_monotonic=0.0)
+    buf.add(signal=unrelated_ai, origin="b", ack_id="b1", now_monotonic=0.1)
+
+    assert buf.drain_ready(0.2) == []
+    assert len(buf) == 2
 
 
 def test_consensus_source_ignored_for_fast_path(signal_factory) -> None:  # type: ignore[no-untyped-def]

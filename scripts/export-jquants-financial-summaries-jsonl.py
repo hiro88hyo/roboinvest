@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Export J-Quants financial summary rows into a local JSONL archive.
+"""Export J-Quants financial summaries into a local mixed-record JSONL archive.
 
 This script is for event-driven research archives. It does not write to
-Supabase and it does not normalize or infer unavailable API fields. Each output
-line is one raw J-Quants row as returned by the configured API version.
+Supabase and it does not normalize or infer unavailable API fields. Source rows
+carry `_roboinvest_fetched_at`, the UTC timestamp at which that API response
+completed. Each response ends with a synthetic `fetch_metadata` completion row,
+including responses that contained zero source rows.
 """
 
 from __future__ import annotations
@@ -14,7 +16,7 @@ import json
 import logging
 import os
 from collections.abc import Iterable
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -125,9 +127,21 @@ async def export_archive(args: argparse.Namespace) -> int:
                         for target_date in batch_dates
                     )
                 )
-                for target_date, records in batch_results:
+                for target_date, records, fetched_at in batch_results:
                     for record in records:
                         f.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+                    f.write(
+                        json.dumps(
+                            fetch_metadata_record(
+                                target_date=target_date,
+                                fetched_at=fetched_at,
+                                row_count=len(records),
+                            ),
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        )
+                        + "\n"
+                    )
                     completed += 1
                     total_rows += len(records)
                     if (
@@ -154,25 +168,113 @@ async def export_archive(args: argparse.Namespace) -> int:
 async def fetch_financial_summary_records(
     jquants: JQuantsClient,
     target_date: date,
-) -> tuple[date, list[dict[str, Any]]]:
+) -> tuple[date, list[dict[str, Any]], datetime]:
     rows = await jquants.financial_summaries_by_date(target_date)
-    return target_date, rows
+    fetched_at = datetime.now(UTC)
+    return target_date, attach_fetch_metadata(rows, fetched_at=fetched_at), fetched_at
+
+
+def attach_fetch_metadata(
+    rows: list[dict[str, Any]],
+    *,
+    fetched_at: datetime,
+) -> list[dict[str, Any]]:
+    """Copy raw rows and attach response-level receipt provenance."""
+
+    if fetched_at.tzinfo is None:
+        raise ValueError("fetched_at must be timezone-aware")
+    value = fetched_at.astimezone(UTC).isoformat()
+    return [{**row, "_roboinvest_fetched_at": value} for row in rows]
+
+
+def fetch_metadata_record(
+    *,
+    target_date: date,
+    fetched_at: datetime,
+    row_count: int,
+) -> dict[str, Any]:
+    """Record a dated fetch even when the API returned zero rows."""
+
+    if fetched_at.tzinfo is None:
+        raise ValueError("fetched_at must be timezone-aware")
+    return {
+        "_roboinvest_record_type": "fetch_metadata",
+        "_roboinvest_target_date": target_date.isoformat(),
+        "_roboinvest_fetched_at": fetched_at.astimezone(UTC).isoformat(),
+        "_roboinvest_row_count": row_count,
+    }
 
 
 def read_existing_disclosed_dates(path: Path) -> set[str]:
+    """Return dates with a completed fetch, plus explicitly legacy rows.
+
+    New exporter rows carry ``_roboinvest_fetched_at`` and are considered
+    complete only after their trailing fetch-metadata marker is present.  Raw
+    rows from archives created before receipt metadata existed retain the old
+    resume behavior so migrating an existing archive does not refetch years of
+    data.
+    """
+
     if not path.exists() or path.stat().st_size == 0:
         return set()
-    dates: set[str] = set()
+    rows: list[dict[str, Any]] = []
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line:
             continue
-        row = json.loads(line)
-        value = (
-            row.get("DisclosedDate") or row.get("DiscDate") or row.get("Date") or row.get("date")
+        rows.append(json.loads(line))
+
+    legacy_dates = {
+        value
+        for row in rows
+        if row.get("_roboinvest_record_type") != "fetch_metadata"
+        and row.get("_roboinvest_fetched_at") in (None, "")
+        and (value := _financial_row_date_text(row)) is not None
+    }
+    latest_markers: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if row.get("_roboinvest_record_type") != "fetch_metadata":
+            continue
+        target = str(row.get("_roboinvest_target_date", ""))[:10]
+        if target:
+            latest_markers[target] = row
+
+    completed_dates: set[str] = set()
+    for target, marker in latest_markers.items():
+        fetched_at = _metadata_timestamp(marker.get("_roboinvest_fetched_at"))
+        try:
+            expected_count = int(marker.get("_roboinvest_row_count"))
+        except (TypeError, ValueError):
+            continue
+        if fetched_at is None or expected_count < 0:
+            continue
+        actual_count = sum(
+            1
+            for row in rows
+            if row.get("_roboinvest_record_type") != "fetch_metadata"
+            and _financial_row_date_text(row) == target
+            and _metadata_timestamp(row.get("_roboinvest_fetched_at")) == fetched_at
         )
-        if value:
-            dates.add(str(value)[:10])
-    return dates
+        if actual_count == expected_count:
+            completed_dates.add(target)
+
+    return (legacy_dates - latest_markers.keys()) | completed_dates
+
+
+def _financial_row_date_text(row: dict[str, Any]) -> str | None:
+    value = row.get("DisclosedDate") or row.get("DiscDate") or row.get("Date") or row.get("date")
+    return None if value in (None, "") else str(value)[:10]
+
+
+def _metadata_timestamp(value: Any) -> datetime | None:
+    if value in (None, ""):
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(UTC)
 
 
 def iter_dates(start: date, end: date) -> Iterable[date]:

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import pytest
 from aggregator.consensus import ConsensusConfig, aggregate
-from trade_contracts.enums import Action, SignalSource, TradingStyle
+from trade_contracts.enums import Action, RoutingIntent, SignalSource, TradingStyle
 
 
 def _cfg(**overrides: object) -> ConsensusConfig:
@@ -84,13 +84,74 @@ def test_rule_only_carries_order_fields(signal_factory) -> None:  # type: ignore
         source=SignalSource.RULE,
         action=Action.BUY,
         confidence=0.8,
+        holding_type=TradingStyle.SWING,
+        stop_loss_pct=Decimal("0.10"),
         target_price=Decimal("1002"),
         trailing_stop_pct=Decimal("0.002"),
+        max_hold_days=20,
+        scheduled_exit_date=date(2026, 5, 20),
     )
     unified = aggregate([rule], config=_cfg())
     assert unified is not None
+    assert unified.holding_type is TradingStyle.SWING
+    assert unified.stop_loss_pct == Decimal("0.10")
+    assert unified.stop_loss_price is None
     assert unified.target_price == Decimal("1002")
     assert unified.trailing_stop_pct == Decimal("0.002")
+    assert unified.max_hold_days == 20
+    assert unified.scheduled_exit_date == date(2026, 5, 20)
+
+
+def test_event_identity_and_paper_only_intent_are_preserved(signal_factory) -> None:  # type: ignore[no-untyped-def]
+    event_rule = signal_factory(
+        source=SignalSource.RULE,
+        action=Action.BUY,
+        confidence=0.8,
+        routing_intent=RoutingIntent.PAPER_ONLY,
+        strategy_key="event-cluster-v1",
+        candidate_id="cluster-1",
+    )
+
+    unified = aggregate([event_rule], config=_cfg())
+
+    assert unified is not None
+    assert unified.routing_intent is RoutingIntent.PAPER_ONLY
+    assert unified.strategy_key == "event-cluster-v1"
+    assert unified.candidate_id == "cluster-1"
+
+
+def test_paper_only_is_preserved_if_other_arm_uses_system_routing(signal_factory) -> None:  # type: ignore[no-untyped-def]
+    common = {"strategy_key": "event-cluster-v1", "candidate_id": "cluster-1"}
+    rule = signal_factory(
+        source=SignalSource.RULE,
+        action=Action.BUY,
+        confidence=0.8,
+        routing_intent=RoutingIntent.PAPER_ONLY,
+        **common,
+    )
+    ai = signal_factory(
+        source=SignalSource.AI,
+        action=Action.BUY,
+        confidence=0.8,
+        **common,
+    )
+
+    unified = aggregate([rule, ai], config=_cfg())
+
+    assert unified is not None
+    assert unified.routing_intent is RoutingIntent.PAPER_ONLY
+
+
+def test_mixed_candidate_identity_is_rejected(signal_factory) -> None:  # type: ignore[no-untyped-def]
+    rule = signal_factory(
+        source=SignalSource.RULE,
+        strategy_key="event-cluster-v1",
+        candidate_id="cluster-1",
+    )
+    unrelated_ai = signal_factory(source=SignalSource.AI)
+
+    with pytest.raises(ValueError, match="one strategy candidate identity"):
+        aggregate([rule, unrelated_ai], config=_cfg())
 
 
 def test_consensus_uses_latest_signal_execution_context(signal_factory) -> None:  # type: ignore[no-untyped-def]
@@ -257,11 +318,14 @@ def test_signal_holding_type_overrides_config(signal_factory) -> None:  # type: 
     assert unified.holding_type is TradingStyle.SWING
 
 
-def test_unified_signal_id_is_fresh(signal_factory) -> None:  # type: ignore[no-untyped-def]
+def test_unified_signal_id_is_deterministic_for_redelivery(signal_factory) -> None:  # type: ignore[no-untyped-def]
     rule = signal_factory(source=SignalSource.RULE, action=Action.BUY, confidence=0.8)
-    unified = aggregate([rule], config=_cfg())
-    assert unified is not None
-    assert unified.signal_id != rule.signal_id
+    first = aggregate([rule], config=_cfg())
+    redelivered = aggregate([rule], config=_cfg())
+    assert first is not None
+    assert redelivered is not None
+    assert first.signal_id != rule.signal_id
+    assert first.signal_id == redelivered.signal_id
 
 
 def test_zero_total_weight_raises(signal_factory) -> None:  # type: ignore[no-untyped-def]

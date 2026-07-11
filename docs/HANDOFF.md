@@ -1,6 +1,6 @@
 # Handoff Memo (for coding AIs)
 
-最終更新: 2026-06-24 / branch: `main`
+最終更新: 2026-07-10 / branch: `fix/event-candidate-causality`
 
 このファイルは、次の coding AI が最初に読むための短い索引です。日次の長い運用ログはここに積まず、必要な詳細だけリンク先で確認してください。
 
@@ -19,9 +19,51 @@
 
 ## 2. Current State
 
-2026-06-23 時点の要点:
+2026-07-10 時点の要点:
 
 - 全 9 サービス + Dashboard は実装済み。
+- 現在の最優先は event candidate の因果性修正。運用候補と研究用
+  forward label を分離し、J-Quants export の受信時刻 provenance と
+  disclosure-time の feature vintage を分離して dry-run artifact を再現する。
+- event の relative-stop execution contract は実装済み。
+  `StrategySignal` / `UnifiedTradeSignal` / `OrderRequest` は相対 stop と
+  holding metadata を運び、Gateway は live BUY の相対 stop を拒否し、OMS Paper
+  は新規 BUY の実約定値から絶対 stop を固定する。14:50 day closeout は swing
+  position を対象外にした。
+- Feeder `received_at`、専用 `event-paper-raw-books`、PAPER_ONLY の
+  Gateway/Order/OMS 防御、strategy/candidate pairing 分離、決定的 ID、OMS の
+  wall-clock stale/future 判定も実装済み。
+- detector 内蔵の event `--publish-paper` は引き続き fail closed。独立した
+  paper-only one-shot publisher、single-attempt CAS journal、confirmed/ambiguous
+  receipt、Pub/Sub + Supabase 実 E2E はローカル実装・検証済み。ただし現
+  publisher は `opening_transport_stress_v1` で、凍結済み next-open / 20日目
+  close を再現せず `comparable_to_registered_backtest=false`。そのため trades/PnL
+  は v1 evidence に数えず、target 実行は禁止。加えて将来の実行には
+  `contracts/sql/018_oms_paper_apply_fill_rpc.sql`（infra migration 019）と
+  `contracts/sql/019_event_paper_claim_cas_rpc.sql`（infra migration 020）の適用、
+  3 RPC health、および単一 coordinator が所有する managed subscription の
+  確認が publish 前提。
+- detector は post-close 時点で signal-date OHLCV が欠けても凍結済み選定を
+  落とさず `feature_data_complete=false` として記録する。artifact は報告可能だが、
+  pre-open/watchlist/publisher は実行を拒否する。これによりデータ欠損を理由に
+  research cohort を変更しない。
+- ローカル transport stress は loopback Pub/Sub emulator + `--no-seek`、
+  loopback Supabase、`trade-ai-dev` / `local-dev` project の組合せだけ許可する。
+  remote emulator、cloud Supabase、production project は client 構築前に拒否し、
+  event 用 Supabase client と emulator gRPC channel は ambient proxy を継承しない。
+- 2026-07-09 / 2026-07-10 の legacy detector による候補 0 件は、T+1 OHLCV
+  依存による構造的 false zero の可能性があるため unreliable / inconclusive。
+  候補不在の証拠にも、実在した証拠にも使わない。
+- day `relative_momentum` の損益は swing 検証の代替にしない。
+- 2026-07-06 JST paper observation の前日準備は完了。
+  `production-preopen-check.py --expected-trade-mode paper --target-date 2026-07-06 --kabu-offline`
+  で `OK 127 / WARN 2 / NG 0`。WARN は kabu station / Windows proxy 停止前提の
+  feeder/kabu だけ。明朝は kabu station 起動後に `--kabu-offline` なし、
+  可能なら `--refresh-kabu-token` 付きで再確認する。
+- `/dev/shm/roboinvest/gcp-pubsub-sa.json` が root-owned directory だったため、
+  現在の compose は `/tmp/roboinvest-gcp-pubsub-sa.json` を
+  `GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH` として mount している。
+  詳細は [2026-07-05 Paper Ready Handoff](handoff/2026-07-05-paper-ready.md)。
 - production compose / Cloud Supabase / managed Pub/Sub / Vercel Dashboard は一通り稼働済み。
 - 2026-06-23 の paper 結果と直近日次成績を受け、既存 intraday
   RULE/AI judge stack は live 候補から降格。小手先の gate 追加ではなく
@@ -49,6 +91,7 @@
 - [docs/handoff/2026-06-17-paper-hardening-handoff.md](handoff/2026-06-17-paper-hardening-handoff.md)
 - [docs/handoff/2026-06-23-strategy-reset.md](handoff/2026-06-23-strategy-reset.md)
 - [docs/handoff/2026-06-24-relative-momentum-failure.md](handoff/2026-06-24-relative-momentum-failure.md)
+- [docs/handoff/2026-07-05-paper-ready.md](handoff/2026-07-05-paper-ready.md)
 - [docs/adr/0003-strategy-layer-rebuild.md](adr/0003-strategy-layer-rebuild.md)
 
 5月成績レビュー:
@@ -68,6 +111,40 @@
 ## 4. Active Follow-ups
 
 優先度が高い順:
+
+0. **2026-07-10 event candidate causality audit**
+   - 外部レビューで、event detector が T+1 OHLCV と実際の寄付値を候補生成、
+     `StrategySignal.price`、絶対 stop に使用していたことを確認。
+   - `fix/event-candidate-causality` では運用候補特徴量と研究用 forward label を分離し、
+     entry date を未来 OHLCV ではなく東証営業日カレンダーから解決する。
+   - 候補 artifact は entry price / absolute stop を持たない。研究と同じ
+     disclosure-time `data_available_at/feature_cutoff_at` を保持し、翌朝の実受信は
+     `source_received_at` に分離する。signal date 終了後から次営業日 09:00 JST
+     前までの complete snapshot だけを運用 artifact として認める。
+   - legacy detector の `candidate_count=0` は構造的な偽陰性の可能性が
+     あるため unreliable / inconclusive。候補不在と断定しない。
+   - relative stop は `0 < stop_loss_pct < 1`、absolute stop と排他にして
+     Strategy/Unified/Order を通過する。Gateway は holding/max-hold/scheduled
+     exit を保持し、live BUY の relative stop を
+     `relative_stop_live_unsupported` で reject する。OMS Paper は新規 BUY の
+     実約定値から absolute stop を固定する。
+   - 14:50 day closeout は `holding_type=day` だけを対象とし、swing position を
+     保持する。
+   - fresh quote provenance、専用 subscription、PAPER_ONLY 強制、deterministic
+     ID / strategy isolation、wall-clock stale/future 判定は実装済み。
+     `candidate_id` は戦略 ID ではなく cluster/observation occurrence を使う。
+   - OMS Paper の全 fill path は `oms_paper_apply_fill` RPC へ統一済み。
+     order/signal/trade ID 冪等性、symbol lock、rollback、partial exit cache 維持、
+     position `opened_at` 世代照合、closeout の fresh-book bounded retry、Python と
+     SQL の1円平均単価丸めを実装。ローカル実 RPC の並行 BUY・時刻/約定値が
+     変わる redelivery・partial/full SELL・FK rollback・ABA reject・並行 trailing
+     stop の単調増加・anon deny を確認済み。
+   - detector 内蔵の event `--publish-paper` は fail closed のまま。独立 publisher
+     と実 E2E は `opening_transport_stress_v1` として完成したが、next-open / 20日目
+     close の整合と stop 条件を揃えた matched-random evidence がない。target DB の
+     両 migration/3 RPC health、managed subscription の単一 coordinator 所有も
+     含め、すべて解消するまで activation しない。
+   - kill switch、PER threshold、20日 exit、-10% stop の戦略値は変更しない。
 
 0. **2026-06-23 strategy reset: 既存 intraday strategy は live 候補から外す**
    - 2026-06-24 に方針転換を ADR 化:
@@ -102,8 +179,10 @@
      strict `300 bps` は 6/24 feature 診断で candidates `5`、avg 30m return
      `-95.399 bps`、positive 30m `0.0%`。実注文 replay も net
      `-5,713.332`、PF `0`、gate `FAIL`。
-   - production は `STRATEGIES_ENABLED=` に変更し、`strategy-rule` は no-op
-     stream として稼働中。preopen check は `OK 130 / WARN 0 / NG 0 / SKIP 0`。
+   - 2026-07-08 に `STRATEGIES_ENABLED=` の no-op のまま paper observation を走らせ、
+     シグナル検証にならない運用ミスを確認。paper 検証日は
+     `STRATEGIES_ENABLED=relative_momentum` を前提にし、preopen check も no-op を
+     NG として扱う。
    - 2026-06-24 に `vwap_reclaim` と `oversold_reclaim` を一時的な
      non-default plugin として検証。`oversold_reclaim` は feature-level
      forward return は momentum 系より良いが、OMS Paper + コスト後は不合格。

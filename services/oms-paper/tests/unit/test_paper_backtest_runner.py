@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from oms_paper._testing import DEFAULT_TS, make_order_book, make_order_request, make_paper_position
@@ -127,7 +127,46 @@ def test_default_holding_type_applied_to_new_buy() -> None:
     assert summary.final_positions["7203"].holding_type is TradingStyle.SWING
 
 
+def test_order_holding_type_overrides_backtest_default_for_new_buy() -> None:
+    book = make_order_book(symbol="7203", asks=(("1000", 500),), timestamp=_ts(0))
+    order = make_order_request(
+        symbol="7203",
+        side=Side.BUY,
+        quantity=100,
+        holding_type=TradingStyle.SWING,
+        created_at=_ts(1),
+    )
+    summary = run_backtest(
+        orders=[order],
+        books=[book],
+        default_holding_type=TradingStyle.DAY,
+    )
+
+    assert summary.final_positions["7203"].holding_type is TradingStyle.SWING
+
+
+def test_relative_stop_uses_backtest_fill_price() -> None:
+    book = make_order_book(
+        symbol="7203",
+        asks=(("1000", 50), ("1010", 100)),
+        timestamp=_ts(0),
+    )
+    order = make_order_request(
+        symbol="7203",
+        side=Side.BUY,
+        quantity=100,
+        stop_loss_pct=Decimal("0.10"),
+        created_at=_ts(1),
+    )
+    summary = run_backtest(orders=[order], books=[book])
+
+    position = summary.final_positions["7203"]
+    assert position.entry_price == Decimal("1005")
+    assert position.stop_loss_price == Decimal("904.50")
+
+
 def test_buy_carries_order_management_fields_to_new_position() -> None:
+    scheduled_exit = date(2026, 5, 8)
     book = make_order_book(symbol="7203", asks=(("1000", 500),), timestamp=_ts(0))
     order = make_order_request(
         symbol="7203",
@@ -137,6 +176,7 @@ def test_buy_carries_order_management_fields_to_new_position() -> None:
         target_price=Decimal("1100"),
         trailing_stop_pct=Decimal("0.03"),
         max_hold_days=3,
+        scheduled_exit_date=scheduled_exit,
         created_at=_ts(1),
     )
     summary = run_backtest(orders=[order], books=[book])
@@ -146,6 +186,7 @@ def test_buy_carries_order_management_fields_to_new_position() -> None:
     assert position.target_price == Decimal("1100")
     assert position.trailing_stop_pct == Decimal("0.03")
     assert position.max_hold_days == 3
+    assert position.scheduled_exit_date == scheduled_exit
 
 
 def test_day_target_exit_runs_on_later_book() -> None:

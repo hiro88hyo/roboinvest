@@ -179,7 +179,7 @@ trade-ai-agent/
 - `paper-orders` および `raw-market-data`（`OrderBookSnapshot`）をサブスクライブ
 - 受信した板情報を元に擬似約定ロジックで仮想的に約定
 - 約定後に Supabase `trades_paper` に記録、`positions`（trade_type=paper）を更新
-- `system_status.trading_style = day` の場合のみ 14:50 デイクローズアウト実行（全 paper ポジションを仮想的に強制決済し、`positions` の paper 行を削除）
+- `system_status.trading_style = day` の場合のみ 14:50 デイクローズアウト実行（`holding_type=day` の paper ポジションだけを仮想的に強制決済し、swing は保持）
 
 ### 8. Dashboard (`dashboard/`)
 - Next.js (App Router) + Tailwind CSS
@@ -231,6 +231,7 @@ trade-ai-agent/
 - `target_price` (numeric): 利確目標価格
 - `stop_loss_price` (numeric): 現在のストップロス価格（トレーリング更新あり）
 - `max_hold_days` (int): 最大保有日数（スイング用）
+- `scheduled_exit_date` (date): fixed-hold swing の予定決済日
 - `trailing_stop_pct` (numeric): トレーリングストップ率（スイング用）
 - `opened_at` (timestamptz)
 
@@ -245,10 +246,17 @@ trade-ai-agent/
 ### `trades_paper`
 擬似約定の履歴。
 - `trade_id` (uuid PK)
+- `order_id` (uuid nullable, non-null partial unique): closeout/monitor を含む
+  OMS Paper fill の第一冪等性キー
 - `symbol`, `side`, `quantity`, `price`
 - `signal_source` (text): `RULE` | `AI` | `CONSENSUS`
-- `unified_signal_id` (uuid FK → `aggregator_logs.signal_id`): 元の統合シグナルへの参照
+- `unified_signal_id` (uuid nullable FK → `aggregator_logs.signal_id`): 元の統合シグナルへの参照。closeout/monitor fill は `NULL`
 - `executed_at` (timestamptz)
+
+OMS Paper の fill は `oms_paper_apply_fill` RPC だけで書き込み、対応する
+`positions` 遷移と同一 transaction で確定する。monitor/closeout SELL と
+`oms_paper_update_stop_loss` は `opened_at` を position generation として照合し、
+trailing stop は DB transaction 内でも引き下げを拒否する。
 
 ### `aggregator_logs`
 Aggregator が出力した統合シグナルのログ。約定テーブルの参照元。
@@ -307,13 +315,13 @@ Universe Scanner が生成した当日の監視銘柄リスト。
 
 ### 2%ルール（1トレードリスク制限）
 - 1トレードの最大許容損失 = 総資金 × 2%
-- Gateway の `lot_calculator.py` が `UnifiedTradeSignal.stop_loss_price` とエントリー価格から最大ロット数を算出
-- `stop_loss_price` が未設定（`None`）の場合はデフォルトのスプレッド幅で代替計算
+- Gateway の `lot_calculator.py` が `UnifiedTradeSignal.stop_loss_price`、または paper BUY の `stop_loss_pct` とエントリー価格から最大ロット数を算出
+- absolute/relative stop がともに未設定の場合はデフォルトのスプレッド幅で代替計算
 - スイングトレード時はオーバーナイトリスク（ギャップダウン）を考慮し、通常より保守的なポジションサイジングを適用
 - シグナルのロット数がこれを超える場合は強制的に切り詰め
 
 ### デイ・クローズアウト
-- `system_status.trading_style = day` の場合のみ 14:50 (JST) に OMS が全建玉を成行で強制決済
+- `system_status.trading_style = day` の場合のみ 14:50 (JST) に day closeout を実行。OMS Paper は `holding_type=day` の建玉だけを決済し、swing を保持
 - `trading_style = swing` の場合はクローズアウトを行わず、ポジションを翌日へ持ち越す
 
 ### スイングトレード管理

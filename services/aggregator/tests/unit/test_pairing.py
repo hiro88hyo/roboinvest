@@ -11,7 +11,12 @@ def test_bucket_key_rounds_down(signal_factory) -> None:  # type: ignore[no-unty
     ts = datetime(2026, 4, 20, 9, 0, 0, 500_000, tzinfo=UTC)  # .5s
     s = signal_factory(created_at=ts)
     # bucket=1000ms → same bucket as the second start
-    assert bucket_key(s, 1000) == (s.symbol, int(ts.timestamp() * 1000) // 1000)
+    assert bucket_key(s, 1000) == (
+        s.symbol,
+        int(ts.timestamp() * 1000) // 1000,
+        None,
+        None,
+    )
 
 
 def test_bucket_key_zero_raises(signal_factory) -> None:  # type: ignore[no-untyped-def]
@@ -69,6 +74,21 @@ def test_group_by_bucket_symbol_isolation(signal_factory) -> None:  # type: igno
     buckets = list(group_by_bucket([a, b], bucket_ms=1000))
     assert len(buckets) == 2
     assert {buckets[0][0].symbol, buckets[1][0].symbol} == {"7203", "9984"}
+
+
+def test_group_by_bucket_candidate_identity_isolation(signal_factory) -> None:  # type: ignore[no-untyped-def]
+    ts = datetime(2026, 4, 20, 9, 0, 0, tzinfo=UTC)
+    event_rule = signal_factory(
+        source=SignalSource.RULE,
+        created_at=ts,
+        strategy_key="event-cluster-v1",
+        candidate_id="cluster-1",
+    )
+    unrelated_ai = signal_factory(source=SignalSource.AI, created_at=ts)
+
+    buckets = list(group_by_bucket([event_rule, unrelated_ai], bucket_ms=1000))
+
+    assert len(buckets) == 2
 
 
 def test_group_by_bucket_empty() -> None:

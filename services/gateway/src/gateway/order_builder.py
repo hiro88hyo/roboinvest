@@ -54,10 +54,16 @@ def build(
         limit_price=limit_price,
         trade_mode=trade_mode,
         signal_source=signal.signal_source,
+        routing_intent=signal.routing_intent,
+        strategy_key=signal.strategy_key,
+        candidate_id=signal.candidate_id,
+        holding_type=signal.holding_type,
         stop_loss_price=stop_loss_price,
+        stop_loss_pct=signal.stop_loss_pct,
         target_price=signal.target_price,
         trailing_stop_pct=signal.trailing_stop_pct,
         max_hold_days=signal.max_hold_days,
+        scheduled_exit_date=signal.scheduled_exit_date,
         created_at=created_at or datetime.now(UTC),
     )
 
@@ -86,6 +92,8 @@ def _stop_loss_price(
 ) -> Decimal | None:
     if signal.stop_loss_price is not None:
         return signal.stop_loss_price
+    if signal.stop_loss_pct is not None:
+        return None
     if signal.action is not Action.BUY:
         return None
     if entry_price is None or default_stop_loss_spread_pct is None:

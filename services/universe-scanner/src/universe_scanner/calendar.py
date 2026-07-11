@@ -24,6 +24,15 @@ def previous_business_day(d: date) -> date:
     return prev
 
 
+def next_business_day(d: date) -> date:
+    """`d` 直後の営業日を返す (`d` 自身は含まない)。"""
+
+    upcoming = d + timedelta(days=1)
+    while not is_tse_business_day(upcoming):
+        upcoming += timedelta(days=1)
+    return upcoming
+
+
 def business_days_back(d: date, n: int) -> date:
     """`d` を含む直近 `n` 営業日のうち最古の営業日を返す。
 

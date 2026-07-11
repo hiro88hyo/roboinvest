@@ -11,6 +11,7 @@
 - Supabase `system_status` / `positions` の読み取り
 - キルスイッチ評価（`is_trading_allowed` / 日次・週次・月次損失上限）
 - 2% ルールに基づくロット数の算出と強制切り詰め
+- relative stop の paper リスク計算と live BUY の fail-closed reject
 - `trade_mode` に応じた `live-orders` / `paper-orders` へのルーティング
 - 日次損失上限到達時の `system_status.is_trading_allowed = false` 書き戻し
 
@@ -33,12 +34,26 @@ aggregator / strategy-rule と同じ 3 フェーズパターン。段階コミ�
   - `trade_mode=paper` のときは pnl 系チェックをスキップ（paper は資金リスクがないため）
 - **ロット計算器** `lot_calculator.py`: 入力 `UnifiedTradeSignal`, `capital`, 現在価格 → 最大株数
   - 1トレード最大許容損失 = `capital * MAX_RISK_PER_TRADE_PCT`（デフォルト 0.02）
-  - `stop_loss_price` があればそれを使用。`None` なら `DEFAULT_STOP_LOSS_SPREAD_PCT`（デフォルト 0.02）で代替
+  - `stop_loss_price` があればそれを使用。なければ `stop_loss_pct` から
+    `entry_price * (1 - stop_loss_pct)` を算出し、両方なければ
+    `DEFAULT_STOP_LOSS_SPREAD_PCT`（デフォルト 0.02）で代替
   - スイング (`holding_type=swing`) は `SWING_RISK_SCALE`（デフォルト 0.5）で保守的にスケール
   - `MIN_LOT_SIZE`（デフォルト 100、単元株）でフロア。未達なら reject
+- **relative stop の routing guard**: `stop_loss_pct` を持つ live BUY は
+  `relative_stop_live_unsupported` で reject。relative-stop BUY は paper mode
+  だけで許可
+- **paper-only routing guard**: `routing_intent=PAPER_ONLY` を持つ signal は、
+  `system_status.trade_mode=live` なら `paper_only_signal_in_live_mode` で reject。
+  preflight 後に mode が変わっても live topic へは送らない
 - **action → side 変換**: `BUY → BUY`、`SELL → SELL`、`HOLD` は reject（Gateway では建玉しない）
 - **ルーティング**: `trade_mode=live` → `live-orders` / `trade_mode=paper` → `paper-orders`
-- **OrderRequest 組み立て**: `UnifiedTradeSignal.signal_id` を `unified_signal_id` に、`signal_source` / `symbol` を継承、`order_type=MARKET` 固定（Phase 1）
+- **OrderRequest 組み立て**: `UnifiedTradeSignal.signal_id` を
+  `unified_signal_id` に、`signal_source` / `symbol` / `holding_type` /
+  `routing_intent` / `strategy_key` / `candidate_id` / `stop_loss_pct` /
+  `max_hold_days` / `scheduled_exit_date` を継承し、`order_id` は
+  unified signal / trade mode / side から決定的に生成、
+  `order_type=MARKET` 固定（Phase 1）。relative stop がある場合、Gateway の
+  risk sizing 値を絶対 stop として注文へ固定しない
 - I/O・時刻・DB・Pub/Sub を持ち込まない純関数だけで構成する
 
 ### Phase 2: バックテストランナー
@@ -110,6 +125,8 @@ services/gateway/
   adjusted_qty = floor(raw_qty / MIN_LOT_SIZE) * MIN_LOT_SIZE
   ```
 - `stop_loss_price` が `entry_price` 以上（BUY 時の無意味な損切り）は reject
+- `stop_loss_pct` は contracts で `0 < pct < 1`、`stop_loss_price` と排他。
+  live BUY では `relative_stop_live_unsupported` で reject
 - 計算は `decimal.ROUND_DOWN` で保守側に倒す
 
 ## Supabase 連携の規約（Phase 3）
@@ -161,7 +178,9 @@ services/gateway/
 
 - **ユニット**:
   - キルスイッチ真理値表（`is_trading_allowed` × 各 pnl × `trade_mode=live/paper`）
-  - ロット計算のエッジケース（stop_loss 未設定 / entry==stop / 極小資金 / swing スケール）
+  - ロット計算のエッジケース（stop_loss 未設定 / relative stop /
+    entry==stop / 極小資金 / swing スケール）
+  - relative stop の paper 許可 / live BUY reject と holding metadata の伝播
   - action=HOLD の reject
   - trade_mode → topic のルーティング
 - **Phase 2 統合**: JSONL 入出力、拒否と許可が混在するケースの end-to-end
@@ -173,7 +192,8 @@ services/gateway/
 
 - **Gateway は本番資金の最終防波堤**。リスクルール変更時は必ずエッジケースのユニットテストを先に書く（TDD 推奨）
 - **純関数とサイドエフェクトを厳密に分離**: kill_switch / lot_calculator / validator は I/O を持たない。I/O は `clients/` と `streaming/runner.py` に閉じる
-- **fail-closed**: 判断に必要な情報が取れない（Supabase 読み取り失敗・`stop_loss_price` 不整合など）場合は必ず reject 側に倒す
+- **fail-closed**: 判断に必要な情報が取れない（Supabase 読み取り失敗・stop
+  intent 不整合など）場合は必ず reject 側に倒す
 - **`trade-contracts` を破らない**: `OrderRequest` / `RiskCheck` への列追加は `contracts/` の 3 層同期手順に従う
 - **Phase 1 では Pub/Sub / Supabase を触らない**。Phase 3 で `clients/` にまとめて導入
 - **`HOLD` アクションは絶対に注文に変換しない**（`Action` enum に HOLD があるが、Gateway では reject 一択）

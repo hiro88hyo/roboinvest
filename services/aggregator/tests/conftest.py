@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import os
 from collections.abc import AsyncIterator, Callable, Iterator
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
-from trade_contracts.enums import Action, SignalSource, TradingStyle
+from trade_contracts.enums import Action, RoutingIntent, SignalSource, TradingStyle
 from trade_contracts.signal import StrategySignal
 
 SignalFactory = Callable[..., StrategySignal]
@@ -19,6 +19,10 @@ SignalFactory = Callable[..., StrategySignal]
 def _make_signal(
     *,
     source: SignalSource = SignalSource.RULE,
+    signal_id: UUID | None = None,
+    routing_intent: RoutingIntent = RoutingIntent.SYSTEM,
+    strategy_key: str | None = None,
+    candidate_id: str | None = None,
     symbol: str = "7203",
     action: Action = Action.BUY,
     confidence: float = 0.7,
@@ -27,9 +31,11 @@ def _make_signal(
     price: Decimal | None = None,
     holding_type: TradingStyle | None = None,
     stop_loss_price: Decimal | None = None,
+    stop_loss_pct: Decimal | None = None,
     target_price: Decimal | None = None,
     trailing_stop_pct: Decimal | None = None,
     max_hold_days: int | None = None,
+    scheduled_exit_date: date | None = None,
     best_bid: Decimal | None = None,
     best_ask: Decimal | None = None,
     spread_bps: Decimal | None = None,
@@ -43,8 +49,11 @@ def _make_signal(
     session_phase: str | None = None,
 ) -> StrategySignal:
     return StrategySignal(
-        signal_id=uuid4(),
+        signal_id=signal_id or uuid4(),
         source=source,
+        routing_intent=routing_intent,
+        strategy_key=strategy_key,
+        candidate_id=candidate_id,
         symbol=symbol,
         price=price,
         action=action,
@@ -52,9 +61,11 @@ def _make_signal(
         reasoning=reasoning,
         holding_type=holding_type,
         stop_loss_price=stop_loss_price,
+        stop_loss_pct=stop_loss_pct,
         target_price=target_price,
         trailing_stop_pct=trailing_stop_pct,
         max_hold_days=max_hold_days,
+        scheduled_exit_date=scheduled_exit_date,
         best_bid=best_bid,
         best_ask=best_ask,
         spread_bps=spread_bps,

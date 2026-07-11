@@ -128,16 +128,23 @@ op run --env-file infra/env.production -- \
   uv run python scripts/production-preopen-check.py --kabu-offline
 ```
 
-host 側の `/dev/shm/roboinvest/gcp-pubsub-sa.json` が root-owned などで読めない場合は、
+host 側の `/dev/shm/roboinvest/gcp-pubsub-sa.json` が root-owned、directory、
+または missing などで読めない場合は、
 スクリプトが 1Password の `production/GOOGLE_APPLICATION_CREDENTIALS_JSON` から
 一時 credential を作って Pub/Sub check を継続し、終了時に削除する。
 別の credential を使う特殊ケースだけ `--gcp-credentials <readable-host-path>` を明示する。
 Pub/Sub の smoke publish/pull/ack を避ける検証では `--no-pubsub-smoke` を使う。
 
+前日・休日に翌営業日分の watchlist を検証する場合は `--target-date YYYY-MM-DD` を付ける。
+compose に代替 credential path を使う場合、`op run --env-file infra/env.production`
+は env file の値で shell 側の `GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH` を上書きするため、
+`op run ... -- env GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH=/path/to/key.json docker compose ...`
+の形で Docker Compose プロセスへ明示する。
+
 期待値:
 
 - `AI_MAX_OUTPUT_TOKENS=2048`
-- `STRATEGIES_ENABLED=rsi_threshold,bollinger_breakout`
+- `STRATEGIES_ENABLED=relative_momentum` (paper observation では no-op 禁止)
 - `LIVE_DAY_NEW_BUY_START_TIME=09:15`
 - `MIN_CONFIDENCE_RULE_ONLY=0.45`
 - `MIN_CONFIDENCE_AI_ONLY=0.5`

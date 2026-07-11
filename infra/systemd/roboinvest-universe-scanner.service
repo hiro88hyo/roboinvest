@@ -6,6 +6,7 @@ After=network-online.target
 [Service]
 Type=oneshot
 Environment=PATH=/home/hiroyuki/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH=/tmp/roboinvest-gcp-pubsub-sa.json
 WorkingDirectory=/home/hiroyuki/workspaces/roboinvest
 ExecStart=/usr/bin/env bash /home/hiroyuki/workspaces/roboinvest/scripts/run-production-universe-scanner.sh
 Nice=10

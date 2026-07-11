@@ -11,7 +11,7 @@ import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -187,12 +187,14 @@ async def test_initial_cycle_registers_and_emits_records() -> None:
 
     kabu = _FakeKabu(ws_messages=[[_ws_tick_msg("7203"), _ws_book_msg("9984")]])
     sink = _CapturingSink()
+    received_at = datetime(2026, 4, 25, 0, 0, 2, tzinfo=UTC)
     session = FeederSession(
         kabu=kabu,
         watchlist_feed=_hanging_feed(),
         default_exchange=1,
         sink=sink,
         backoff=BackoffPolicy(jitter_ratio=0.0),
+        wall_clock=lambda: received_at,
     )
 
     results = await session.run(iterations=1)
@@ -223,6 +225,8 @@ async def test_initial_cycle_registers_and_emits_records() -> None:
 
     # sink に流れたレコードの中身も検証
     assert isinstance(sink.records[0], TickData)
+    assert isinstance(sink.records[1], OrderBookSnapshot)
+    assert sink.records[1].received_at == received_at
     assert sink.records[0].symbol == "7203"
     assert sink.records[0].price == Decimal("2500.0")
     assert isinstance(sink.records[1], OrderBookSnapshot)

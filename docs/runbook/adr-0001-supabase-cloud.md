@@ -51,6 +51,7 @@ Cloud project の SQL Editor で `contracts/sql/` を番号順に実行する。
 16. `contracts/sql/015_gateway_kill_switch_rpc.sql`
 17. `contracts/sql/016_gateway_risk_reservations.sql`
 18. `contracts/sql/017_positions_scheduled_exit_date.sql`
+19. `contracts/sql/018_oms_paper_apply_fill_rpc.sql`
 
 各 SQL は `create table if not exists` / `create index if not exists` 形式を基本にしている。途中で失敗した場合は、失敗箇所を直して同じ順番で再実行する。
 
@@ -73,6 +74,36 @@ where table_schema = 'public'
   )
 order by table_name;
 ```
+
+OMS Paper の atomic fill capability も SQL Editor で確認する。
+
+```sql
+select p.oid::regprocedure as function_signature
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public'
+  and p.proname in ('oms_paper_apply_fill', 'oms_paper_update_stop_loss')
+order by p.proname;
+
+select indexname, indexdef
+from pg_indexes
+where schemaname = 'public'
+  and indexname = 'trades_paper_order_id_key';
+
+select
+  has_function_privilege('service_role', p.oid, 'EXECUTE') as service_role_execute,
+  has_function_privilege('anon', p.oid, 'EXECUTE') as anon_execute,
+  has_function_privilege('authenticated', p.oid, 'EXECUTE') as authenticated_execute
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public'
+  and p.proname in ('oms_paper_apply_fill', 'oms_paper_update_stop_loss')
+order by p.proname;
+```
+
+期待値は function 2 件、`trades_paper_order_id_key` が `order_id is not null`
+の partial unique index、両 function の EXECUTE が `service_role=true` /
+`anon=false` / `authenticated=false`。
 
 ## 3. Seed `system_status`
 
@@ -185,6 +216,16 @@ op run --env-file infra/env.production -- \
 `positions.scheduled_exit_date` も `OK` になること。`column positions.scheduled_exit_date
 does not exist` が出る場合は `contracts/sql/017_positions_scheduled_exit_date.sql` が
 Cloud project に未適用であり、swing fixed-hold の operational gate は実行しない。
+
+`trades_paper.order_id` も `OK` になること。欠けている場合は
+`contracts/sql/018_oms_paper_apply_fill_rpc.sql` が未適用であり、OMS Paper の
+fill/position atomicity を保証できないため event publisher は有効化しない。
+
+`rpc:oms_paper_apply_fill (present + executable)` も `OK` になること。この probe
+は必須引数を NULL にして validation error を確認するため trading data を変更しない。
+column が存在しても RPC または service-role EXECUTE grant が欠ける場合は `NG`。
+generation-checked trailing stop 用の
+`rpc:oms_paper_update_stop_loss (present + executable)` も同様に `OK` とする。
 
 `401` / `403` の場合は `SUPABASE_SECRET_KEY` が service role key か、1Password field と `infra/env.production` の参照が一致しているかを確認する。
 

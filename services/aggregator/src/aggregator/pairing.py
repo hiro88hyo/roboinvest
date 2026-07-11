@@ -13,15 +13,20 @@ from collections.abc import Iterable, Iterator
 
 from trade_contracts.signal import StrategySignal
 
-BucketKey = tuple[str, int]
+BucketKey = tuple[str, int, str | None, str | None]
 
 
 def bucket_key(signal: StrategySignal, bucket_ms: int) -> BucketKey:
-    """Return `(symbol, created_at // bucket_ms)` for the given signal."""
+    """Return a time bucket isolated by symbol and strategy candidate identity."""
     if bucket_ms <= 0:
         raise ValueError(f"bucket_ms must be positive, got {bucket_ms}")
     ts_ms = int(signal.created_at.timestamp() * 1000)
-    return (signal.symbol, ts_ms // bucket_ms)
+    return (
+        signal.symbol,
+        ts_ms // bucket_ms,
+        signal.strategy_key,
+        signal.candidate_id,
+    )
 
 
 def group_by_bucket(
@@ -29,13 +34,16 @@ def group_by_bucket(
     *,
     bucket_ms: int,
 ) -> Iterator[list[StrategySignal]]:
-    """Group signals by `(symbol, time-bucket)` and yield each bucket.
+    """Group signals by symbol, time bucket, and candidate identity.
 
-    Output order is chronological by bucket, then alphabetical by symbol. Within
-    a bucket, signals retain the insertion order of the input iterable.
+    Output order is chronological by bucket, then alphabetical by symbol and
+    strategy/candidate identity. Within a bucket, signals retain input order.
     """
     groups: dict[BucketKey, list[StrategySignal]] = {}
     for s in signals:
         groups.setdefault(bucket_key(s, bucket_ms), []).append(s)
-    for key in sorted(groups.keys(), key=lambda kk: (kk[1], kk[0])):
+    for key in sorted(
+        groups.keys(),
+        key=lambda kk: (kk[1], kk[0], kk[2] or "", kk[3] or ""),
+    ):
         yield groups[key]

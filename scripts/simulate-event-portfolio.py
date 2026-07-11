@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from event_research_common import (
+    CAT_STOP_PCT,
     EVALUATION_SPLITS,
     ROUND_TRIP_COST_RATE,
     OhlcvRow,
@@ -717,7 +718,7 @@ def catastrophic_stop_from_bars(
     fixed_exit_date: date,
     fixed_exit_price: Decimal,
 ) -> tuple[date, Decimal]:
-    stop_price = entry_price * Decimal("0.92")
+    stop_price = entry_price * (Decimal("1") + CAT_STOP_PCT)
     for bar in bars:
         if bar.open <= stop_price:
             return bar.date, bar.open

@@ -3,9 +3,9 @@
 擬似約定の結果と既存ポジションから、新しいポジション状態と ``trades_paper``
 向けの約定レコードを生成する。
 
-呼び出し側は ``simulate_fill`` の結果を受けて本関数を呼ぶ。``OrderRequest`` には
-``holding_type`` / ``stop_loss_price`` 等が乗らないため、それらは ``UnifiedTradeSignal``
-を保持している呼び出し側 (Phase 3 では aggregator_logs から復元) が引数として渡す。
+呼び出し側は ``simulate_fill`` の結果を受けて本関数を呼ぶ。新規 BUY の相対 stop
+intent はここで実際の約定価格に固定し、streaming と backtest で同じポジション
+遷移を使う。
 """
 
 from __future__ import annotations
@@ -34,6 +34,19 @@ def _weighted_average_entry(
     return raw.quantize(_PRICE_QUANT, rounding=ROUND_HALF_UP)
 
 
+def _resolve_stop_loss_price(
+    *,
+    fill_price: Decimal,
+    stop_loss_price: Decimal | None,
+    stop_loss_pct: Decimal | None,
+) -> Decimal | None:
+    """Resolve a relative stop intent against the actual BUY fill price."""
+
+    if stop_loss_pct is None:
+        return stop_loss_price
+    return fill_price * (Decimal("1") - stop_loss_pct)
+
+
 def build_fill_record(
     *,
     order: OrderRequest,
@@ -45,6 +58,7 @@ def build_fill_record(
     if fill.filled_quantity <= 0 or fill.fill_price is None:
         return None
     return PaperFillRecord(
+        order_id=order.order_id,
         symbol=order.symbol,
         side=order.side,
         quantity=fill.filled_quantity,
@@ -62,6 +76,7 @@ def apply_fill(
     existing: PaperPosition | None,
     holding_type: TradingStyle,
     stop_loss_price: Decimal | None = None,
+    stop_loss_pct: Decimal | None = None,
     target_price: Decimal | None = None,
     max_hold_days: int | None = None,
     scheduled_exit_date: date | None = None,
@@ -70,7 +85,7 @@ def apply_fill(
 ) -> PositionUpdate:
     """擬似約定の結果を既存ポジションに適用する。
 
-    - BUY 既存なし → 新規ポジション
+    - BUY 既存なし → 新規ポジション (相対 stop は実約定価格に固定)
     - BUY 既存あり → 数量加算 + 平均取得単価更新 (holding_type / stop 等は既存を維持)
     - SELL 既存あり → 数量減算 (残量 0 で ``delete=True``)
     - SELL 既存なし → スキップ + ``error="no_position_for_sell"``
@@ -83,12 +98,17 @@ def apply_fill(
 
     if order.side is Side.BUY:
         if existing is None:
+            resolved_stop_loss_price = _resolve_stop_loss_price(
+                fill_price=fill.fill_price,
+                stop_loss_price=stop_loss_price,
+                stop_loss_pct=stop_loss_pct,
+            )
             new = PaperPosition(
                 symbol=order.symbol,
                 quantity=fill.filled_quantity,
                 entry_price=fill.fill_price,
                 holding_type=holding_type,
-                stop_loss_price=stop_loss_price,
+                stop_loss_price=resolved_stop_loss_price,
                 target_price=target_price,
                 max_hold_days=max_hold_days,
                 scheduled_exit_date=scheduled_exit_date

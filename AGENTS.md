@@ -100,8 +100,12 @@ Dashboard は Volta 管理の Node/npm を使う。
 
 検査内容:
 
-- Pub/Sub: `infra/pubsub/topics.json` の 7 topics と `infra/pubsub/subscriptions.json` の 9 subscriptions が emulator 上に存在するか確認する。
-- Supabase: `system_status`, `positions`, `strategy_logs`, `aggregator_logs`, `trades_live`, `trades_paper`, `watchlist`, `master_stocks`, `daily_ohlcv` の 9 tables を PostgREST で `limit=0` read できるか確認する。
+- Pub/Sub: `infra/pubsub/topics.json` の全 topics（現行 9 件）と
+  `infra/pubsub/subscriptions.json` の全 subscriptions（現行 13 件）が emulator 上に存在するか確認する。
+- Supabase: 主要 10 tables（上記 9 件 + `market_regime`）の read、
+  `positions.scheduled_exit_date` / `trades_paper.order_id`、および安全な validation
+  probe による `event_paper_cas_strategy_reasoning` / `oms_paper_apply_fill` /
+  `oms_paper_update_stop_loss` の存在・service-role 実行可否を確認する。
 - Services: 9 service modules (`universe_scanner`, `feature_engine`, `strategy_rule`, `strategy_ai`, `aggregator`, `gateway`, `oms_paper`, `oms_live`, `feeder`) の `python -m <module> --help` が起動できるか確認する。
 
 必要 env がないセクションは `SKIP` で、失敗扱いではない。`NG` が 1 件でもあれば exit code 1。
@@ -109,13 +113,30 @@ Pub/Sub は `PUBSUB_EMULATOR_HOST` / `PUBSUB_PROJECT_ID`、Supabase は `SUPABAS
 
 ## Important Operational Notes
 
+- event detector の凍結済み feature vintage は disclosure-time
+  `data_available_at/feature_cutoff_at`。翌朝の実受信は
+  `source_received_at` へ分離し、PER/valuation cutoff を進めない。
+- signal-date OHLCV が欠けた post-close 候補は選定から消さず
+  `feature_data_complete=false` として残す。cohort は維持するが、pre-open、
+  watchlist、publisher は実行不可として拒否する。
+- 現 event publisher/E2E は `opening_transport_stress_v1` であり、凍結済み
+  next-open / 20日目 close を再現しない。receipt/report の
+  `comparable_to_registered_backtest=false` を厳守し、target 実行や v1
+  paper/live evidence への算入を行わない。
+- event transport stress CLI は loopback Pub/Sub emulator + `--no-seek` に加え、
+  loopback Supabase と allowlist 済み dev project ID だけを許可する。
+  event 用 Supabase client と emulator gRPC channel は ambient proxy を継承しない。
+- 既存の same-symbol random percentile は random 側 8% stop、選定側 10% stop
+  で比較条件が不一致。simulator の将来コードは 10% に修正済みだが、locked
+  report を再計算・再解釈せず、既存 percentile を gate evidence に使わない。
 - 1Password 経由で env を読むときは、先に `infra/.op.service-account.env`
   があるか確認し、`set -a && . infra/.op.service-account.env && set +a`
   で読み込む。`OP_SERVICE_ACCOUNT_TOKEN` を手入力・別ファイルから流用しない。
   別 vault / 別用途の 1Password API token を使うと、`op run` は通っても
   必要な secrets が空または別値になり得る。token 値は terminal に表示しない。
 - 1Password secret 参照は `op://roboinvest/...` が正。`op://Trade AI/...` ではない。
-- Pub/Sub topics は 7 件、subscriptions は現行 `infra/pubsub/subscriptions.json` で 9 件が前提。
+- Pub/Sub topics / subscriptions の SSOT は各 JSON。現行は topics 9 件、
+  subscriptions 13 件だが、固定件数より JSON と health check の一致を優先する。
 - Pub/Sub emulator は長時間稼働で OOM することがある。再起動後は topic/subscription の再 seed が必要。
 - 市場開始前の主な失敗要因は subscription 未作成、`daily_ohlcv` 空、`watchlist` 未更新。
 - kabuステーションは localhost 限定。本番は Windows 上の Caddy reverse proxy と SSH tunnel 前提。

@@ -23,10 +23,13 @@ def _resolve_stop_loss_for_buy(
     *,
     entry_price: Decimal,
     explicit_stop: Decimal | None,
+    stop_loss_pct: Decimal | None,
     default_spread_pct: Decimal,
 ) -> Decimal:
     if explicit_stop is not None:
         return explicit_stop
+    if stop_loss_pct is not None:
+        return entry_price * (Decimal("1") - stop_loss_pct)
     return entry_price * (Decimal("1") - default_spread_pct)
 
 
@@ -40,7 +43,8 @@ def calculate(
 
     * ``signal.action`` は ``BUY`` 前提(呼び出し側で保証する)。
     * ``entry_price`` は正。0 以下は invalid_entry_price で reject。
-    * ``stop_loss_price`` が ``None`` の場合は ``default_stop_loss_spread_pct`` で代替。
+    * ``stop_loss_price`` がなく ``stop_loss_pct`` がある場合は entry price から解決。
+    * どちらも ``None`` の場合は ``default_stop_loss_spread_pct`` で代替。
     * BUY なので ``stop_loss >= entry_price`` は無意味 → invalid_stop_loss で reject。
     * ``holding_type=swing`` のときは ``swing_risk_scale`` で保守側にスケール。
     * ``min_lot_size`` 単位に floor し、それ未満は below_min_lot で reject。
@@ -57,6 +61,7 @@ def calculate(
     stop_loss = _resolve_stop_loss_for_buy(
         entry_price=entry_price,
         explicit_stop=signal.stop_loss_price,
+        stop_loss_pct=signal.stop_loss_pct,
         default_spread_pct=config.default_stop_loss_spread_pct,
     )
     if stop_loss >= entry_price:

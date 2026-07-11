@@ -6,6 +6,7 @@ import json
 import math
 import random
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 from decimal import Decimal, InvalidOperation
@@ -26,6 +27,7 @@ from trade_contracts.event_research import (
     TechnicalContextV0,
     ValuationFeaturesV0,
 )
+from universe_scanner.calendar import next_business_day
 
 FEATURE_SCHEMA_VERSION = "event_research_v0"
 PURGE_TRADING_DAYS = 20
@@ -203,6 +205,7 @@ def build_events_from_financial_rows(
     *,
     ohlcv_rows: list[OhlcvRow],
     fetched_at: datetime,
+    entry_date_resolver: Callable[[date], date] | None = None,
 ) -> list[EventRecord]:
     trading_dates = sorted({row.date for row in ohlcv_rows})
     events: list[EventRecord] = []
@@ -216,10 +219,13 @@ def build_events_from_financial_rows(
         disclosed_date = _parse_date_field(_first(raw, "DiscDate", "DisclosedDate", "Date"))
         disclosed_time = _time_str(_first(raw, "DiscTime", "DisclosedTime"))
         disclosed_at = disclosed_datetime(disclosed_date, disclosed_time)
-        try:
-            entry_date = next_trading_date(trading_dates, disclosed_date)
-        except ValueError:
-            continue
+        if entry_date_resolver is None:
+            try:
+                entry_date = next_trading_date(trading_dates, disclosed_date)
+            except ValueError:
+                continue
+        else:
+            entry_date = entry_date_resolver(disclosed_date)
         cluster_id = event_cluster_id(symbol, disclosed_at)
         cluster_counts[cluster_id] += 1
         raw_events.append(
@@ -279,7 +285,7 @@ def build_events_from_financial_rows(
                 entry_date=entry_date.isoformat(),
                 feature_cutoff_at=disclosed_at,
                 raw_source_identifier=raw_id,
-                fetched_at=fetched_at,
+                fetched_at=financial_row_fetched_at(raw, fallback=fetched_at),
                 cluster_member_count=cluster_counts[cluster_id],
                 fiscal_target=fiscal_target(raw),
                 consolidation_type=consolidation_type(raw),
@@ -291,12 +297,19 @@ def build_events_from_financial_rows(
     return sorted(events, key=lambda item: (item.disclosed_at, item.symbol, item.event_id))
 
 
-def build_observations(
+def build_candidate_features(
     events: list[EventRecord],
     *,
     ohlcv_rows: list[OhlcvRow],
     master: dict[str, MasterRow] | None = None,
 ) -> list[ObservationRecord]:
+    """Build point-in-time features without reading the entry session or labels.
+
+    This is the operational candidate API.  It deliberately leaves
+    ``entry_price`` and ``labels`` empty so a candidate can be detected before
+    its intended entry session has produced any OHLCV data.
+    """
+
     master = {} if master is None else master
     by_symbol = group_ohlcv_by_symbol(ohlcv_rows)
     sector_by_symbol = {symbol: row.sector for symbol, row in master.items()}
@@ -306,13 +319,10 @@ def build_observations(
         bars = by_symbol.get(event.symbol, [])
         if not bars:
             continue
-        entry_day = date.fromisoformat(event.entry_date)
         signal_idx = latest_available_bar_index(bars, event.feature_cutoff_at)
-        entry_idx = index_by_date(bars, entry_day)
-        if signal_idx is None or entry_idx is None:
+        if signal_idx is None:
             continue
         signal_bar = bars[signal_idx]
-        entry_bar = bars[entry_idx]
         raw = event.raw
         previous = previous_by_event_id.get(event.event_id)
         fundamental = build_fundamental_features(raw, event, previous=previous)
@@ -333,7 +343,6 @@ def build_observations(
             feature_cutoff_at=event.feature_cutoff_at,
             source_record_id=event.raw_source_identifier,
         )
-        labels = build_forward_labels(bars, entry_idx=entry_idx, entry_price=entry_bar.open)
         observations.append(
             ObservationRecord(
                 observation_id=observation_id(
@@ -352,7 +361,7 @@ def build_observations(
                 entry_date=event.entry_date,
                 feature_cutoff_at=event.feature_cutoff_at,
                 data_available_at=event.data_available_at,
-                entry_price=entry_bar.open,
+                entry_price=None,
                 valuation_price=signal_bar.close,
                 source_bar_date=signal_bar.date.isoformat(),
                 source_bar_available_at=daily_bar_available_at(signal_bar.date),
@@ -364,10 +373,60 @@ def build_observations(
                 fundamental_features_v0=fundamental,
                 valuation_features_v0=valuation,
                 technical_context_v0=technical,
-                labels=labels,
+                labels={},
             )
         )
     return observations
+
+
+def attach_forward_labels(
+    candidates: list[ObservationRecord],
+    *,
+    ohlcv_rows: list[OhlcvRow],
+) -> list[ObservationRecord]:
+    """Attach observed next-open prices and forward labels for research only.
+
+    A candidate whose entry-session bar is not in the research dataset is
+    omitted, preserving the historical dataset behavior without coupling
+    operational detection to future price rows.
+    """
+
+    by_symbol = group_ohlcv_by_symbol(ohlcv_rows)
+    observations: list[ObservationRecord] = []
+    for candidate in candidates:
+        bars = by_symbol.get(candidate.symbol, [])
+        entry_idx = index_by_date(bars, date.fromisoformat(candidate.entry_date))
+        if entry_idx is None:
+            continue
+        entry_price = bars[entry_idx].open
+        observations.append(
+            candidate.model_copy(
+                deep=True,
+                update={
+                    "entry_price": entry_price,
+                    "labels": build_forward_labels(
+                        bars,
+                        entry_idx=entry_idx,
+                        entry_price=entry_price,
+                    ),
+                },
+            )
+        )
+    return observations
+
+
+def build_observations(
+    events: list[EventRecord],
+    *,
+    ohlcv_rows: list[OhlcvRow],
+    master: dict[str, MasterRow] | None = None,
+) -> list[ObservationRecord]:
+    """Build labelled historical observations for research compatibility."""
+
+    return attach_forward_labels(
+        build_candidate_features(events, ohlcv_rows=ohlcv_rows, master=master),
+        ohlcv_rows=ohlcv_rows,
+    )
 
 
 def build_random_date_observations(
@@ -1361,6 +1420,12 @@ def next_trading_date(trading_dates: list[date], current: date) -> date:
     raise ValueError(f"no trading date after {current}")
 
 
+def next_tse_business_date(current: date) -> date:
+    """Resolve the next entry session without consulting future OHLCV rows."""
+
+    return next_business_day(current)
+
+
 def disclosed_datetime(disclosed_date: date, disclosed_time: str | None) -> datetime:
     if disclosed_time:
         parts = [int(part) for part in disclosed_time.split(":")]
@@ -1368,6 +1433,18 @@ def disclosed_datetime(disclosed_date: date, disclosed_time: str | None) -> date
         return local.astimezone(UTC)
     local = datetime.combine(disclosed_date, time(0, 0, 0), tzinfo=TOKYO)
     return local.astimezone(UTC)
+
+
+def financial_row_fetched_at(raw: dict[str, Any], *, fallback: datetime) -> datetime:
+    """Read exporter receipt provenance, falling back for legacy research archives."""
+
+    value = raw.get("_roboinvest_fetched_at")
+    if value in (None, ""):
+        return fallback
+    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        raise ValueError("_roboinvest_fetched_at must include a timezone offset")
+    return parsed
 
 
 def daily_bar_available_at(bar_date: date) -> datetime:

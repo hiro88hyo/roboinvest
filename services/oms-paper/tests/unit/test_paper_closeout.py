@@ -45,12 +45,23 @@ def test_preserves_input_order() -> None:
     assert [o.symbol for o in orders] == symbols
 
 
-def test_swing_position_also_closed_out() -> None:
+def test_swing_position_is_preserved() -> None:
     pos = make_paper_position(quantity=100, holding_type=TradingStyle.SWING)
     orders = build_closeout_orders(
         positions=[pos],
         created_at=datetime(2026, 4, 25, 14, 50, tzinfo=UTC),
     )
-    assert len(orders) == 1
-    assert orders[0].symbol == pos.symbol
-    assert orders[0].unified_signal_id is None
+    assert orders == []
+
+
+def test_mixed_positions_close_only_day_in_input_order() -> None:
+    positions = [
+        make_paper_position(symbol="DAY-A", holding_type=TradingStyle.DAY),
+        make_paper_position(symbol="SWING", holding_type=TradingStyle.SWING),
+        make_paper_position(symbol="DAY-B", holding_type=TradingStyle.DAY),
+    ]
+    orders = build_closeout_orders(
+        positions=positions,
+        created_at=datetime(2026, 4, 25, 14, 50, tzinfo=UTC),
+    )
+    assert [order.symbol for order in orders] == ["DAY-A", "DAY-B"]

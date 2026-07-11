@@ -906,6 +906,17 @@ preregistration cycle.
 
 Date: 2026-06-29
 
+**Erratum (2026-07-10):** The random-percentile results below are retained only
+as historical calculations and are not valid matched-random evidence. The
+selected path used the frozen 10% catastrophic stop, while the random portfolio
+candidates used an 8% stop, so the selected and random results are
+non-comparable. Frozen-v1 paper observation is **BLOCKED**. Do not rerun or
+inspect the locked-OOS window, or otherwise reopen this investigation, without
+the explicit approval required by
+[ADR-0005](../adr/0005-locked-oos-inspection-freeze.md). See the canonical
+[Evidence Assessment](../review/profitability/EVIDENCE.md) for the controlling
+interpretation.
+
 Status: research-continuation only. This is not a paper/live candidate and does
 not enable any route to `strategy-signals-b`, Gateway, OMS Paper, or OMS Live.
 

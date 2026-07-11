@@ -29,6 +29,7 @@ import sys
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, suppress
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from trade_contracts.market import OrderBookSnapshot, TickData
@@ -40,6 +41,10 @@ from .reconnect import BackoffPolicy
 from .registry import RegistrationDiff, compute_diff
 
 logger = logging.getLogger(__name__)
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
 
 
 WatchlistFeed = AsyncIterator[list[Any]]
@@ -115,6 +120,7 @@ class FeederSession:
     sink: MessageSink
     backoff: BackoffPolicy = field(default_factory=BackoffPolicy)
     sleep: Callable[[float], Awaitable[None]] = field(default=asyncio.sleep)
+    wall_clock: Callable[[], datetime] = _utc_now
     max_pending_sends: int = 64
     _registered: set[SymbolRegistration] = field(default_factory=set, init=False)
 
@@ -225,7 +231,8 @@ class FeederSession:
                 payload = _decode_json(raw)
                 if payload is None:
                     continue
-                for record in parse_push_message(payload):
+                received_at = self.wall_clock()
+                for record in parse_push_message(payload, received_at=received_at):
                     await self._enqueue_sink_send(record, pending_sends, counters)
                 await self._drain_completed_sends(pending_sends, counters)
             await self._finish_pending_sends(pending_sends, counters)

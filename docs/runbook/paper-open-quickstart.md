@@ -18,6 +18,17 @@ set -a && . infra/.op.service-account.env && set +a
 op run --env-file infra/env.production --   docker compose -f infra/docker-compose.prod.yml config >/dev/null
 ```
 
+`/dev/shm/roboinvest/gcp-pubsub-sa.json` が実ファイルとして使えない場合だけ、
+代替 credential を作って compose に明示する。
+
+```bash
+op read --out-file /tmp/roboinvest-gcp-pubsub-sa.json --force \
+  op://roboinvest/production/GOOGLE_APPLICATION_CREDENTIALS_JSON
+chmod 600 /tmp/roboinvest-gcp-pubsub-sa.json
+uv run python -m json.tool /tmp/roboinvest-gcp-pubsub-sa.json >/dev/null
+export GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH=/tmp/roboinvest-gcp-pubsub-sa.json
+```
+
 ## 3. Run Universe Scanner
 
 ```bash
@@ -48,10 +59,32 @@ op run --env-file infra/env.production --   uv run python scripts/health-check.p
 op run --env-file infra/env.production --   docker compose -f infra/docker-compose.prod.yml up -d --build
 ```
 
+代替 credential path を使う場合:
+
+```bash
+op run --env-file infra/env.production -- \
+  env GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH="$GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH" \
+    docker compose --env-file infra/env.production -f infra/docker-compose.prod.yml up -d --build
+```
+
 ## 6. Final Check
 
 ```bash
-op run --env-file infra/env.production --   uv run python scripts/health-check.py --check supabase services --timeout 30
+op run --env-file infra/env.production -- \
+  uv run python scripts/production-preopen-check.py \
+    --timeout 30 \
+    --expected-trade-mode paper
+```
+
+前日準備で翌営業日を確認する場合:
+
+```bash
+op run --env-file infra/env.production -- \
+  uv run python scripts/production-preopen-check.py \
+    --timeout 30 \
+    --expected-trade-mode paper \
+    --target-date YYYY-MM-DD \
+    --kabu-offline
 ```
 
 ## 7. Watch Logs After Open

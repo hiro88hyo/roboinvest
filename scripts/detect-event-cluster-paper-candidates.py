@@ -2,54 +2,41 @@
 from __future__ import annotations
 
 import argparse
-import asyncio
 import csv
 import json
-import os
 from collections import defaultdict
-from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
-import httpx
 from event_research_common import (
     CAT_STOP_PCT,
+    build_candidate_features,
     build_events_from_financial_rows,
-    build_observations,
     cluster_earnings_dividend_increase_allows,
     cluster_earnings_dividend_value_guard_allows,
     cluster_trade_representatives,
+    daily_bar_available_at,
+    next_tse_business_date,
     read_jsonl,
     read_master_csv,
     read_ohlcv_csv,
 )
-from trade_contracts.enums import Action, SignalSource, TradeMode, TradingStyle
-from trade_contracts.event_research import ObservationRecord
-from trade_contracts.pubsub_client import PubSubPublisher
-from trade_contracts.signal import StrategySignal
+from trade_contracts.event_research import EventRecord, ObservationRecord
 
 CANDIDATE_ID = "event_cluster_earnings_dividend_value_guard_fixed20_stop_v1_research"
+ARTIFACT_SCHEMA_VERSION = 2
 PER_THRESHOLD = Decimal("15")
 MAX_HOLD_DAYS = 20
-PUBLISH_ENABLED_ENV = "EVENT_CLUSTER_PAPER_PUBLISH_ENABLED"
-DEFAULT_PUBSUB_TOPIC_SIGNALS_A = "strategy-signals-a"
-DEFAULT_SIGNAL_CONFIDENCE = 0.5
-
-
-class PreflightError(RuntimeError):
-    """Raised when paper publish safety checks fail before Pub/Sub publish."""
-
-
-@dataclass(frozen=True, slots=True)
-class PublishSettings:
-    supabase_url: str
-    supabase_secret_key: str
-    pubsub_project_id: str
-    pubsub_topic_signals: str = DEFAULT_PUBSUB_TOPIC_SIGNALS_A
-    pubsub_emulator_host: str = ""
-    confidence: float = DEFAULT_SIGNAL_CONFIDENCE
+PUBLISH_DISABLED_REASON = (
+    "inline event paper publish is disabled; use the separately gated "
+    "strategy-rule event-paper-publish command after all safety checks pass"
+)
+TOKYO = ZoneInfo("Asia/Tokyo")
+ENTRY_CUTOFF_TIME_JST = time(9, 0)
+FETCH_METADATA_RECORD_TYPE = "fetch_metadata"
 
 
 def main() -> int:
@@ -67,24 +54,7 @@ def main() -> int:
     parser.add_argument(
         "--publish-paper",
         action="store_true",
-        help=(
-            "Publish paper-only StrategySignal messages after dry-run detection. "
-            f"Also requires {PUBLISH_ENABLED_ENV}=true and system_status.trade_mode=paper."
-        ),
-    )
-    parser.add_argument(
-        "--pubsub-topic-signals",
-        default=(
-            os.environ.get("PUBSUB_TOPIC_SIGNALS_A")
-            or os.environ.get("PUBSUB_TOPIC_SIGNALS")
-            or DEFAULT_PUBSUB_TOPIC_SIGNALS_A
-        ),
-    )
-    parser.add_argument(
-        "--confidence",
-        type=float,
-        default=float(os.environ.get("EVENT_CLUSTER_PAPER_SIGNAL_CONFIDENCE", "0.5")),
-        help="StrategySignal confidence for published paper candidates.",
+        help=f"Disabled: {PUBLISH_DISABLED_REASON}.",
     )
     parser.add_argument(
         "--signal-date",
@@ -94,62 +64,128 @@ def main() -> int:
     parser.add_argument("--fetched-at", help="ISO timestamp used for event fetched_at metadata.")
     args = parser.parse_args()
 
-    fetched_at = (
-        datetime.fromisoformat(args.fetched_at) if args.fetched_at else datetime.now(tz=UTC)
+    explicit_fetched_at = (
+        parse_aware_timestamp(args.fetched_at, field="--fetched-at") if args.fetched_at else None
     )
     financial_rows = read_jsonl(args.financial_summary_jsonl)
-    ohlcv_rows = read_ohlcv_csv(args.ohlcv)
-    observations = build_observations(
-        build_events_from_financial_rows(
+    fetch_metadata_at, fetch_metadata_complete = validated_fetch_metadata(
+        financial_rows,
+        signal_date=args.signal_date,
+    )
+    fetched_at = fetch_metadata_at or explicit_fetched_at or datetime.now(tz=UTC)
+    if args.signal_date is not None and fetch_metadata_complete:
+        financial_rows = rows_for_completed_fetch(
             financial_rows,
-            ohlcv_rows=ohlcv_rows,
-            fetched_at=fetched_at,
-        ),
+            signal_date=args.signal_date,
+            fetched_at=fetch_metadata_at,
+        )
+    ohlcv_rows = read_ohlcv_csv(args.ohlcv)
+    events = build_events_from_financial_rows(
+        financial_rows,
         ohlcv_rows=ohlcv_rows,
-        master=read_master_csv(args.master),
+        fetched_at=fetched_at,
+        entry_date_resolver=next_tse_business_date,
+    )
+    receipt_exclusions: list[dict[str, Any]] = []
+    feature_exclusions: list[dict[str, Any]] = []
+    eligible_event_ids: set[str] | None = None
+    if args.signal_date is not None:
+        selected_events = [
+            event for event in events if date.fromisoformat(event.signal_date) == args.signal_date
+        ]
+        eligible_event_ids = set()
+        for event in selected_events:
+            receipt_reason = event_receipt_rejection_reason(event, fetched_at=event.fetched_at)
+            if receipt_reason is not None:
+                receipt_exclusions.append(
+                    {
+                        "cluster_id": event.event_cluster_id,
+                        "symbol": event.symbol,
+                        "signal_date": event.signal_date,
+                        "reason": receipt_reason,
+                        "event_ids": [event.event_id],
+                        "disclosed_at": event.disclosed_at.isoformat(),
+                        "fetched_at": event.fetched_at.isoformat(),
+                        "entry_date": event.entry_date,
+                    }
+                )
+                continue
+            eligible_event_ids.add(event.event_id)
+    master = read_master_csv(args.master)
+    observations = build_candidate_features(
+        events,
+        ohlcv_rows=ohlcv_rows,
+        master=master,
     )
     if args.signal_date is not None:
-        observations = [
-            obs for obs in observations if date.fromisoformat(obs.signal_date) == args.signal_date
+        events = [
+            event for event in events if date.fromisoformat(event.signal_date) == args.signal_date
         ]
-
-    candidates, exclusions = detect_candidates(observations)
+        observations = [
+            obs
+            for obs in observations
+            if date.fromisoformat(obs.signal_date) == args.signal_date
+            and eligible_event_ids is not None
+            and obs.event_id in eligible_event_ids
+        ]
+        observation_event_ids = {obs.event_id for obs in observations}
+        for event in events:
+            if (
+                eligible_event_ids is not None
+                and event.event_id in eligible_event_ids
+                and event.event_id not in observation_event_ids
+            ):
+                feature_exclusions.append(
+                    feature_exclusion_row(event, reason="missing_feature_history")
+                )
+    symbol_names = {symbol: row.symbol_name for symbol, row in master.items()}
+    source_received_by_event_id = {
+        event.event_id: max(event.disclosed_at, event.fetched_at) for event in events
+    }
+    candidates, exclusions = detect_candidates(
+        observations,
+        symbol_names=symbol_names,
+        source_received_by_event_id=source_received_by_event_id,
+    )
+    exclusions = [*receipt_exclusions, *feature_exclusions, *exclusions]
     published: list[dict[str, Any]] = []
     publish_enabled = False
     if args.publish_paper:
-        if not _env_flag_enabled(PUBLISH_ENABLED_ENV):
-            raise SystemExit(
-                f"--publish-paper requires {PUBLISH_ENABLED_ENV}=true; no signals published"
-            )
-        publish_enabled = True
-        for candidate in candidates:
-            candidate["publish_ready"] = True
-        try:
-            published = asyncio.run(
-                publish_paper_candidates(
-                    candidates,
-                    settings=PublishSettings(
-                        supabase_url=_required_env("SUPABASE_URL"),
-                        supabase_secret_key=_required_env("SUPABASE_SECRET_KEY"),
-                        pubsub_project_id=_required_env("PUBSUB_PROJECT_ID"),
-                        pubsub_emulator_host=os.environ.get("PUBSUB_EMULATOR_HOST", ""),
-                        pubsub_topic_signals=args.pubsub_topic_signals,
-                        confidence=args.confidence,
-                    ),
-                )
-            )
-        except PreflightError as exc:
-            raise SystemExit(
-                f"paper publish preflight failed: {exc}; no signals published"
-            ) from exc
+        raise SystemExit(f"{PUBLISH_DISABLED_REASON}; no signals published")
 
     mode = "paper_publish" if publish_enabled else "dry_run"
+    receipt_provenance = receipt_provenance_label(
+        signal_date=args.signal_date,
+        financial_rows=financial_rows,
+        fetch_metadata_at=fetch_metadata_at,
+        fetch_metadata_complete=fetch_metadata_complete,
+        explicit_fetched_at=explicit_fetched_at,
+    )
+    source_coverage_window_verified = (
+        args.signal_date is not None
+        and fetch_metadata_at is not None
+        and source_coverage_window_allows(args.signal_date, fetched_at=fetch_metadata_at)
+    )
+    causality_verified = fetch_metadata_complete and source_coverage_window_verified
     payload = {
+        "schema_version": ARTIFACT_SCHEMA_VERSION,
+        "strategy_key": CANDIDATE_ID,
         "candidate_id": CANDIDATE_ID,
         "mode": mode,
         "paper_live_enabled": False,
         "paper_publish_enabled": publish_enabled,
         "publish_enabled": publish_enabled,
+        "causality_verified": causality_verified,
+        "causality": {
+            "candidate_features_use_forward_bars": False,
+            "candidate_artifact_contains_entry_price": False,
+            "entry_date_source": "tse_business_calendar",
+            "data_receipt_checked": causality_verified,
+            "receipt_provenance": receipt_provenance,
+            "fetch_completion_verified": fetch_metadata_complete,
+            "source_coverage_window_verified": source_coverage_window_verified,
+            "paper_publish_disabled": True,
+        },
         "signal_date": None if args.signal_date is None else args.signal_date.isoformat(),
         "fetched_at": fetched_at.isoformat(),
         "rule": {
@@ -160,7 +196,20 @@ def main() -> int:
             "catastrophic_stop_pct": str(CAT_STOP_PCT),
         },
         "summary": {
+            "event_count": len(events),
             "observation_count": len(observations),
+            "late_data_receipt_count": count_exclusions(
+                receipt_exclusions, reason="late_data_receipt"
+            ),
+            "fetched_before_disclosure_count": count_exclusions(
+                receipt_exclusions, reason="fetched_before_disclosure"
+            ),
+            "missing_signal_date_ohlcv_count": sum(
+                candidate["feature_data_complete"] is False for candidate in candidates
+            ),
+            "missing_feature_history_count": count_exclusions(
+                feature_exclusions, reason="missing_feature_history"
+            ),
             "candidate_count": len(candidates),
             "exclusion_count": len(exclusions),
             "published_count": len(published),
@@ -180,187 +229,221 @@ def main() -> int:
     return 0
 
 
-def _env_flag_enabled(name: str) -> bool:
-    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _required_env(name: str) -> str:
-    value = os.environ.get(name, "").strip()
-    if not value:
-        raise SystemExit(f"{name} is required for --publish-paper; no signals published")
-    return value
-
-
-async def publish_paper_candidates(
-    candidates: list[dict[str, Any]],
+def event_receipt_rejection_reason(
+    event: EventRecord,
     *,
-    settings: PublishSettings,
-    now: datetime | None = None,
-    supabase_transport: httpx.AsyncBaseTransport | None = None,
-    pubsub_transport: httpx.AsyncBaseTransport | None = None,
-) -> list[dict[str, Any]]:
-    trade_mode = await read_trade_mode(
-        url=settings.supabase_url,
-        secret_key=settings.supabase_secret_key,
-        transport=supabase_transport,
-    )
-    if trade_mode is not TradeMode.PAPER:
-        raise PreflightError(f"paper publish requires trade_mode=paper, got {trade_mode.value}")
-    published: list[dict[str, Any]] = []
-    signal_created_at = now or datetime.now(UTC)
-    signals = [
-        strategy_signal_from_candidate(
-            candidate,
-            confidence=settings.confidence,
-            created_at=signal_created_at,
-        )
-        for candidate in candidates
-    ]
-    await insert_strategy_logs(
-        signals,
-        url=settings.supabase_url,
-        secret_key=settings.supabase_secret_key,
-        transport=supabase_transport,
-    )
-    async with PubSubPublisher(
-        project_id=settings.pubsub_project_id,
-        emulator_host=settings.pubsub_emulator_host,
-        transport=pubsub_transport,
-    ) as publisher:
-        for signal in signals:
-            message_id = await publisher.publish(
-                settings.pubsub_topic_signals,
-                data=signal.model_dump_json().encode("utf-8"),
-                attributes={
-                    "symbol": signal.symbol,
-                    "source": signal.source.value,
-                    "candidate_id": CANDIDATE_ID,
-                    "mode": "paper",
-                },
-            )
-            published.append(
-                {
-                    "message_id": message_id,
-                    "signal_id": str(signal.signal_id),
-                    "symbol": signal.symbol,
-                    "topic": settings.pubsub_topic_signals,
-                }
-            )
-    return published
+    fetched_at: datetime,
+) -> str | None:
+    """Reject disclosures that were not observable before the intended entry."""
+
+    if fetched_at < event.disclosed_at:
+        return "fetched_before_disclosure"
+    entry_cutoff = datetime.combine(
+        date.fromisoformat(event.entry_date),
+        ENTRY_CUTOFF_TIME_JST,
+        tzinfo=TOKYO,
+    ).astimezone(UTC)
+    if fetched_at >= entry_cutoff:
+        return "late_data_receipt"
+    return None
 
 
-async def insert_strategy_logs(
-    signals: list[StrategySignal],
-    *,
-    url: str,
-    secret_key: str,
-    transport: httpx.AsyncBaseTransport | None = None,
-) -> int:
-    if not signals:
-        return 0
-    rows = [
-        {
-            "signal_id": str(signal.signal_id),
-            "source": signal.source.value,
-            "symbol": signal.symbol,
-            "action": signal.action.value,
-            "confidence": signal.confidence,
-            "reasoning": signal.reasoning,
-            "created_at": signal.created_at.isoformat(),
-        }
-        for signal in signals
-    ]
-    async with httpx.AsyncClient(
-        base_url=url.rstrip("/"),
-        timeout=30.0,
-        headers={
-            "apikey": secret_key,
-            "Authorization": f"Bearer {secret_key}",
-            "Content-Type": "application/json",
-        },
-        transport=transport,
-    ) as client:
-        resp = await client.post(
-            "/rest/v1/strategy_logs",
-            params={"on_conflict": "signal_id"},
-            headers={"Prefer": "resolution=merge-duplicates,return=minimal"},
-            json=rows,
-        )
-    if resp.status_code >= 300:
-        raise PreflightError(
-            f"insert failed: table=strategy_logs status={resp.status_code} body={resp.text[:200]}"
-        )
-    return len(rows)
+def source_coverage_window_allows(signal_date: date, *, fetched_at: datetime) -> bool:
+    """Require a full JST signal-date snapshot before the entry cutoff.
+
+    A response fetched before the signal date has ended can be complete as an
+    HTTP response while still omitting later disclosures.  The operational
+    snapshot is therefore accepted only from the next JST calendar day and
+    before 09:00 JST on the next TSE business day.
+    """
+
+    if fetched_at.tzinfo is None:
+        raise ValueError("fetched_at must be timezone-aware")
+    coverage_start = datetime.combine(
+        signal_date + timedelta(days=1),
+        time(0, 0),
+        tzinfo=TOKYO,
+    ).astimezone(UTC)
+    entry_cutoff = datetime.combine(
+        next_tse_business_date(signal_date),
+        ENTRY_CUTOFF_TIME_JST,
+        tzinfo=TOKYO,
+    ).astimezone(UTC)
+    return coverage_start <= fetched_at < entry_cutoff
 
 
-async def read_trade_mode(
-    *,
-    url: str,
-    secret_key: str,
-    transport: httpx.AsyncBaseTransport | None = None,
-) -> TradeMode:
-    async with httpx.AsyncClient(
-        base_url=url.rstrip("/"),
-        timeout=30.0,
-        headers={
-            "apikey": secret_key,
-            "Authorization": f"Bearer {secret_key}",
-            "Content-Type": "application/json",
-        },
-        transport=transport,
-    ) as client:
-        resp = await client.get(
-            "/rest/v1/system_status",
-            params={"select": "trade_mode", "id": "eq.1", "limit": "1"},
-        )
-    if resp.status_code >= 300:
-        raise PreflightError(
-            f"read failed: table=system_status status={resp.status_code} body={resp.text[:200]}"
-        )
-    rows = resp.json()
-    if not isinstance(rows, list) or not rows:
-        raise PreflightError("system_status row id=1 not found")
+def parse_aware_timestamp(value: object, *, field: str) -> datetime:
+    parsed = try_parse_aware_timestamp(value)
+    if parsed is None:
+        raise SystemExit(f"{field} must be an ISO timestamp with a timezone offset")
+    return parsed
+
+
+def try_parse_aware_timestamp(value: object) -> datetime | None:
+    if value in (None, ""):
+        return None
     try:
-        return TradeMode(str(rows[0]["trade_mode"]).lower())
-    except (KeyError, ValueError) as exc:
-        raise PreflightError(f"invalid system_status.trade_mode row: {rows[0]!r}") from exc
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(UTC)
 
 
-def strategy_signal_from_candidate(
-    candidate: dict[str, Any],
+def validated_fetch_metadata(
+    rows: list[dict[str, Any]],
     *,
-    confidence: float,
-    created_at: datetime,
-) -> StrategySignal:
-    return StrategySignal(
-        source=SignalSource.RULE,
-        symbol=str(candidate["symbol"]),
-        price=Decimal(str(candidate["entry_price_assumption"])),
-        action=Action.BUY,
-        confidence=confidence,
-        reasoning=json.dumps(
-            {
-                "candidate_id": CANDIDATE_ID,
-                "cluster_id": candidate["cluster_id"],
-                "event_ids": candidate["event_ids"],
-                "signal_date": candidate["signal_date"],
-                "entry_date": candidate["entry_date"],
-                "min_forecast_per": candidate["min_forecast_per"],
-                "missing_forecast_per": candidate["min_forecast_per"] is None,
-                "mode": "paper_observation",
-            },
-            ensure_ascii=False,
-        ),
-        holding_type=TradingStyle.SWING,
-        stop_loss_price=Decimal(str(candidate["stop_loss_price"])),
-        max_hold_days=MAX_HOLD_DAYS,
-        created_at=created_at,
-    )
+    signal_date: date | None,
+) -> tuple[datetime | None, bool]:
+    """Return the latest completed exporter response for ``signal_date``.
+
+    The completion marker is written after every response row.  Matching its
+    row count against rows carrying the same receipt timestamp prevents an
+    interrupted append, an empty legacy archive, or a stale zero-row artifact
+    from being presented as a causally verified fetch.
+    """
+
+    if signal_date is None:
+        return None, False
+    target = signal_date.isoformat()
+    latest_marker: dict[str, Any] | None = None
+    for row in rows:
+        if (
+            row.get("_roboinvest_record_type") != FETCH_METADATA_RECORD_TYPE
+            or str(row.get("_roboinvest_target_date", ""))[:10] != target
+        ):
+            continue
+        latest_marker = row
+    if latest_marker is None:
+        return None, False
+
+    fetched_at = try_parse_aware_timestamp(latest_marker.get("_roboinvest_fetched_at"))
+    try:
+        expected_count = int(latest_marker.get("_roboinvest_row_count"))
+    except (TypeError, ValueError):
+        return fetched_at, False
+    if fetched_at is None or expected_count < 0:
+        return fetched_at, False
+    actual_count = 0
+    for row in rows:
+        if _financial_row_date(row) != signal_date:
+            continue
+        raw_fetched_at = row.get("_roboinvest_fetched_at")
+        if raw_fetched_at in (None, ""):
+            continue
+        if try_parse_aware_timestamp(raw_fetched_at) == fetched_at:
+            actual_count += 1
+    return fetched_at, actual_count == expected_count
+
+
+def rows_for_completed_fetch(
+    rows: list[dict[str, Any]],
+    *,
+    signal_date: date,
+    fetched_at: datetime | None,
+) -> list[dict[str, Any]]:
+    """Select only source rows that were observable by the completed fetch.
+
+    The signal date uses exactly the latest completed response snapshot. Older
+    rows may supply already-public previous-forecast/dividend features. A
+    timestamped historical row known to have arrived only after this snapshot
+    is excluded, as are all future-dated rows.
+    """
+
+    if fetched_at is None:
+        raise ValueError("a completed fetch must have fetched_at")
+    selected: list[dict[str, Any]] = []
+    for row in rows:
+        if row.get("_roboinvest_record_type") == FETCH_METADATA_RECORD_TYPE:
+            selected.append(row)
+            continue
+        row_date = _financial_row_date(row)
+        if row_date is None or row_date > signal_date:
+            continue
+        raw_fetched_at = row.get("_roboinvest_fetched_at")
+        if raw_fetched_at in (None, ""):
+            if row_date < signal_date:
+                selected.append(row)
+            continue
+        row_fetched_at = try_parse_aware_timestamp(raw_fetched_at)
+        if row_fetched_at is None:
+            continue
+        if (row_date == signal_date and row_fetched_at == fetched_at) or (
+            row_date < signal_date and row_fetched_at <= fetched_at
+        ):
+            selected.append(row)
+    return selected
+
+
+def receipt_provenance_label(
+    *,
+    signal_date: date | None,
+    financial_rows: list[dict[str, Any]],
+    fetch_metadata_at: datetime | None,
+    fetch_metadata_complete: bool,
+    explicit_fetched_at: datetime | None,
+) -> str:
+    if signal_date is None:
+        return "not_date_scoped"
+    if fetch_metadata_complete:
+        return "export_metadata"
+    if fetch_metadata_at is not None:
+        return "incomplete_export_metadata"
+    if any(
+        _financial_row_date(row) == signal_date
+        and row.get("_roboinvest_fetched_at") not in (None, "")
+        for row in financial_rows
+    ):
+        return "row_metadata_without_completion"
+    if explicit_fetched_at is not None:
+        return "explicit_cli_unverified"
+    return "execution_time_fallback_unverified"
+
+
+def _financial_row_date(row: dict[str, Any]) -> date | None:
+    value = row.get("DisclosedDate") or row.get("DiscDate") or row.get("Date") or row.get("date")
+    if value in (None, ""):
+        return None
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+
+
+def feature_exclusion_row(
+    event: EventRecord,
+    *,
+    reason: str,
+    source_bar_date: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "cluster_id": event.event_cluster_id,
+        "symbol": event.symbol,
+        "signal_date": event.signal_date,
+        "reason": reason,
+        "event_ids": [event.event_id],
+        "data_available_at": event.data_available_at.isoformat(),
+        "source_received_at": max(event.disclosed_at, event.fetched_at).isoformat(),
+        "source_bar_date": source_bar_date,
+        "entry_date": event.entry_date,
+    }
+
+
+def count_exclusions(rows: list[dict[str, Any]], *, reason: str) -> int:
+    return sum(row.get("reason") == reason for row in rows)
 
 
 def detect_candidates(
     observations: list[ObservationRecord],
+    *,
+    symbol_names: dict[str, str] | None = None,
+    source_received_by_event_id: dict[str, datetime] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    symbol_names = {} if symbol_names is None else symbol_names
+    source_received_by_event_id = (
+        {} if source_received_by_event_id is None else source_received_by_event_id
+    )
     clusters: dict[str, list[ObservationRecord]] = defaultdict(list)
     for obs in observations:
         clusters[obs.trade_group_id or obs.event_cluster_id or obs.observation_id].append(obs)
@@ -370,7 +453,21 @@ def detect_candidates(
     for cluster_id, items in sorted(clusters.items()):
         if cluster_earnings_dividend_value_guard_allows(items, per_threshold=PER_THRESHOLD):
             for representative in cluster_trade_representatives(items):
-                candidates.append(candidate_row(cluster_id, representative, items))
+                candidates.append(
+                    candidate_row(
+                        cluster_id,
+                        representative,
+                        items,
+                        symbol_name=symbol_names.get(representative.symbol, ""),
+                        source_received_at=max(
+                            source_received_by_event_id.get(
+                                item.event_id,
+                                item.data_available_at,
+                            )
+                            for item in items
+                        ),
+                    )
+                )
             continue
         if cluster_earnings_dividend_increase_allows(items):
             exclusions.append(
@@ -390,21 +487,41 @@ def candidate_row(
     cluster_id: str,
     representative: ObservationRecord,
     items: list[ObservationRecord],
+    *,
+    symbol_name: str = "",
+    source_received_at: datetime,
 ) -> dict[str, Any]:
-    entry_price = Decimal(str(representative.entry_price))
+    feature_data_complete = all(
+        not (
+            item.data_available_at >= daily_bar_available_at(date.fromisoformat(item.signal_date))
+            and item.source_bar_date != item.signal_date
+        )
+        for item in items
+    )
     return {
         "candidate_id": CANDIDATE_ID,
+        "execution_candidate_id": f"{cluster_id}:{representative.observation_id}",
         "cluster_id": cluster_id,
         "observation_id": representative.observation_id,
         "event_id": representative.event_id,
         "event_ids": [obs.event_id for obs in items],
         "symbol": representative.symbol,
-        "symbol_name": getattr(representative, "symbol_name", ""),
+        "symbol_name": symbol_name,
         "signal_date": representative.signal_date,
         "entry_date": representative.entry_date,
         "feature_cutoff_at": representative.feature_cutoff_at.isoformat(),
-        "entry_price_assumption": str(representative.entry_price),
-        "stop_loss_price": str(entry_price * (Decimal("1") + CAT_STOP_PCT)),
+        "data_available_at": representative.data_available_at.isoformat(),
+        "source_received_at": source_received_at.isoformat(),
+        "feature_data_complete": feature_data_complete,
+        "valuation_reference_price": None
+        if representative.valuation_price is None
+        else str(representative.valuation_price),
+        "valuation_reference_bar_date": representative.source_bar_date,
+        "valuation_reference_available_at": None
+        if representative.source_bar_available_at is None
+        else representative.source_bar_available_at.isoformat(),
+        "entry_price_status": "unresolved_until_fresh_market_observation",
+        "catastrophic_stop_pct": str(CAT_STOP_PCT),
         "max_hold_days": MAX_HOLD_DAYS,
         "min_forecast_per": _min_forecast_per(items),
         "has_earnings_result": any(obs.event_type.value == "earnings_result" for obs in items),
@@ -430,6 +547,7 @@ def write_candidates_csv(path: Path, candidates: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fields = [
         "candidate_id",
+        "execution_candidate_id",
         "cluster_id",
         "observation_id",
         "event_id",
@@ -437,8 +555,15 @@ def write_candidates_csv(path: Path, candidates: list[dict[str, Any]]) -> None:
         "symbol_name",
         "signal_date",
         "entry_date",
-        "entry_price_assumption",
-        "stop_loss_price",
+        "feature_cutoff_at",
+        "data_available_at",
+        "source_received_at",
+        "feature_data_complete",
+        "valuation_reference_price",
+        "valuation_reference_bar_date",
+        "valuation_reference_available_at",
+        "entry_price_status",
+        "catastrophic_stop_pct",
         "max_hold_days",
         "min_forecast_per",
         "publish_ready",

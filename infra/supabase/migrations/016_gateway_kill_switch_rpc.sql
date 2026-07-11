@@ -1,0 +1,1 @@
+../../../contracts/sql/015_gateway_kill_switch_rpc.sql

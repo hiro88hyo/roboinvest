@@ -11,6 +11,8 @@ kabu.com（auカブコム証券 kabuステーション API）の WebSocket PUSH 
 - Supabase `watchlist` の起動時読込 + Realtime 購読、差分に応じた `/register` / `/unregister`
 - WebSocket `/kabusapi/websocket` への接続維持、PUSH メッセージのパース
 - PUSH JSON → `TickData`（約定 1 件） / `OrderBookSnapshot`（板スナップショット）の純粋変換
+- live WebSocket の板に、exchange event 時刻とは別の Feeder 受信時刻
+  `received_at` を付与（replay / legacy payload は `None`）
 - Pub/Sub `raw-market-data` への publish
 - WS 切断時の指数バックオフ再接続 + 再 `/register`
 
@@ -80,7 +82,7 @@ oms-paper / gateway と同じ 3 フェーズパターン。段階コミット �
   - kabu の 4xx は HTML を返すので `_check()` で本文を露出（`scripts/probe-kabu.py` と同じ方針）
 - `parser.py`: 純関数 `parse_push_message(payload: dict) -> list[TickData | OrderBookSnapshot]`
   - フィールド有無で Tick / OrderBook を判別、両方含むメッセージは 2 件返す
-  - 価格は **必ず `Decimal`**、`CurrentPriceTime` は `datetime`（タイムゾーンは JST、Pydantic 側で aware 保持）
+  - 価格は **必ず `Decimal`**、`CurrentPriceTime` は `datetime`（タイムゾーンは JST、Pydantic 側で aware 保持）。live session は受信点の aware UTC 時刻を `OrderBookSnapshot.received_at` に別途設定
 - ユニットテスト:
   - kabu_client: httpx の MockTransport で 200/4xx 双方
   - parser: kabu PUSH の JSON 例（fixtures に置く）→ TickData / OrderBookSnapshot 期待値

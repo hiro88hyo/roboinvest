@@ -6,9 +6,10 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
-from oms_paper.__main__ import main
+from oms_paper.__main__ import _opening_swing_exit_status_code, main
 from oms_paper._testing import DEFAULT_TS, make_order_book, make_order_request, make_paper_position
 from oms_paper.backtest.writer import write_jsonl, write_positions_json
+from oms_paper.streaming.runner import OpeningSwingExitStats
 from trade_contracts.enums import Side, TradingStyle
 
 
@@ -224,3 +225,29 @@ def test_cli_opening_swing_exits_dispatches_manual_command(
 
     assert rc == 7
     assert calls == [3]
+
+
+@pytest.mark.parametrize(
+    ("partial_exits", "no_fills", "write_errors", "expected"),
+    [
+        (0, 0, 0, 0),
+        (1, 0, 0, 1),
+        (0, 1, 0, 1),
+        (0, 0, 1, 1),
+    ],
+)
+def test_opening_swing_exit_status_code_fails_unresolved_exits(
+    partial_exits: int,
+    no_fills: int,
+    write_errors: int,
+    expected: int,
+) -> None:
+    stats = OpeningSwingExitStats(
+        positions_seen=1,
+        due_positions=1,
+        closed=0 if expected else 1,
+        partial_exits=partial_exits,
+        no_fills=no_fills,
+        write_errors=write_errors,
+    )
+    assert _opening_swing_exit_status_code(stats) == expected

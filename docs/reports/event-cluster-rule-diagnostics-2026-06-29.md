@@ -3,6 +3,17 @@
 This is an LLM-free multi-event cluster diagnostic. It does not register a paper/live candidate
 and does not change any production route.
 
+> **Erratum added 2026-07-10:** portfolio-level matched-random rows in this
+> historical report used an 8% catastrophic stop (`entry_price * 0.92`), while
+> selected observations used the registered 10% stop (`CAT_STOP_PCT=-0.10`).
+> Portfolio random percentiles, including execution-stress and block-stability
+> random percentiles, are therefore non-comparable and must not be used as gate
+> evidence. Selected-path trade counts, PnL, PF, and drawdown remain recorded
+> below as historical calculations; their presence does not authorize paper
+> observation. The simulator is corrected for future preregistered runs, but
+> the frozen locked-OOS window will not be rerun or reinspected without the
+> explicit approval required by ADR-0005.
+
 Inputs:
 
 - Observations: `out/event-research-real-pit/observations.jsonl`
@@ -212,6 +223,10 @@ Train/validation observation-level result before locked-OOS evaluation:
 
 Train/validation portfolio-level result before locked-OOS evaluation:
 
+The selected-path columns remain historical results. The `Random percentile`
+column in this and the later portfolio tables is subject to the erratum above
+and is not comparable.
+
 | Split | Capital | Opened | Net PnL | PF | Max DD | Random percentile |
 |---|---:|---:|---:|---:|---:|---:|
 | train | 1,000,000 | 35 | 279,626 | 3.262 | 31,158 | 0.977 |
@@ -246,6 +261,9 @@ V1 execution stress:
 
 V1 60 trading-session block stability:
 
+The `Median random percentile` values below are also affected by the mismatched
+random stop and are retained only as historical output.
+
 | Capital | Active blocks | Positive block ratio | Worst block PnL | Median block PnL | Worst block DD | Median random percentile | Opened trades |
 |---:|---:|---:|---:|---:|---:|---:|---:|
 | 1,000,000 | 16 | 0.875 | -41,194 | 25,716 | 41,194 | 0.800 | 55 |
@@ -254,4 +272,8 @@ V1 60 trading-session block stability:
 
 V1 improves aggregate locked OOS and reduces the 1M worst block loss from `-57,081` to `-41,194`,
 but the 2026-04-02 to 2026-05-15 block remains weak with 1M random percentile `0.010`.
-Therefore v1 remains research-continuation only. It is not a paper observation candidate yet.
+The selected-path results remain research context, but the random percentile
+claims in this report are non-comparable under the erratum above. Frozen-v1
+paper observation is **BLOCKED** pending a valid matched-random comparison and
+execution reproduction. Do not rerun the frozen locked-OOS window to repair the
+historical comparison without ADR-0005 approval.

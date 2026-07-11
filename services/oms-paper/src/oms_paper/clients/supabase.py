@@ -2,14 +2,12 @@
 
 OMS Paper が触る範囲:
 * ``system_status`` の R (14:50 closeout の trading_style 判定のみ。書き込みなし)
-* ``positions`` (trade_type='paper') の CRUD
-  - 1 銘柄の取得 (apply_fill 用に既存 PaperPosition を読む)
-  - 全件取得 (closeout 用)
-  - INSERT (新規ポジション)
-  - PATCH (quantity / entry_price 更新。current_price と unrealized_pnl は
-    Feature Engine が更新するため OMS Paper は触らない)
-  - DELETE (全決済)
-* ``trades_paper`` の INSERT (約定 1 件 = 1 行)
+* ``positions`` (trade_type='paper') の R (closeout / monitor 用)
+* ``oms_paper_update_stop_loss`` RPC (generation-checked trailing stop)
+* ``oms_paper_apply_fill`` RPC (全 fill の約定 + position 遷移を原子的に永続化)
+
+fill 用の direct INSERT / UPDATE / DELETE API は意図的に公開しない。通常注文、
+closeout、swing/day stop の全経路を RPC に限定し、2 段書き込みへの回帰を防ぐ。
 
 PostgREST 直叩き。Supabase SDK は使わない。fail-closed で不正レスポンス時は
 例外を投げ、Pub/Sub redelivery に委ねる。
@@ -19,21 +17,32 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any, Self
-from uuid import UUID
 
 import httpx
 from pydantic import ValidationError
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from trade_contracts.enums import Side, TradingStyle
 from trade_contracts.risk import KillSwitchState
 
-from ..models import PaperFillRecord, PaperPosition
+from ..models import (
+    PaperFillApplyResult,
+    PaperFillRecord,
+    PaperPosition,
+    PaperStopUpdateResult,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class SupabaseError(RuntimeError):
     """Supabase (PostgREST) error wrapper."""
+
+
+class SupabaseTransientError(SupabaseError):
+    """Retryable transport/server-side Supabase failure."""
 
 
 @dataclass(slots=True)
@@ -68,7 +77,7 @@ class SupabaseClient:
         reraise=True,
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((httpx.HTTPError, SupabaseError)),
+        retry=retry_if_exception_type((httpx.HTTPError, SupabaseTransientError)),
     )
     async def read_system_status(self) -> KillSwitchState:
         """``id=1`` 行を読み、KillSwitchState にパースする。"""
@@ -90,11 +99,12 @@ class SupabaseClient:
         reraise=True,
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((httpx.HTTPError, SupabaseError)),
+        retry=retry_if_exception_type((httpx.HTTPError, SupabaseTransientError)),
     )
     async def read_paper_position(self, *, symbol: str) -> PaperPosition | None:
         """``(symbol, trade_type='paper')`` の行を読み、PaperPosition で返す。
 
+        monitor が cached position の実在を約定直前に確認するために使う。
         該当行が無ければ ``None``。``current_price`` / ``unrealized_pnl`` 列は
         ``PaperPosition`` に含まれないので無視する。
         """
@@ -122,7 +132,7 @@ class SupabaseClient:
         reraise=True,
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((httpx.HTTPError, SupabaseError)),
+        retry=retry_if_exception_type((httpx.HTTPError, SupabaseTransientError)),
     )
     async def list_paper_positions(self) -> list[PaperPosition]:
         """``trade_type='paper'`` の全 positions を返す (closeout 用)。"""
@@ -148,153 +158,117 @@ class SupabaseClient:
         reraise=True,
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((httpx.HTTPError, SupabaseError)),
+        retry=retry_if_exception_type((httpx.HTTPError, SupabaseTransientError)),
     )
-    async def insert_paper_position(self, position: PaperPosition) -> None:
-        """新規 paper position を INSERT する。
+    async def update_paper_position_stop_loss(
+        self,
+        *,
+        symbol: str,
+        expected_opened_at: datetime,
+        stop_loss_price: str,
+    ) -> PaperStopUpdateResult:
+        """``opened_at`` を照合し、trailing stop だけを RPC 更新する。
 
-        ``current_price`` は ``entry_price`` で初期化、``unrealized_pnl`` は 0。
-        以降の ``current_price`` / ``unrealized_pnl`` 更新は Feature Engine の
-        責務 (OMS Paper は触らない)。
+        fill と同じ symbol advisory lock に参加するため、古い position A の判断を
+        同じ symbol の新しい position B へ誤適用しない。
         """
         assert self._client is not None
-        row = _position_to_insert_row(position)
         resp = await self._client.post(
-            "/rest/v1/positions",
-            headers={"Prefer": "return=minimal"},
-            json=[row],
-        )
-        self._raise_for_status(resp, table="positions", op="insert")
-        logger.debug(
-            "supabase insert: positions symbol=%s qty=%d", position.symbol, position.quantity
-        )
-
-    @retry(
-        reraise=True,
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((httpx.HTTPError, SupabaseError)),
-    )
-    async def update_paper_position_quantity(
-        self, *, symbol: str, quantity: int, entry_price: str
-    ) -> None:
-        """既存 paper position の ``quantity`` / ``entry_price`` を PATCH。
-
-        ``current_price`` / ``unrealized_pnl`` は Feature Engine 管理なので
-        ここでは触らない。``entry_price`` は文字列で受け取り、Decimal の
-        丸めを呼び出し側に委ねる。
-        """
-        assert self._client is not None
-        resp = await self._client.patch(
-            "/rest/v1/positions",
-            params={"symbol": f"eq.{symbol}", "trade_type": "eq.paper"},
-            headers={"Prefer": "return=minimal"},
-            json={"quantity": quantity, "entry_price": entry_price},
-        )
-        self._raise_for_status(resp, table="positions", op="update")
-        logger.debug(
-            "supabase update: positions symbol=%s qty=%d entry=%s", symbol, quantity, entry_price
-        )
-
-    @retry(
-        reraise=True,
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((httpx.HTTPError, SupabaseError)),
-    )
-    async def update_paper_position_stop_loss(self, *, symbol: str, stop_loss_price: str) -> None:
-        """既存 paper position の ``stop_loss_price`` のみを PATCH。
-
-        swing トレーリングストップ用。``quantity`` / ``entry_price`` は触らない。
-        ``stop_loss_price`` は文字列で受け取り、Decimal の丸めを呼び出し側
-        (``swing_monitor.evaluate_swing_exit``) に委ねる。
-        """
-        assert self._client is not None
-        resp = await self._client.patch(
-            "/rest/v1/positions",
-            params={"symbol": f"eq.{symbol}", "trade_type": "eq.paper"},
-            headers={"Prefer": "return=minimal"},
-            json={"stop_loss_price": stop_loss_price},
-        )
-        self._raise_for_status(resp, table="positions", op="update_stop_loss")
-        logger.debug("supabase update: positions symbol=%s stop_loss=%s", symbol, stop_loss_price)
-
-    @retry(
-        reraise=True,
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((httpx.HTTPError, SupabaseError)),
-    )
-    async def delete_paper_position(self, *, symbol: str) -> None:
-        """``(symbol, trade_type='paper')`` の行を DELETE。冪等。"""
-        assert self._client is not None
-        resp = await self._client.delete(
-            "/rest/v1/positions",
-            params={"symbol": f"eq.{symbol}", "trade_type": "eq.paper"},
-            headers={"Prefer": "return=minimal"},
-        )
-        self._raise_for_status(resp, table="positions", op="delete")
-        logger.debug("supabase delete: positions symbol=%s", symbol)
-
-    @retry(
-        reraise=True,
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((httpx.HTTPError, SupabaseError)),
-    )
-    async def paper_trade_exists_for_signal(self, signal_id: UUID) -> bool:
-        """unified_signal_id が既に trades_paper に存在するか確認する (冪等性チェック)。"""
-        assert self._client is not None
-        resp = await self._client.get(
-            "/rest/v1/trades_paper",
-            params={
-                "select": "trade_id",
-                "unified_signal_id": f"eq.{signal_id}",
-                "limit": "1",
+            "/rest/v1/rpc/oms_paper_update_stop_loss",
+            json={
+                "p_symbol": symbol,
+                "p_expected_position_opened_at": expected_opened_at.isoformat(),
+                "p_stop_loss_price": stop_loss_price,
             },
         )
-        self._raise_for_status(resp, table="trades_paper", op="exists_check")
-        rows = resp.json()
-        return isinstance(rows, list) and len(rows) > 0
+        self._raise_for_status(resp, table="oms_paper_update_stop_loss", op="rpc")
+        result = _parse_stop_update_result(resp)
+        logger.debug(
+            "supabase rpc: stop update symbol=%s outcome=%s stop_loss=%s",
+            symbol,
+            result.outcome.value,
+            stop_loss_price,
+        )
+        return result
 
     @retry(
         reraise=True,
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((httpx.HTTPError, SupabaseError)),
+        retry=retry_if_exception_type((httpx.HTTPError, SupabaseTransientError)),
     )
-    async def insert_trade_paper(self, record: PaperFillRecord) -> None:
-        """擬似約定を ``trades_paper`` に INSERT する (1 約定 = 1 行)。"""
+    async def apply_paper_fill(
+        self,
+        *,
+        record: PaperFillRecord,
+        new_holding_type: TradingStyle | None,
+        expected_position_opened_at: datetime | None = None,
+        new_target_price: Decimal | None = None,
+        new_stop_loss_price: Decimal | None = None,
+        new_max_hold_days: int | None = None,
+        new_scheduled_exit_date: date | None = None,
+        new_trailing_stop_pct: Decimal | None = None,
+    ) -> PaperFillApplyResult:
+        """約定と position 遷移を ``oms_paper_apply_fill`` で原子的に確定する。
+
+        BUY は RPC 実行時点で position が存在しない可能性を常に考慮し、
+        ``new_holding_type`` を必須とする。返却された position が Supabase 上の
+        authoritative state であり、呼び出し側の事前 read より優先する。
+        """
+
         assert self._client is not None
-        row = {
-            "trade_id": str(record.trade_id),
-            "symbol": record.symbol,
-            "side": record.side.value,
-            "quantity": record.quantity,
-            "price": str(record.price),
-            "signal_source": record.signal_source.value,
-            "unified_signal_id": (
+        if record.side is Side.BUY and new_holding_type is None:
+            raise SupabaseError("new_holding_type is required for BUY apply_paper_fill")
+
+        params = {
+            "p_order_id": str(record.order_id),
+            "p_trade_id": str(record.trade_id),
+            "p_symbol": record.symbol,
+            "p_side": record.side.value,
+            "p_filled_quantity": record.quantity,
+            "p_fill_price": str(record.price),
+            "p_signal_source": record.signal_source.value,
+            "p_unified_signal_id": (
                 str(record.unified_signal_id) if record.unified_signal_id is not None else None
             ),
-            "executed_at": record.executed_at.isoformat(),
+            "p_executed_at": record.executed_at.isoformat(),
+            "p_expected_position_opened_at": (
+                expected_position_opened_at.isoformat()
+                if expected_position_opened_at is not None
+                else None
+            ),
+            "p_new_holding_type": (
+                new_holding_type.value if new_holding_type is not None else None
+            ),
+            "p_new_target_price": (str(new_target_price) if new_target_price is not None else None),
+            "p_new_stop_loss_price": (
+                str(new_stop_loss_price) if new_stop_loss_price is not None else None
+            ),
+            "p_new_max_hold_days": new_max_hold_days,
+            "p_new_scheduled_exit_date": (
+                new_scheduled_exit_date.isoformat() if new_scheduled_exit_date is not None else None
+            ),
+            "p_new_trailing_stop_pct": (
+                str(new_trailing_stop_pct) if new_trailing_stop_pct is not None else None
+            ),
         }
         resp = await self._client.post(
-            "/rest/v1/trades_paper",
-            headers={"Prefer": "return=minimal"},
-            json=[row],
+            "/rest/v1/rpc/oms_paper_apply_fill",
+            json=params,
         )
-        self._raise_for_status(resp, table="trades_paper", op="insert")
+        self._raise_for_status(resp, table="oms_paper_apply_fill", op="rpc")
+        result = _parse_apply_fill_result(resp)
         logger.debug(
-            "supabase insert: trades_paper trade_id=%s symbol=%s side=%s qty=%d",
-            record.trade_id,
-            record.symbol,
-            record.side.value,
-            record.quantity,
+            "supabase rpc: oms_paper_apply_fill order_id=%s outcome=%s action=%s",
+            record.order_id,
+            result.outcome.value,
+            result.position_action.value,
         )
+        return result
 
     def _raise_for_status(self, resp: httpx.Response, *, table: str, op: str) -> None:
         if resp.status_code >= 500:
-            raise SupabaseError(
+            raise SupabaseTransientError(
                 f"transient error: table={table} op={op} status={resp.status_code} "
                 f"body={resp.text[:200]}"
             )
@@ -317,27 +291,72 @@ def _parse_paper_position(row: dict[str, Any]) -> PaperPosition:
         raise SupabaseError(f"invalid paper position row: {exc}") from exc
 
 
-def _position_to_insert_row(position: PaperPosition) -> dict[str, Any]:
-    entry = str(position.entry_price)
-    row: dict[str, Any] = {
-        "symbol": position.symbol,
-        "trade_type": "paper",
-        "side": "LONG",
-        "quantity": position.quantity,
-        "entry_price": entry,
-        "current_price": entry,
-        "unrealized_pnl": "0",
-        "holding_type": position.holding_type.value,
-        "opened_at": position.opened_at.isoformat(),
+def _parse_apply_fill_result(resp: httpx.Response) -> PaperFillApplyResult:
+    """Strictly parse the RPC's single result row and nested authoritative position."""
+
+    try:
+        payload: object = resp.json()
+    except ValueError as exc:
+        raise SupabaseError("invalid oms_paper_apply_fill response: malformed JSON") from exc
+    if not isinstance(payload, list) or len(payload) != 1:
+        raise SupabaseError("invalid oms_paper_apply_fill response: expected exactly one row")
+    raw_row = payload[0]
+    if not isinstance(raw_row, dict) or not all(isinstance(key, str) for key in raw_row):
+        raise SupabaseError("invalid oms_paper_apply_fill response: row must be an object")
+
+    row: dict[str, Any] = dict(raw_row)
+    expected_keys = {
+        "outcome",
+        "reason",
+        "committed_trade_id",
+        "position_action",
+        "resulting_position",
     }
-    if position.target_price is not None:
-        row["target_price"] = str(position.target_price)
-    if position.stop_loss_price is not None:
-        row["stop_loss_price"] = str(position.stop_loss_price)
-    if position.max_hold_days is not None:
-        row["max_hold_days"] = position.max_hold_days
-    if position.scheduled_exit_date is not None:
-        row["scheduled_exit_date"] = position.scheduled_exit_date.isoformat()
-    if position.trailing_stop_pct is not None:
-        row["trailing_stop_pct"] = str(position.trailing_stop_pct)
-    return row
+    if set(row) != expected_keys:
+        raise SupabaseError("invalid oms_paper_apply_fill response: unexpected result columns")
+
+    raw_position = row["resulting_position"]
+    if raw_position is not None:
+        if not isinstance(raw_position, dict) or not all(
+            isinstance(key, str) for key in raw_position
+        ):
+            raise SupabaseError(
+                "invalid oms_paper_apply_fill response: resulting_position must be an object"
+            )
+        row["resulting_position"] = _parse_paper_position(dict(raw_position))
+
+    try:
+        return PaperFillApplyResult.model_validate(row)
+    except ValidationError as exc:
+        raise SupabaseError(f"invalid oms_paper_apply_fill response: {exc}") from exc
+
+
+def _parse_stop_update_result(resp: httpx.Response) -> PaperStopUpdateResult:
+    """Strictly parse the generation-checked trailing-stop RPC response."""
+
+    try:
+        payload: object = resp.json()
+    except ValueError as exc:
+        raise SupabaseError("invalid oms_paper_update_stop_loss response: malformed JSON") from exc
+    if not isinstance(payload, list) or len(payload) != 1:
+        raise SupabaseError("invalid oms_paper_update_stop_loss response: expected one row")
+    raw_row = payload[0]
+    if not isinstance(raw_row, dict) or set(raw_row) != {
+        "outcome",
+        "reason",
+        "resulting_position",
+    }:
+        raise SupabaseError("invalid oms_paper_update_stop_loss response: unexpected columns")
+
+    row: dict[str, Any] = dict(raw_row)
+    raw_position = row["resulting_position"]
+    if raw_position is not None:
+        if not isinstance(raw_position, dict):
+            raise SupabaseError(
+                "invalid oms_paper_update_stop_loss response: position must be an object"
+            )
+        row["resulting_position"] = _parse_paper_position(dict(raw_position))
+    try:
+        return PaperStopUpdateResult.model_validate(row)
+    except ValidationError as exc:
+        raise SupabaseError(f"invalid oms_paper_update_stop_loss response: {exc}") from exc

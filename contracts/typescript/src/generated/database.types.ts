@@ -105,6 +105,48 @@ export type Database = {
         }
         Relationships: []
       }
+      gateway_risk_reservations: {
+        Row: {
+          notional_amount: number
+          order_id: string
+          reason: string | null
+          released_at: string | null
+          reserved_at: string
+          risk_amount: number
+          side: string
+          status: string
+          symbol: string
+          trade_mode: string
+          trading_date: string
+        }
+        Insert: {
+          notional_amount: number
+          order_id: string
+          reason?: string | null
+          released_at?: string | null
+          reserved_at?: string
+          risk_amount: number
+          side: string
+          status?: string
+          symbol: string
+          trade_mode: string
+          trading_date: string
+        }
+        Update: {
+          notional_amount?: number
+          order_id?: string
+          reason?: string | null
+          released_at?: string | null
+          reserved_at?: string
+          risk_amount?: number
+          side?: string
+          status?: string
+          symbol?: string
+          trade_mode?: string
+          trading_date?: string
+        }
+        Relationships: []
+      }
       market_regime: {
         Row: {
           buy_enabled: boolean
@@ -338,6 +380,7 @@ export type Database = {
       trades_paper: {
         Row: {
           executed_at: string
+          order_id: string | null
           price: number
           quantity: number
           side: string
@@ -348,6 +391,7 @@ export type Database = {
         }
         Insert: {
           executed_at?: string
+          order_id?: string | null
           price: number
           quantity: number
           side: string
@@ -358,6 +402,7 @@ export type Database = {
         }
         Update: {
           executed_at?: string
+          order_id?: string | null
           price?: number
           quantity?: number
           side?: string
@@ -408,7 +453,96 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      gateway_check_and_reserve_risk: {
+        Args: {
+          p_notional_amount: number
+          p_order_id: string
+          p_risk_amount: number
+          p_side: string
+          p_symbol: string
+          p_trade_mode: string
+          p_trading_date: string
+        }
+        Returns: {
+          active_risk_after: number
+          active_risk_before: number
+          daily_loss_limit: number
+          daily_pnl: number
+          monthly_loss_limit: number
+          monthly_pnl: number
+          passed: boolean
+          reason: string
+          reserved: boolean
+          weekly_loss_limit: number
+          weekly_pnl: number
+        }[]
+      }
+      gateway_check_kill_switch: {
+        Args: never
+        Returns: {
+          daily_loss_limit: number
+          daily_pnl: number
+          disabled: boolean
+          id: number
+          is_trading_allowed: boolean
+          monthly_loss_limit: number
+          monthly_pnl: number
+          passed: boolean
+          reason: string
+          trade_mode: string
+          trading_style: string
+          updated_at: string
+          weekly_loss_limit: number
+          weekly_pnl: number
+        }[]
+      }
+      gateway_release_risk_reservation: {
+        Args: { p_order_id: string; p_reason?: string }
+        Returns: {
+          order_id: string
+          released: boolean
+          status: string
+        }[]
+      }
+      oms_paper_apply_fill: {
+        Args: {
+          p_executed_at: string
+          p_expected_position_opened_at: string
+          p_fill_price: number
+          p_filled_quantity: number
+          p_new_holding_type: string
+          p_new_max_hold_days: number
+          p_new_scheduled_exit_date: string
+          p_new_stop_loss_price: number
+          p_new_target_price: number
+          p_new_trailing_stop_pct: number
+          p_order_id: string
+          p_side: string
+          p_signal_source: string
+          p_symbol: string
+          p_trade_id: string
+          p_unified_signal_id: string
+        }
+        Returns: {
+          committed_trade_id: string
+          outcome: string
+          position_action: string
+          reason: string
+          resulting_position: Json
+        }[]
+      }
+      oms_paper_update_stop_loss: {
+        Args: {
+          p_expected_position_opened_at: string
+          p_stop_loss_price: number
+          p_symbol: string
+        }
+        Returns: {
+          outcome: string
+          reason: string
+          resulting_position: Json
+        }[]
+      }
     }
     Enums: {
       [_ in never]: never

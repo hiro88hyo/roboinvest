@@ -120,6 +120,154 @@ async def test_run_closeout_scheduler_can_run_zero_iterations() -> None:
     assert sleeps == []
 
 
+async def test_run_closeout_scheduler_logs_incomplete_partial_exit(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class _PartialRunner:
+        calls = 0
+
+        async def run_closeout(self) -> CloseoutStats:
+            self.calls += 1
+            return CloseoutStats(
+                triggered=True,
+                skipped_reason=None,
+                positions_seen=1,
+                closed=0,
+                no_fills=0,
+                write_errors=0,
+                partial_exits=1,
+            )
+
+    async def _sleep(_: float) -> None:
+        return None
+
+    caplog.set_level("ERROR", logger="oms_paper.scheduler")
+    runner = _PartialRunner()
+    await run_closeout_scheduler(
+        cast(StreamRunner, runner),
+        clock=lambda: datetime(2026, 4, 25, 14, 50, tzinfo=JST),
+        sleep=_sleep,
+        iterations=1,
+    )
+
+    assert "closeout incomplete" in caplog.text
+    assert "partial_exits=1" in caplog.text
+    assert runner.calls == 4
+
+
+async def test_run_closeout_scheduler_retries_and_recovers_same_day() -> None:
+    class _RecoveringRunner:
+        calls = 0
+
+        async def run_closeout(self) -> CloseoutStats:
+            self.calls += 1
+            return CloseoutStats(
+                triggered=True,
+                skipped_reason=None,
+                positions_seen=1,
+                closed=1 if self.calls > 1 else 0,
+                no_fills=0,
+                write_errors=0,
+                partial_exits=0 if self.calls > 1 else 1,
+            )
+
+    sleeps: list[float] = []
+
+    async def _sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    runner = _RecoveringRunner()
+    results = await run_closeout_scheduler(
+        cast(StreamRunner, runner),
+        clock=lambda: datetime(2026, 4, 25, 14, 50, tzinfo=JST),
+        sleep=_sleep,
+        iterations=1,
+        incomplete_retry_delay_seconds=2.0,
+    )
+
+    assert runner.calls == 2
+    assert sleeps == [0.0, 2.0]
+    assert results[0].closed == 1
+    assert results[0].partial_exits == 0
+
+
+async def test_run_closeout_scheduler_retries_preflight_failure() -> None:
+    class _RecoveringPreflightRunner:
+        calls = 0
+
+        async def run_closeout(self) -> CloseoutStats:
+            self.calls += 1
+            if self.calls == 1:
+                return CloseoutStats(
+                    triggered=False,
+                    skipped_reason="read_system_status_failed",
+                    positions_seen=0,
+                    closed=0,
+                    no_fills=0,
+                    write_errors=0,
+                )
+            return CloseoutStats(
+                triggered=True,
+                skipped_reason=None,
+                positions_seen=1,
+                closed=1,
+                no_fills=0,
+                write_errors=0,
+            )
+
+    sleeps: list[float] = []
+
+    async def _sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    runner = _RecoveringPreflightRunner()
+    results = await run_closeout_scheduler(
+        cast(StreamRunner, runner),
+        clock=lambda: datetime(2026, 4, 25, 14, 50, tzinfo=JST),
+        sleep=_sleep,
+        iterations=1,
+        incomplete_retry_delay_seconds=2.0,
+    )
+
+    assert runner.calls == 2
+    assert sleeps == [0.0, 2.0]
+    assert results[0].closed == 1
+
+
+async def test_run_closeout_scheduler_does_not_log_persistent_preflight_failure_as_recovered(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class _FailingPreflightRunner:
+        calls = 0
+
+        async def run_closeout(self) -> CloseoutStats:
+            self.calls += 1
+            return CloseoutStats(
+                triggered=False,
+                skipped_reason="read_system_status_failed",
+                positions_seen=0,
+                closed=0,
+                no_fills=0,
+                write_errors=0,
+            )
+
+    async def _sleep(_: float) -> None:
+        return None
+
+    caplog.set_level("INFO", logger="oms_paper.scheduler")
+    runner = _FailingPreflightRunner()
+    await run_closeout_scheduler(
+        cast(StreamRunner, runner),
+        clock=lambda: datetime(2026, 4, 25, 14, 50, tzinfo=JST),
+        sleep=_sleep,
+        iterations=1,
+    )
+
+    assert runner.calls == 4
+    assert "closeout incomplete after retries" in caplog.text
+    assert "closeout recovered" not in caplog.text
+
+
 async def test_run_closeout_scheduler_first_fire_immediate_when_target_in_past() -> None:
     fake = _FakeRunner()
     sleeps: list[float] = []
