@@ -24,7 +24,7 @@
 - 全 9 サービス + Dashboard は実装済み。
 - 現在の最優先は event candidate の因果性修正。運用候補と研究用
   forward label を分離し、J-Quants export の受信時刻 provenance と
-  signal-date OHLCV だけで dry-run artifact を再現可能にする。
+  disclosure-time の feature vintage を分離して dry-run artifact を再現する。
 - event の relative-stop execution contract は実装済み。
   `StrategySignal` / `UnifiedTradeSignal` / `OrderRequest` は相対 stop と
   holding metadata を運び、Gateway は live BUY の相対 stop を拒否し、OMS Paper
@@ -33,11 +33,24 @@
 - Feeder `received_at`、専用 `event-paper-raw-books`、PAPER_ONLY の
   Gateway/Order/OMS 防御、strategy/candidate pairing 分離、決定的 ID、OMS の
   wall-clock stale/future 判定も実装済み。
-- event `--publish-paper` は引き続き fail closed。専用 subscription を読む
-  publisherと Pub/Sub emulator E2E が揃うまで解除しない。OMS Paper の
-  trade/position atomic persistence は実装・ローカル実 RPC 検証済みだが、
-  target Supabase への `contracts/sql/018_oms_paper_apply_fill_rpc.sql`
-  （infra migration 019）適用と health check は publish 前提。
+- detector 内蔵の event `--publish-paper` は引き続き fail closed。独立した
+  paper-only one-shot publisher、single-attempt CAS journal、confirmed/ambiguous
+  receipt、Pub/Sub + Supabase 実 E2E はローカル実装・検証済み。ただし現
+  publisher は `opening_transport_stress_v1` で、凍結済み next-open / 20日目
+  close を再現せず `comparable_to_registered_backtest=false`。そのため trades/PnL
+  は v1 evidence に数えず、target 実行は禁止。加えて将来の実行には
+  `contracts/sql/018_oms_paper_apply_fill_rpc.sql`（infra migration 019）と
+  `contracts/sql/019_event_paper_claim_cas_rpc.sql`（infra migration 020）の適用、
+  3 RPC health、および単一 coordinator が所有する managed subscription の
+  確認が publish 前提。
+- detector は post-close 時点で signal-date OHLCV が欠けても凍結済み選定を
+  落とさず `feature_data_complete=false` として記録する。artifact は報告可能だが、
+  pre-open/watchlist/publisher は実行を拒否する。これによりデータ欠損を理由に
+  research cohort を変更しない。
+- ローカル transport stress は loopback Pub/Sub emulator + `--no-seek`、
+  loopback Supabase、`trade-ai-dev` / `local-dev` project の組合せだけ許可する。
+  remote emulator、cloud Supabase、production project は client 構築前に拒否し、
+  event 用 Supabase client と emulator gRPC channel は ambient proxy を継承しない。
 - 2026-07-09 / 2026-07-10 の legacy detector による候補 0 件は、T+1 OHLCV
   依存による構造的 false zero の可能性があるため unreliable / inconclusive。
   候補不在の証拠にも、実在した証拠にも使わない。
@@ -104,10 +117,10 @@
      `StrategySignal.price`、絶対 stop に使用していたことを確認。
    - `fix/event-candidate-causality` では運用候補特徴量と研究用 forward label を分離し、
      entry date を未来 OHLCV ではなく東証営業日カレンダーから解決する。
-  - 候補 artifact は entry price / absolute stop を持たず、最新 signal date の
-    OHLCV だけで生成できる。J-Quants exporter が記録した受信時刻
-    provenance を保持し、signal date 終了後から次営業日 09:00 JST 前までの
-    complete snapshot だけを運用 artifact として認める。
+   - 候補 artifact は entry price / absolute stop を持たない。研究と同じ
+     disclosure-time `data_available_at/feature_cutoff_at` を保持し、翌朝の実受信は
+     `source_received_at` に分離する。signal date 終了後から次営業日 09:00 JST
+     前までの complete snapshot だけを運用 artifact として認める。
    - legacy detector の `candidate_count=0` は構造的な偽陰性の可能性が
      あるため unreliable / inconclusive。候補不在と断定しない。
    - relative stop は `0 < stop_loss_pct < 1`、absolute stop と排他にして
@@ -126,8 +139,11 @@
      SQL の1円平均単価丸めを実装。ローカル実 RPC の並行 BUY・時刻/約定値が
      変わる redelivery・partial/full SELL・FK rollback・ABA reject・並行 trailing
      stop の単調増加・anon deny を確認済み。
-   - event `--publish-paper` は、専用 subscription を読む publisher、target DB
-     migration/health check、Pub/Sub emulator E2E を実装するまで fail closed。
+   - detector 内蔵の event `--publish-paper` は fail closed のまま。独立 publisher
+     と実 E2E は `opening_transport_stress_v1` として完成したが、next-open / 20日目
+     close の整合と stop 条件を揃えた matched-random evidence がない。target DB の
+     両 migration/3 RPC health、managed subscription の単一 coordinator 所有も
+     含め、すべて解消するまで activation しない。
    - kill switch、PER threshold、20日 exit、-10% stop の戦略値は変更しない。
 
 0. **2026-06-23 strategy reset: 既存 intraday strategy は live 候補から外す**

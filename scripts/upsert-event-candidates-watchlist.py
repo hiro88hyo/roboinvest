@@ -11,6 +11,11 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from strategy_rule.event_paper.artifact import (
+    EventArtifactError,
+    EventPaperArtifact,
+    load_event_paper_artifact,
+)
 
 EVENT_CAPTURE_SCORE = 0
 DEFAULT_MAX_SYMBOLS = 10
@@ -28,9 +33,15 @@ def main() -> int:
     parser.add_argument("--timeout", type=float, default=30.0)
     args = parser.parse_args()
 
-    payload = json.loads(args.candidates_json.read_text(encoding="utf-8"))
+    try:
+        artifact = load_event_paper_artifact(args.candidates_json).artifact
+        if artifact.candidates:
+            artifact.validate_target_date(artifact.candidates[0].entry_date)
+    except EventArtifactError as exc:
+        print(f"unsafe event candidate artifact: {exc}", file=sys.stderr)
+        return 2
     rows = build_watchlist_rows(
-        payload,
+        artifact,
         valid_date=args.valid_date,
         max_symbols=args.max_symbols,
     )
@@ -55,7 +66,7 @@ def main() -> int:
 
     result = {
         "mode": "dry_run" if args.dry_run else "upsert",
-        "candidate_count": len(payload.get("candidates", [])),
+        "candidate_count": len(artifact.candidates),
         "planned_count": len(rows),
         "inserted_count": len(inserted),
         "skipped_existing_count": len(skipped_existing),
@@ -74,7 +85,7 @@ def main() -> int:
 
 
 def build_watchlist_rows(
-    payload: dict[str, Any],
+    artifact: EventPaperArtifact,
     *,
     valid_date: date | None,
     max_symbols: int,
@@ -82,12 +93,10 @@ def build_watchlist_rows(
     if max_symbols <= 0:
         raise ValueError("max_symbols must be positive")
     by_key: dict[tuple[str, str], dict[str, Any]] = {}
-    for candidate in payload.get("candidates", []):
-        symbol = str(candidate["symbol"])
+    for candidate in artifact.candidates:
+        symbol = candidate.symbol
         row_valid_date = (
-            valid_date.isoformat()
-            if valid_date is not None
-            else str(candidate.get("entry_date") or candidate.get("signal_date"))
+            valid_date.isoformat() if valid_date is not None else candidate.entry_date.isoformat()
         )
         key = (row_valid_date, symbol)
         by_key.setdefault(
@@ -95,15 +104,15 @@ def build_watchlist_rows(
             {
                 "symbol": symbol,
                 "valid_date": row_valid_date,
-                "symbol_name": str(candidate.get("symbol_name") or ""),
+                "symbol_name": candidate.symbol_name,
                 "score": EVENT_CAPTURE_SCORE,
                 "selected_reasons": {
                     "reasons": ["event_capture"],
                     "event_capture": True,
-                    "candidate_id": candidate.get("candidate_id"),
-                    "cluster_id": candidate.get("cluster_id"),
-                    "signal_date": candidate.get("signal_date"),
-                    "entry_date": candidate.get("entry_date"),
+                    "candidate_id": candidate.candidate_id,
+                    "cluster_id": candidate.cluster_id,
+                    "signal_date": candidate.signal_date.isoformat(),
+                    "entry_date": candidate.entry_date.isoformat(),
                 },
             },
         )

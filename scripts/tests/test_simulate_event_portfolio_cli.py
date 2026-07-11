@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -30,6 +30,30 @@ def _load_module():
 
 
 simulate_event_portfolio = _load_module()
+
+
+def test_random_candidate_uses_same_frozen_catastrophic_stop() -> None:
+    bar_date = date(2026, 1, 6)
+    bar = simulate_event_portfolio.OhlcvRow(
+        symbol="7203",
+        date=bar_date,
+        open=Decimal("95"),
+        high=Decimal("100"),
+        low=Decimal("89"),
+        close=Decimal("96"),
+        volume=1000,
+        turnover=Decimal("96000"),
+    )
+
+    exit_date, exit_price = simulate_event_portfolio.catastrophic_stop_from_bars(
+        [bar],
+        entry_price=Decimal("100"),
+        fixed_exit_date=date(2026, 1, 30),
+        fixed_exit_price=Decimal("110"),
+    )
+
+    assert exit_date == bar_date
+    assert exit_price == Decimal("90")
 
 
 def _observation(

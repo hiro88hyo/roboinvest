@@ -6,6 +6,7 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from strategy_rule.event_paper.artifact import EventArtifactError, load_event_paper_artifact
 
 
 def _load_module():
@@ -375,6 +376,12 @@ def test_detect_cluster_v1_candidates_dry_run(
     assert detect_event_cluster_paper_candidates.main() == 0
 
     payload = json.loads(output_json.read_text(encoding="utf-8"))
+    loaded = load_event_paper_artifact(output_json)
+    assert loaded.artifact.candidates[0].symbol == "7203"
+    assert payload["schema_version"] == 2
+    assert payload["strategy_key"] == (
+        "event_cluster_earnings_dividend_value_guard_fixed20_stop_v1_research"
+    )
     assert payload["mode"] == "dry_run"
     assert payload["publish_enabled"] is False
     assert payload["causality_verified"] is True
@@ -385,21 +392,89 @@ def test_detect_cluster_v1_candidates_dry_run(
     assert candidate["candidate_id"] == (
         "event_cluster_earnings_dividend_value_guard_fixed20_stop_v1_research"
     )
+    assert candidate["execution_candidate_id"] == (
+        f"{candidate['cluster_id']}:{candidate['observation_id']}"
+    )
     assert candidate["symbol"] == "7203"
     assert candidate["has_earnings_result"] is True
     assert candidate["has_dividend_increase"] is True
     assert candidate["max_hold_days"] == 20
     assert candidate["valuation_reference_price"] == "1020"
-    assert candidate["data_available_at"] == "2026-01-21T15:30:00+00:00"
-    assert candidate["feature_cutoff_at"] == "2026-01-21T15:30:00+00:00"
+    assert candidate["data_available_at"] == "2026-01-21T06:30:00+00:00"
+    assert candidate["feature_cutoff_at"] == "2026-01-21T06:30:00+00:00"
+    assert candidate["source_received_at"] == "2026-01-21T15:30:00+00:00"
+    assert candidate["feature_data_complete"] is True
     assert candidate["catastrophic_stop_pct"] == "-0.10"
     assert candidate["entry_price_status"] == "unresolved_until_fresh_market_observation"
     assert "entry_price_assumption" not in candidate
     assert "stop_loss_price" not in candidate
     assert candidate["publish_ready"] is False
     csv_text = output_csv.read_text(encoding="utf-8")
+    assert "execution_candidate_id" in csv_text
+    assert "source_received_at" in csv_text
     assert "publish_ready" in csv_text
     assert "False" in csv_text
+
+
+def test_detector_preserves_disclosure_time_per_vintage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    financial_path = tmp_path / "financial-early-disclosure.jsonl"
+    ohlcv_path = tmp_path / "ohlcv-early-disclosure.csv"
+    output_json = tmp_path / "candidates-early-disclosure.json"
+    output_csv = tmp_path / "candidates-early-disclosure.csv"
+    rows = _summary_rows()
+    for row in rows:
+        if row["DiscDate"] == "2026-01-21":
+            row["DiscTime"] = "14:00:00"
+            row["FEPS"] = "100"
+    _write_completed_financial_fetch(
+        financial_path,
+        rows,
+        target_date=date(2026, 1, 21),
+        fetched_at="2026-01-21T15:30:00+00:00",
+    )
+    _write_ohlcv(ohlcv_path)
+    with ohlcv_path.open(encoding="utf-8") as handle:
+        ohlcv_rows = list(csv.DictReader(handle))
+    for row in ohlcv_rows:
+        if row["date"] == "2026-01-20":
+            row.update(open="1400", high="1410", low="1390", close="1400")
+        elif row["date"] == "2026-01-21":
+            row.update(open="1600", high="1610", low="1590", close="1600")
+    with ohlcv_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=ohlcv_rows[0].keys())
+        writer.writeheader()
+        writer.writerows(ohlcv_rows)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "detect-event-cluster-paper-candidates.py",
+            "--financial-summary-jsonl",
+            str(financial_path),
+            "--ohlcv",
+            str(ohlcv_path),
+            "--output-json",
+            str(output_json),
+            "--output-csv",
+            str(output_csv),
+            "--signal-date",
+            "2026-01-21",
+        ],
+    )
+
+    assert detect_event_cluster_paper_candidates.main() == 0
+    payload = json.loads(output_json.read_text(encoding="utf-8"))
+    load_event_paper_artifact(output_json)
+
+    [candidate] = payload["candidates"]
+    assert candidate["min_forecast_per"] == "14"
+    assert candidate["valuation_reference_price"] == "1400"
+    assert candidate["valuation_reference_bar_date"] == "2026-01-20"
+    assert candidate["feature_cutoff_at"] == "2026-01-21T05:00:00+00:00"
+    assert candidate["source_received_at"] == "2026-01-21T15:30:00+00:00"
 
 
 def test_candidate_can_be_detected_without_entry_day_ohlcv(
@@ -462,7 +537,7 @@ def test_late_jquants_receipt_is_recorded_and_excluded(
     assert {row["reason"] for row in payload["exclusions"]} == {"late_data_receipt"}
 
 
-def test_missing_signal_date_ohlcv_is_recorded_and_excluded(
+def test_missing_signal_date_ohlcv_preserves_selection_but_blocks_execution(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -474,9 +549,17 @@ def test_missing_signal_date_ohlcv_is_recorded_and_excluded(
     )
 
     assert payload["causality_verified"] is True
-    assert payload["summary"]["candidate_count"] == 0
-    assert payload["summary"]["missing_signal_date_ohlcv_count"] == 2
-    assert {row["reason"] for row in payload["exclusions"]} == {"missing_signal_date_ohlcv"}
+    assert payload["summary"]["candidate_count"] == 1
+    assert payload["summary"]["missing_signal_date_ohlcv_count"] == 1
+    assert payload["exclusions"] == []
+    [candidate] = payload["candidates"]
+    assert candidate["valuation_reference_bar_date"] == "2026-01-20"
+    assert candidate["feature_data_complete"] is False
+
+    artifact_path = tmp_path / "candidates-missing-signal-bar.json"
+    artifact = load_event_paper_artifact(artifact_path).artifact
+    with pytest.raises(EventArtifactError, match="feature data is incomplete"):
+        artifact.validate_target_date(date(2026, 1, 22))
 
 
 @pytest.mark.parametrize(
@@ -769,5 +852,5 @@ def test_main_publish_is_disabled_until_execution_intent_is_causal(
 
     message = str(exc_info.value)
     assert "event paper publish is disabled" in message
-    assert "fill-anchored catastrophic stop" in message
+    assert "strategy-rule event-paper-publish" in message
     assert not output_json.exists()

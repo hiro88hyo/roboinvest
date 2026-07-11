@@ -7,6 +7,11 @@ import sys
 from datetime import date
 from pathlib import Path
 
+from strategy_rule.event_paper._testing import (
+    make_event_artifact_payload,
+    make_event_candidate,
+)
+
 
 def _load_module():
     path = Path(__file__).resolve().parents[1] / "production-preopen-check.py"
@@ -35,48 +40,20 @@ def _write_payload(path: Path, payload: dict[str, object]) -> None:
 
 
 def _causal_payload() -> dict[str, object]:
-    return {
-        "candidate_id": preopen.EVENT_CLUSTER_CANDIDATE_ID,
-        "mode": "dry_run",
-        "paper_live_enabled": False,
-        "publish_enabled": False,
-        "paper_publish_enabled": False,
-        "causality_verified": True,
-        "causality": {
-            "candidate_features_use_forward_bars": False,
-            "candidate_artifact_contains_entry_price": False,
-            "entry_date_source": "tse_business_calendar",
-            "data_receipt_checked": True,
-            "receipt_provenance": "export_metadata",
-            "fetch_completion_verified": True,
-            "source_coverage_window_verified": True,
-            "paper_publish_disabled": True,
-        },
-        "signal_date": "2026-01-21",
-        "fetched_at": "2026-01-21T15:30:00+00:00",
-        "rule": {
-            "max_hold_days": preopen.EVENT_CLUSTER_MAX_HOLD_DAYS,
-            "catastrophic_stop_pct": preopen.EVENT_CLUSTER_CAT_STOP_PCT,
-        },
-        "summary": {"candidate_count": 1, "published_count": 0},
-        "candidates": [
-            {
-                "symbol": "7203",
-                "signal_date": "2026-01-21",
-                "entry_date": "2026-01-22",
-                "feature_cutoff_at": "2026-01-21T15:30:00+00:00",
-                "data_available_at": "2026-01-21T15:30:00+00:00",
-                "max_hold_days": preopen.EVENT_CLUSTER_MAX_HOLD_DAYS,
-                "catastrophic_stop_pct": preopen.EVENT_CLUSTER_CAT_STOP_PCT,
-                "valuation_reference_price": "1020",
-                "valuation_reference_bar_date": "2026-01-21",
-                "valuation_reference_available_at": "2026-01-21T06:30:00+00:00",
-                "entry_price_status": "unresolved_until_fresh_market_observation",
-                "publish_ready": False,
-            }
-        ],
-        "published": [],
-    }
+    candidate = make_event_candidate(
+        signal_date="2026-01-21",
+        entry_date="2026-01-22",
+        feature_cutoff_at="2026-01-21T06:30:00+00:00",
+        data_available_at="2026-01-21T06:30:00+00:00",
+        source_received_at="2026-01-21T15:30:00+00:00",
+        valuation_reference_bar_date="2026-01-21",
+        valuation_reference_available_at="2026-01-21T06:30:00+00:00",
+    )
+    return make_event_artifact_payload(
+        signal_date="2026-01-21",
+        fetched_at="2026-01-21T15:30:00+00:00",
+        candidates=[candidate],
+    )
 
 
 def test_preopen_accepts_causal_dry_run_candidate_artifact(tmp_path: Path) -> None:
@@ -104,7 +81,19 @@ def test_preopen_rejects_legacy_future_price_artifact(tmp_path: Path) -> None:
 
     preopen.check_swing_paper_candidates(reporter, _args(path))
 
-    assert reporter.counts["NG"] >= 4
+    assert reporter.counts["NG"] >= 1
+
+
+def test_preopen_reuses_strict_frozen_rule_contract(tmp_path: Path) -> None:
+    path = tmp_path / "drifted-rule-candidates.json"
+    payload = _causal_payload()
+    payload["rule"]["forecast_per_threshold"] = "16"
+    _write_payload(path, payload)
+    reporter = preopen.Reporter(quiet=True)
+
+    preopen.check_swing_paper_candidates(reporter, _args(path))
+
+    assert reporter.counts["NG"] == 1
 
 
 def test_preopen_rejects_stale_zero_candidate_artifact(tmp_path: Path) -> None:
@@ -130,7 +119,7 @@ def test_preopen_rejects_nonempty_published_rows_with_zero_summary(tmp_path: Pat
 
     preopen.check_swing_paper_candidates(reporter, _args(path))
 
-    assert reporter.counts["NG"] >= 2
+    assert reporter.counts["NG"] >= 1
 
 
 def test_preopen_rejects_stale_reference_after_signal_close(tmp_path: Path) -> None:
@@ -139,6 +128,8 @@ def test_preopen_rejects_stale_reference_after_signal_close(tmp_path: Path) -> N
     candidate = payload["candidates"][0]
     candidate["valuation_reference_bar_date"] = "2026-01-20"
     candidate["valuation_reference_available_at"] = "2026-01-20T06:30:00+00:00"
+    candidate["feature_data_complete"] = False
+    payload["summary"]["missing_signal_date_ohlcv_count"] = 1
     _write_payload(path, payload)
     reporter = preopen.Reporter(quiet=True)
 
@@ -198,4 +189,4 @@ def test_preopen_rejects_missing_required_summary_counts(tmp_path: Path) -> None
 
     preopen.check_swing_paper_candidates(reporter, _args(path))
 
-    assert reporter.counts["NG"] >= 2
+    assert reporter.counts["NG"] >= 1

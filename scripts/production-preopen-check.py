@@ -43,6 +43,7 @@ from zoneinfo import ZoneInfo
 import httpx
 from google.api_core.exceptions import GoogleAPICallError, NotFound
 from google.cloud import pubsub_v1
+from strategy_rule.event_paper.artifact import EventArtifactError, load_event_paper_artifact
 from trade_contracts.scanner_gate import ScannerGateThresholds, scanner_gate_reject_reason
 from universe_scanner.calendar import previous_business_day
 
@@ -56,6 +57,7 @@ GCP_CREDENTIALS_OP_REF = "op://roboinvest/production/GOOGLE_APPLICATION_CREDENTI
 SMOKE_TOPIC = "adr-0001-smoke-test"
 SMOKE_SUBSCRIPTION = "adr-0001-smoke-test-sub"
 EVENT_CLUSTER_CANDIDATE_ID = "event_cluster_earnings_dividend_value_guard_fixed20_stop_v1_research"
+EVENT_CLUSTER_ARTIFACT_SCHEMA_VERSION = 2
 EVENT_CLUSTER_MAX_HOLD_DAYS = 20
 EVENT_CLUSTER_CAT_STOP_PCT = "-0.10"
 
@@ -725,6 +727,33 @@ def check_swing_paper_candidates(reporter: Reporter, args: argparse.Namespace) -
         reporter.emit("NG", "swing candidates json", f"payload={type(payload).__name__}")
         return
 
+    try:
+        strict_artifact = load_event_paper_artifact(path)
+    except EventArtifactError as exc:
+        reporter.emit("NG", "candidate artifact contract", str(exc))
+        return
+    reporter.emit("OK", "candidate artifact contract", "strict schema v2")
+
+    schema_version = payload.get("schema_version")
+    if schema_version == EVENT_CLUSTER_ARTIFACT_SCHEMA_VERSION:
+        reporter.emit("OK", "candidate schema_version", str(schema_version))
+    else:
+        reporter.emit(
+            "NG",
+            "candidate schema_version",
+            f"actual={schema_version!r} expected={EVENT_CLUSTER_ARTIFACT_SCHEMA_VERSION}",
+        )
+
+    strategy_key = str(payload.get("strategy_key", ""))
+    if strategy_key == EVENT_CLUSTER_CANDIDATE_ID:
+        reporter.emit("OK", "strategy_key", strategy_key)
+    else:
+        reporter.emit(
+            "NG",
+            "strategy_key",
+            f"actual={strategy_key or '<missing>'} expected={EVENT_CLUSTER_CANDIDATE_ID}",
+        )
+
     candidate_id = str(payload.get("candidate_id", ""))
     if candidate_id == EVENT_CLUSTER_CANDIDATE_ID:
         reporter.emit("OK", "candidate_id", candidate_id)
@@ -839,6 +868,13 @@ def check_swing_paper_candidates(reporter: Reporter, args: argparse.Namespace) -
         reporter.emit("OK", "candidate signal_date", artifact_signal_date.isoformat())
 
     target_date = getattr(args, "target_date", None) or datetime.now(ZoneInfo("Asia/Tokyo")).date()
+    if strict_artifact.artifact.candidates:
+        try:
+            strict_artifact.artifact.validate_target_date(target_date)
+        except EventArtifactError as exc:
+            reporter.emit("NG", "candidate execution eligibility", str(exc))
+            return
+        reporter.emit("OK", "candidate execution eligibility", target_date.isoformat())
     expected_signal_date = previous_business_day(target_date)
     if artifact_signal_date == expected_signal_date:
         reporter.emit(
@@ -884,11 +920,26 @@ def check_swing_paper_candidates(reporter: Reporter, args: argparse.Namespace) -
     bad_reference_dates: list[str] = []
     bad_lineage: list[str] = []
     bad_publish_ready: list[str] = []
+    bad_execution_identities: list[str] = []
+    execution_candidate_ids: list[str] = []
     for item in candidates:
         if not isinstance(item, dict):
             bad_candidate_dates.append("<non-object>")
             continue
         symbol = str(item.get("symbol", "<missing>"))
+        cluster_id = str(item.get("cluster_id", ""))
+        observation_id = str(item.get("observation_id", ""))
+        execution_candidate_id = str(item.get("execution_candidate_id", ""))
+        expected_execution_candidate_id = f"{cluster_id}:{observation_id}"
+        if (
+            item.get("candidate_id") != EVENT_CLUSTER_CANDIDATE_ID
+            or not cluster_id
+            or not observation_id
+            or execution_candidate_id != expected_execution_candidate_id
+        ):
+            bad_execution_identities.append(symbol)
+        else:
+            execution_candidate_ids.append(execution_candidate_id)
         signal_date = _parse_iso_date(item.get("signal_date"))
         entry_date = _parse_iso_date(item.get("entry_date"))
         if (
@@ -902,6 +953,7 @@ def check_swing_paper_candidates(reporter: Reporter, args: argparse.Namespace) -
         reference_available = _parse_iso_datetime(item.get("valuation_reference_available_at"))
         data_available = _parse_iso_datetime(item.get("data_available_at"))
         feature_cutoff = _parse_iso_datetime(item.get("feature_cutoff_at"))
+        source_received = _parse_iso_datetime(item.get("source_received_at"))
         signal_bar_available = (
             None
             if signal_date is None
@@ -927,9 +979,10 @@ def check_swing_paper_candidates(reporter: Reporter, args: argparse.Namespace) -
             reference_available is None
             or data_available is None
             or feature_cutoff is None
-            or reference_available > data_available
+            or source_received is None
+            or reference_available > feature_cutoff
             or feature_cutoff != data_available
-            or data_available != artifact_fetched_at
+            or source_received != artifact_fetched_at
         ):
             bad_lineage.append(symbol)
         if item.get("publish_ready") is not False:
@@ -956,6 +1009,16 @@ def check_swing_paper_candidates(reporter: Reporter, args: argparse.Namespace) -
         reporter.emit("NG", "candidate publish_ready", f"bad={','.join(bad_publish_ready[:8])}")
     elif candidates:
         reporter.emit("OK", "candidate publish_ready", "false")
+    if len(execution_candidate_ids) != len(set(execution_candidate_ids)):
+        bad_execution_identities.append("<duplicate>")
+    if bad_execution_identities:
+        reporter.emit(
+            "NG",
+            "candidate execution identity",
+            f"bad={','.join(bad_execution_identities[:8])}",
+        )
+    elif candidates:
+        reporter.emit("OK", "candidate execution identity", "strategy/occurrence separated")
 
     bad_candidates = [
         str(item.get("symbol", "<missing>"))

@@ -35,13 +35,23 @@ Primary tracked source:
 
 The frozen event-cluster candidate has positive locked-OOS portfolio results
 and remains the strongest research-continuation candidate. At `1,000,000 JPY`
-capital, the tracked paper-observation assessment reports locked-OOS PF `2.036`
-and max drawdown `41,194 JPY`. Execution stresses remain positive.
+capital, the historical selected-path calculation reports locked-OOS PF `2.036`
+and max drawdown `41,194 JPY`. The selected-path execution stresses also remain
+positive as historical calculations.
 
-It is not live-ready. The `1M` matched-random percentile is `0.737`, below the
-target `0.75`, the operational sequence still requires paper evidence, and the
-sample is low-frequency. Paper observation is an evidence-collection step, not
-a promotion.
+**Erratum (2026-07-10):** the cited portfolio matched-random comparison is not
+valid evidence. Selected observations used the frozen `CAT_STOP_PCT=-0.10`,
+while random portfolio candidates were generated with an 8% stop
+(`entry_price * 0.92`). The reported `1M/2M/5M` random percentiles
+`0.737/0.853/0.927` are therefore non-comparable to the selected path. The
+simulator is corrected for future preregistered runs, but that code correction
+does not retroactively validate these locked-OOS percentiles.
+
+Frozen-v1 paper observation is **BLOCKED**, not the next evidence-collection
+step. A valid matched-random comparison and execution reproduction are required
+before a new activation decision. Do not rerun or inspect the frozen locked-OOS
+window to repair this evidence without the explicit approval required by
+[ADR-0005](../../adr/0005-locked-oos-inspection-freeze.md).
 
 Primary tracked source:
 [Event Cluster Paper Observation Plan](../../features/event-cluster-paper-observation-plan.md).

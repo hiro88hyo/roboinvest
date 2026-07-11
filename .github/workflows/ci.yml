@@ -84,9 +84,12 @@ jobs:
         run: npm test
 
   oms-paper-rpc:
-    name: OMS Paper atomic RPC (Supabase)
+    name: Event transport stress safety (Supabase + Pub/Sub)
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      PUBSUB_EMULATOR_HOST: localhost:8085
+      PUBSUB_PROJECT_ID: trade-ai-dev
     steps:
       - uses: actions/checkout@v6
 
@@ -106,6 +109,29 @@ jobs:
         uses: supabase/setup-cli@v2
         with:
           version: latest
+
+      - name: Start Pub/Sub emulator + init topics
+        run: docker compose -f infra/docker-compose.dev.yml up -d pubsub pubsub-init
+
+      - name: Wait for Pub/Sub topics initialised
+        run: |
+          for _ in $(seq 1 60); do
+            status=$(docker inspect -f '{{.State.Status}}' trade-ai-pubsub-init 2>/dev/null || echo "")
+            if [ "$status" = "exited" ]; then
+              code=$(docker inspect -f '{{.State.ExitCode}}' trade-ai-pubsub-init)
+              if [ "$code" = "0" ]; then
+                echo "Pub/Sub topics ready"
+                exit 0
+              fi
+              echo "init-topics failed (exit=$code)"
+              docker logs trade-ai-pubsub-init || true
+              exit 1
+            fi
+            sleep 2
+          done
+          echo "init-topics did not finish within 120s"
+          docker logs trade-ai-pubsub-init || true
+          exit 1
 
       - name: Start Supabase local stack
         working-directory: infra
@@ -142,6 +168,22 @@ jobs:
           uv run pytest -q
           services/oms-paper/tests/integration/test_paper_stream_runner_e2e.py
           -k 'atomic_fill_rpc or stale_position_generation'
+
+      - name: Test event transport stress and scheduled opening exits
+        run: >-
+          uv run pytest -q
+          services/strategy-rule/tests/integration/test_event_paper_pipeline_e2e.py
+
+      - name: Dump Pub/Sub emulator logs on failure
+        if: failure()
+        run: docker logs trade-ai-pubsub || true
+
+      - name: Dump Supabase services on failure
+        if: failure()
+        working-directory: infra
+        run: |
+          supabase status || true
+          docker ps -a --filter "name=supabase" || true
 
   e2e:
     name: Integration tests (Pub/Sub + Supabase)

@@ -1,6 +1,6 @@
 # services/strategy-rule/
 
-`processed-features` を購読し、テクニカル指標の閾値・クロスオーバー等に基づいて数値的な売買シグナルを生成するルールベース戦略エンジン (Strategy Engine A)。出力は `strategy-signals-a` トピックと Supabase `strategy_logs`。
+`processed-features` を購読し、テクニカル指標の閾値・クロスオーバー等に基づいて数値的な売買シグナルを生成するルールベース戦略エンジン (Strategy Engine A)。出力は `strategy-signals-a` トピックと Supabase `strategy_logs`。因果検証済み event-cluster artifact については、通常 stream と分離した paper-only one-shot publisher も持つ。
 
 アーキテクチャ全体・スキーマはルート [CLAUDE.md](../../CLAUDE.md) と [contracts/](../../contracts/) を参照。ここは `services/strategy-rule/` 配下で作業するときの運用ルール。
 
@@ -11,6 +11,7 @@
 - `strategies/` 配下のルールプラグインを評価しシグナルを生成
 - `StrategySignal` (source=RULE) の組み立てと `strategy-signals-a` へのパブリッシュ
 - Supabase `strategy_logs` への書き込み（source=RULE）
+- schema v2 event artifact と fresh book から、二重ラッチ・paper preflight・durable claim を経て `PAPER_ONLY` signal を一度だけ選定する one-shot publish
 
 **非責務**
 - 指標計算 → Feature Engine
@@ -49,6 +50,21 @@
 - 戦略状態は in-process。再起動時の歴史は失われるが、Phase 1 のルールは数本の特徴量で判定できる前提
 - `at-least-once`: 同一 features の重複は許容。Aggregator 側で重複排除する想定
 
+### Event paper one-shot publisher
+
+- CLI: `uv run python -m strategy_rule event-paper-publish ...`
+- detector 内蔵の旧 `--publish-paper` は引き続き fail closed。one-shot publisher だけが実行経路を持つ
+- detector は凍結済み選定の `data_available_at/feature_cutoff_at` を disclosure time のまま保持し、翌朝の実受信は `source_received_at` に分離する。受信時刻で PER/valuation の bar vintage を進めない
+- post-close で signal-date OHLCV が欠ける候補は cohort から除外せず `feature_data_complete=false` にする。artifact は reportable だが pre-open/watchlist/publisher では実行不可
+- 現 publisher は `opening_transport_stress_v1`。signal strategy key も selection key と分離し、receipt/report は `comparable_to_registered_backtest=false`。next-open / 20日目 close を再現する frozen-v1 paper evidence には数えない
+- `--publish-paper` と `EVENT_CLUSTER_PAPER_PUBLISH_ENABLED=true` の両方を必須とし、環境変数の既定値は必ず `false`
+- `event-paper-raw-books` だけを pull し、09:00〜09:30 JST の `received_at` 付き fresh ask を使う。現 CLI は managed Pub/Sub を network I/O 前に全面拒否し、loopback emulator の明示的な `--no-seek`、loopback Supabase、allowlist 済み dev project の stress test だけ許可する。Supabase HTTP と emulator gRPC は proxy 継承なし
+- 1 invocation で publish する occurrence は必ず1件。複数候補 artifact は `--execution-candidate-id` を必須とし、receipt も occurrence ごとに分ける
+- Supabase が paper/allowed、必要な OMS Paper RPC が利用可能、期限到来 swing exit が残っていないことを publish 前に確認する
+- quote は `strategy_logs.reasoning` へ claim し、raw book ack と最終 preflight 後に CAS RPC で publication attempt を一度だけ所有してから Pub/Sub を1 RPCだけ実行する。成功時は message ID/time を同じ claim へ checkpoint する。attempt 済み・checkpoint なしは ambiguous として復元し、再送しない
+- 出力は detector artifact を変更せず、artifact digest と attempt/message lineage を持つ別 receipt JSON に no-clobber で書く。同一 filesystem namespace の同時実行は lock で拒否し、共有 subscription のため host/container をまたぐ運用 coordinator も1つに固定する
+- 本番実行可否と手順は `docs/runbook/event-cluster-paper-publish.md` を正とする。現時点の target 実行は禁止
+
 ## ディレクトリ構成（想定）
 
 ```
@@ -58,7 +74,7 @@ services/strategy-rule/
 ├── .env.example
 ├── src/strategy_rule/
 │   ├── __init__.py
-│   ├── __main__.py              # エントリポイント (CLI: stream / backtest)
+│   ├── __main__.py              # CLI: stream / backtest / event-paper-publish
 │   ├── config.py                # pydantic-settings ベースの env 読み込み
 │   ├── registry.py              # 戦略名 → ファクトリのレジストリ
 │   ├── base.py                  # Strategy Protocol / StrategyContext
@@ -75,6 +91,7 @@ services/strategy-rule/
 │   ├── clients/                 # Phase 3
 │   │   ├── pubsub.py            #   processed-features 購読 / strategy-signals-a publish
 │   │   └── supabase.py          #   strategy_logs 書き込み
+│   ├── event_paper/             # causal artifact / fresh-book one-shot publisher
 │   └── streaming/               # Phase 3
 │       ├── __init__.py
 │       └── runner.py
@@ -109,7 +126,7 @@ services/strategy-rule/
 
 - **at-least-once publish**: 同一 features に対する重複 signal は Aggregator 側で排除
 - **戦略間の独立性**: ある戦略が例外を投げても他戦略は評価する。失敗はログに残しつつ続行
-- **冪等性**: signal_id は各 evaluate 呼び出しで新規生成。Aggregator は `(symbol, timestamp, source)` で重複判定
+- **冪等性**: 通常 stream は既存の重複処理契約に従う。event-paper は `strategy_key + execution_candidate_id + source + symbol + action` から deterministic ID を作り、durable claim で quote を固定する
 
 ## 設定（env）
 
@@ -131,6 +148,7 @@ services/strategy-rule/
 - **ユニット**: 戦略ロジックは `ProcessedFeatures` のサンプル列を渡して期待 `action` を検証
 - **統合**: Phase 2 以降は実 JSONL を読み書きして整合を確認
 - **Phase 3 統合**: Pub/Sub エミュレータ + ローカル Supabase で end-to-end
+- **event-paper 統合**: Publisher → Aggregator → Gateway → OMS Paper、重複 delivery、fill-anchored stop、期限日の partial/full exit、live topic が空であることを実 emulator/RPC で検証
 - カバレッジ 80%+（ルート方針）
 
 ## 開発時の注意

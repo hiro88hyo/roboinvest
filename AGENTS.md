@@ -104,8 +104,8 @@ Dashboard は Volta 管理の Node/npm を使う。
   `infra/pubsub/subscriptions.json` の全 subscriptions（現行 13 件）が emulator 上に存在するか確認する。
 - Supabase: 主要 10 tables（上記 9 件 + `market_regime`）の read、
   `positions.scheduled_exit_date` / `trades_paper.order_id`、および安全な validation
-  probe による `oms_paper_apply_fill` / `oms_paper_update_stop_loss` の存在・
-  service-role 実行可否を確認する。
+  probe による `event_paper_cas_strategy_reasoning` / `oms_paper_apply_fill` /
+  `oms_paper_update_stop_loss` の存在・service-role 実行可否を確認する。
 - Services: 9 service modules (`universe_scanner`, `feature_engine`, `strategy_rule`, `strategy_ai`, `aggregator`, `gateway`, `oms_paper`, `oms_live`, `feeder`) の `python -m <module> --help` が起動できるか確認する。
 
 必要 env がないセクションは `SKIP` で、失敗扱いではない。`NG` が 1 件でもあれば exit code 1。
@@ -113,6 +113,22 @@ Pub/Sub は `PUBSUB_EMULATOR_HOST` / `PUBSUB_PROJECT_ID`、Supabase は `SUPABAS
 
 ## Important Operational Notes
 
+- event detector の凍結済み feature vintage は disclosure-time
+  `data_available_at/feature_cutoff_at`。翌朝の実受信は
+  `source_received_at` へ分離し、PER/valuation cutoff を進めない。
+- signal-date OHLCV が欠けた post-close 候補は選定から消さず
+  `feature_data_complete=false` として残す。cohort は維持するが、pre-open、
+  watchlist、publisher は実行不可として拒否する。
+- 現 event publisher/E2E は `opening_transport_stress_v1` であり、凍結済み
+  next-open / 20日目 close を再現しない。receipt/report の
+  `comparable_to_registered_backtest=false` を厳守し、target 実行や v1
+  paper/live evidence への算入を行わない。
+- event transport stress CLI は loopback Pub/Sub emulator + `--no-seek` に加え、
+  loopback Supabase と allowlist 済み dev project ID だけを許可する。
+  event 用 Supabase client と emulator gRPC channel は ambient proxy を継承しない。
+- 既存の same-symbol random percentile は random 側 8% stop、選定側 10% stop
+  で比較条件が不一致。simulator の将来コードは 10% に修正済みだが、locked
+  report を再計算・再解釈せず、既存 percentile を gate evidence に使わない。
 - 1Password 経由で env を読むときは、先に `infra/.op.service-account.env`
   があるか確認し、`set -a && . infra/.op.service-account.env && set +a`
   で読み込む。`OP_SERVICE_ACCOUNT_TOKEN` を手入力・別ファイルから流用しない。

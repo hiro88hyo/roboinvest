@@ -91,6 +91,12 @@ OMS_PAPER_STOP_LOSS_PROBE: dict[str, object] = {
     "p_stop_loss_price": None,
 }
 
+EVENT_PAPER_CLAIM_CAS_PROBE: dict[str, object] = {
+    "p_signal_id": None,
+    "p_expected_reasoning": None,
+    "p_updated_reasoning": None,
+}
+
 SERVICE_MODULES: tuple[str, ...] = (
     "universe_scanner",
     "feature_engine",
@@ -293,6 +299,11 @@ async def check_supabase(timeout: float, *, quiet: bool) -> CheckResult:
         # the function is present in PostgREST's schema cache and executable by
         # the configured service-role key without mutating trading data.
         rpc_probes = (
+            (
+                "event_paper_cas_strategy_reasoning",
+                EVENT_PAPER_CLAIM_CAS_PROBE,
+                "p_signal_id is required",
+            ),
             (
                 "oms_paper_apply_fill",
                 OMS_PAPER_APPLY_FILL_PROBE,

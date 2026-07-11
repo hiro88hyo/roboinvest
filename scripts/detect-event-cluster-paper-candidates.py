@@ -27,11 +27,12 @@ from event_research_common import (
 from trade_contracts.event_research import EventRecord, ObservationRecord
 
 CANDIDATE_ID = "event_cluster_earnings_dividend_value_guard_fixed20_stop_v1_research"
+ARTIFACT_SCHEMA_VERSION = 2
 PER_THRESHOLD = Decimal("15")
 MAX_HOLD_DAYS = 20
 PUBLISH_DISABLED_REASON = (
-    "event paper publish is disabled until a fresh observed-price path and "
-    "fill-anchored catastrophic stop are implemented"
+    "inline event paper publish is disabled; use the separately gated "
+    "strategy-rule event-paper-publish command after all safety checks pass"
 )
 TOKYO = ZoneInfo("Asia/Tokyo")
 ENTRY_CUTOFF_TIME_JST = time(9, 0)
@@ -89,15 +90,6 @@ def main() -> int:
     feature_exclusions: list[dict[str, Any]] = []
     eligible_event_ids: set[str] | None = None
     if args.signal_date is not None:
-        events = [
-            event.model_copy(
-                update={
-                    "data_available_at": max(event.disclosed_at, event.fetched_at),
-                    "feature_cutoff_at": max(event.disclosed_at, event.fetched_at),
-                }
-            )
-            for event in events
-        ]
         selected_events = [
             event for event in events if date.fromisoformat(event.signal_date) == args.signal_date
         ]
@@ -146,26 +138,15 @@ def main() -> int:
                 feature_exclusions.append(
                     feature_exclusion_row(event, reason="missing_feature_history")
                 )
-        safe_observations: list[ObservationRecord] = []
-        for observation in observations:
-            if (
-                observation.data_available_at >= daily_bar_available_at(args.signal_date)
-                and observation.source_bar_date != args.signal_date.isoformat()
-            ):
-                event = next(event for event in events if event.event_id == observation.event_id)
-                feature_exclusions.append(
-                    feature_exclusion_row(
-                        event,
-                        reason="missing_signal_date_ohlcv",
-                        source_bar_date=observation.source_bar_date,
-                    )
-                )
-                continue
-            safe_observations.append(observation)
-        observations = safe_observations
-
     symbol_names = {symbol: row.symbol_name for symbol, row in master.items()}
-    candidates, exclusions = detect_candidates(observations, symbol_names=symbol_names)
+    source_received_by_event_id = {
+        event.event_id: max(event.disclosed_at, event.fetched_at) for event in events
+    }
+    candidates, exclusions = detect_candidates(
+        observations,
+        symbol_names=symbol_names,
+        source_received_by_event_id=source_received_by_event_id,
+    )
     exclusions = [*receipt_exclusions, *feature_exclusions, *exclusions]
     published: list[dict[str, Any]] = []
     publish_enabled = False
@@ -187,6 +168,8 @@ def main() -> int:
     )
     causality_verified = fetch_metadata_complete and source_coverage_window_verified
     payload = {
+        "schema_version": ARTIFACT_SCHEMA_VERSION,
+        "strategy_key": CANDIDATE_ID,
         "candidate_id": CANDIDATE_ID,
         "mode": mode,
         "paper_live_enabled": False,
@@ -221,8 +204,8 @@ def main() -> int:
             "fetched_before_disclosure_count": count_exclusions(
                 receipt_exclusions, reason="fetched_before_disclosure"
             ),
-            "missing_signal_date_ohlcv_count": count_exclusions(
-                feature_exclusions, reason="missing_signal_date_ohlcv"
+            "missing_signal_date_ohlcv_count": sum(
+                candidate["feature_data_complete"] is False for candidate in candidates
             ),
             "missing_feature_history_count": count_exclusions(
                 feature_exclusions, reason="missing_feature_history"
@@ -441,6 +424,7 @@ def feature_exclusion_row(
         "reason": reason,
         "event_ids": [event.event_id],
         "data_available_at": event.data_available_at.isoformat(),
+        "source_received_at": max(event.disclosed_at, event.fetched_at).isoformat(),
         "source_bar_date": source_bar_date,
         "entry_date": event.entry_date,
     }
@@ -454,8 +438,12 @@ def detect_candidates(
     observations: list[ObservationRecord],
     *,
     symbol_names: dict[str, str] | None = None,
+    source_received_by_event_id: dict[str, datetime] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     symbol_names = {} if symbol_names is None else symbol_names
+    source_received_by_event_id = (
+        {} if source_received_by_event_id is None else source_received_by_event_id
+    )
     clusters: dict[str, list[ObservationRecord]] = defaultdict(list)
     for obs in observations:
         clusters[obs.trade_group_id or obs.event_cluster_id or obs.observation_id].append(obs)
@@ -471,6 +459,13 @@ def detect_candidates(
                         representative,
                         items,
                         symbol_name=symbol_names.get(representative.symbol, ""),
+                        source_received_at=max(
+                            source_received_by_event_id.get(
+                                item.event_id,
+                                item.data_available_at,
+                            )
+                            for item in items
+                        ),
                     )
                 )
             continue
@@ -494,9 +489,18 @@ def candidate_row(
     items: list[ObservationRecord],
     *,
     symbol_name: str = "",
+    source_received_at: datetime,
 ) -> dict[str, Any]:
+    feature_data_complete = all(
+        not (
+            item.data_available_at >= daily_bar_available_at(date.fromisoformat(item.signal_date))
+            and item.source_bar_date != item.signal_date
+        )
+        for item in items
+    )
     return {
         "candidate_id": CANDIDATE_ID,
+        "execution_candidate_id": f"{cluster_id}:{representative.observation_id}",
         "cluster_id": cluster_id,
         "observation_id": representative.observation_id,
         "event_id": representative.event_id,
@@ -507,6 +511,8 @@ def candidate_row(
         "entry_date": representative.entry_date,
         "feature_cutoff_at": representative.feature_cutoff_at.isoformat(),
         "data_available_at": representative.data_available_at.isoformat(),
+        "source_received_at": source_received_at.isoformat(),
+        "feature_data_complete": feature_data_complete,
         "valuation_reference_price": None
         if representative.valuation_price is None
         else str(representative.valuation_price),
@@ -541,6 +547,7 @@ def write_candidates_csv(path: Path, candidates: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fields = [
         "candidate_id",
+        "execution_candidate_id",
         "cluster_id",
         "observation_id",
         "event_id",
@@ -548,6 +555,10 @@ def write_candidates_csv(path: Path, candidates: list[dict[str, Any]]) -> None:
         "symbol_name",
         "signal_date",
         "entry_date",
+        "feature_cutoff_at",
+        "data_available_at",
+        "source_received_at",
+        "feature_data_complete",
         "valuation_reference_price",
         "valuation_reference_bar_date",
         "valuation_reference_available_at",

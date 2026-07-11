@@ -3,16 +3,22 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any, Self
 
+import grpc  # type: ignore[import-untyped]
 import httpx
 from google.api_core.exceptions import GoogleAPICallError, RetryError
-from google.auth.credentials import AnonymousCredentials
 from google.cloud import pubsub_v1
+from google.protobuf.timestamp_pb2 import Timestamp  # type: ignore[import-untyped]
+from google.pubsub_v1.services.publisher.transports import PublisherGrpcTransport
+from google.pubsub_v1.services.subscriber.transports import SubscriberGrpcTransport
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 logger = logging.getLogger(__name__)
+BeforePublishAttempt = Callable[[], Awaitable[None]]
 
 
 class PubSubError(RuntimeError):
@@ -37,6 +43,16 @@ def _emulator_api_endpoint(host: str) -> str:
     if "://" in host:
         return host.split("://", 1)[1].rstrip("/")
     return host.rstrip("/")
+
+
+def _direct_emulator_channel(host: str) -> grpc.Channel:
+    return grpc.insecure_channel(
+        _emulator_api_endpoint(host),
+        options=(
+            ("grpc.enable_http_proxy", 0),
+            ("grpc.address_http_proxy_enabled_addresses", ""),
+        ),
+    )
 
 
 @dataclass(slots=True)
@@ -71,9 +87,12 @@ class PubSubPublisher:
             )
         else:
             if self.emulator_host:
+                endpoint = _emulator_api_endpoint(self.emulator_host)
                 self._client = pubsub_v1.PublisherClient(
-                    client_options={"api_endpoint": _emulator_api_endpoint(self.emulator_host)},
-                    credentials=AnonymousCredentials(),  # type: ignore[no-untyped-call]
+                    transport=PublisherGrpcTransport(
+                        host=endpoint,
+                        channel=_direct_emulator_channel(endpoint),
+                    ),
                 )
             else:
                 self._client = pubsub_v1.PublisherClient()
@@ -101,14 +120,21 @@ class PubSubPublisher:
         *,
         data: bytes,
         attributes: dict[str, str] | None = None,
+        before_attempt: BeforePublishAttempt | None = None,
+        disable_internal_retry: bool = False,
     ) -> str:
         client = self._client
         if client is None:
             raise PubSubError("publisher is not started")
+        if before_attempt is not None:
+            await before_attempt()
         if isinstance(client, httpx.AsyncClient):
             return await self._publish_rest(client, topic, data=data, attributes=attributes)
         topic_path = client.topic_path(self.project_id, topic)
-        future = client.publish(topic_path, data, **(attributes or {}))
+        publish_options: dict[str, Any] = dict(attributes or {})
+        if disable_internal_retry:
+            publish_options["retry"] = None
+        future = client.publish(topic_path, data, **publish_options)
         message_id = await asyncio.to_thread(future.result, timeout=self.timeout_seconds)
         logger.debug("pubsub publish: topic=%s message_id=%s", topic, message_id)
         return str(message_id)
@@ -169,9 +195,12 @@ class PubSubSubscriber:
             )
         else:
             if self.emulator_host:
+                endpoint = _emulator_api_endpoint(self.emulator_host)
                 self._client = pubsub_v1.SubscriberClient(
-                    client_options={"api_endpoint": _emulator_api_endpoint(self.emulator_host)},
-                    credentials=AnonymousCredentials(),  # type: ignore[no-untyped-call]
+                    transport=SubscriberGrpcTransport(
+                        host=endpoint,
+                        channel=_direct_emulator_channel(endpoint),
+                    ),
                 )
             else:
                 self._client = pubsub_v1.SubscriberClient()
@@ -216,7 +245,11 @@ class PubSubSubscriber:
         try:
             response = await asyncio.to_thread(
                 client.pull,
-                request={"subscription": subscription_path, "max_messages": max_messages},
+                request={
+                    "subscription": subscription_path,
+                    "max_messages": max_messages,
+                    "return_immediately": return_immediately,
+                },
                 timeout=self.timeout_seconds,
             )
         except TimeoutError:
@@ -302,6 +335,55 @@ class PubSubSubscriber:
                 timeout=self.timeout_seconds,
             )
         logger.debug("pubsub ack: sub=%s count=%d", subscription, len(ack_ids))
+
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type(
+            (GoogleAPICallError, RetryError, httpx.HTTPError, PubSubError)
+        ),
+    )
+    async def seek(self, subscription: str, *, target_time: datetime) -> None:
+        """Seek exactly one subscription to an aware timestamp.
+
+        This is intentionally subscription-scoped. Callers must never use it
+        as a shortcut for seeking unrelated service subscriptions.
+        """
+
+        if target_time.tzinfo is None:
+            raise ValueError("target_time must be timezone-aware")
+        client = self._client
+        if client is None:
+            raise PubSubError("subscriber is not started")
+        target_utc = target_time.astimezone(UTC)
+        if isinstance(client, httpx.AsyncClient):
+            path = f"/v1/projects/{self.project_id}/subscriptions/{subscription}:seek"
+            response = await client.post(path, json={"time": target_utc.isoformat()})
+            if response.status_code >= 500:
+                raise PubSubError(
+                    f"transient error: sub={subscription} status={response.status_code} "
+                    f"body={response.text[:200]}"
+                )
+            if response.status_code >= 300:
+                raise PubSubError(
+                    f"seek failed: sub={subscription} status={response.status_code} "
+                    f"body={response.text[:200]}"
+                )
+        else:
+            timestamp = Timestamp()
+            timestamp.FromDatetime(target_utc)
+            subscription_path = client.subscription_path(self.project_id, subscription)
+            await asyncio.to_thread(
+                client.seek,
+                request={"subscription": subscription_path, "time": timestamp},
+                timeout=self.timeout_seconds,
+            )
+        logger.info(
+            "pubsub seek: sub=%s target_time=%s",
+            subscription,
+            target_utc.isoformat(),
+        )
 
     async def _acknowledge_rest(
         self, client: httpx.AsyncClient, subscription: str, ack_ids: list[str]

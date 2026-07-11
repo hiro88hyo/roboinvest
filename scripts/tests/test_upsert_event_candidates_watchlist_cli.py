@@ -8,6 +8,12 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import pytest
+from strategy_rule.event_paper._testing import (
+    make_event_artifact_payload,
+    make_event_candidate,
+)
+from strategy_rule.event_paper.artifact import EventPaperArtifact
 
 
 def _load_module():
@@ -26,36 +32,27 @@ upsert_event_candidates_watchlist = _load_module()
 
 
 def _payload() -> dict[str, Any]:
-    return {
-        "candidate_id": "event_cluster_earnings_dividend_value_guard_fixed20_stop_v1_research",
-        "candidates": [
-            {
-                "candidate_id": (
-                    "event_cluster_earnings_dividend_value_guard_fixed20_stop_v1_research"
-                ),
-                "cluster_id": "cluster-1",
-                "symbol": "7203",
-                "symbol_name": "Toyota",
-                "signal_date": "2026-01-20",
-                "entry_date": "2026-01-21",
-            },
-            {
-                "candidate_id": (
-                    "event_cluster_earnings_dividend_value_guard_fixed20_stop_v1_research"
-                ),
-                "cluster_id": "cluster-2",
-                "symbol": "9984",
-                "symbol_name": "SoftBank",
-                "signal_date": "2026-01-20",
-                "entry_date": "2026-01-21",
-            },
-        ],
-    }
+    return make_event_artifact_payload(
+        candidates=[
+            make_event_candidate(symbol_name="Toyota"),
+            make_event_candidate(
+                execution_candidate_id="cluster-9984:obs-9984",
+                cluster_id="cluster-9984",
+                observation_id="obs-9984",
+                symbol="9984",
+                symbol_name="SoftBank",
+            ),
+        ]
+    )
+
+
+def _artifact() -> EventPaperArtifact:
+    return EventPaperArtifact.model_validate(_payload())
 
 
 def test_build_watchlist_rows_uses_entry_date_and_event_capture_reason() -> None:
     rows = upsert_event_candidates_watchlist.build_watchlist_rows(
-        _payload(),
+        _artifact(),
         valid_date=None,
         max_symbols=10,
     )
@@ -71,7 +68,7 @@ def test_build_watchlist_rows_uses_entry_date_and_event_capture_reason() -> None
 
 def test_build_watchlist_rows_can_override_valid_date_and_cap_symbols() -> None:
     rows = upsert_event_candidates_watchlist.build_watchlist_rows(
-        _payload(),
+        _artifact(),
         valid_date=date(2026, 1, 22),
         max_symbols=1,
     )
@@ -94,7 +91,7 @@ def test_upsert_missing_watchlist_rows_skips_existing_symbol() -> None:
         return httpx.Response(404)
 
     rows = upsert_event_candidates_watchlist.build_watchlist_rows(
-        _payload(),
+        _artifact(),
         valid_date=None,
         max_symbols=10,
     )
@@ -139,3 +136,70 @@ def test_cli_dry_run_writes_plan(tmp_path: Path, monkeypatch) -> None:
     assert payload["mode"] == "dry_run"
     assert payload["planned_count"] == 2
     assert payload["inserted_count"] == 0
+
+
+def test_cli_rejects_unsafe_artifact_before_supabase_or_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    candidates_json = tmp_path / "unsafe-candidates.json"
+    output_json = tmp_path / "watchlist.json"
+    payload = _payload()
+    payload["causality"]["candidate_artifact_contains_entry_price"] = True
+    candidates_json.write_text(json.dumps(payload), encoding="utf-8")
+
+    def fail_network(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("Supabase client constructed for an unsafe artifact")
+
+    monkeypatch.setattr(upsert_event_candidates_watchlist.httpx, "Client", fail_network)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "upsert-event-candidates-watchlist.py",
+            "--candidates-json",
+            str(candidates_json),
+            "--output-json",
+            str(output_json),
+        ],
+    )
+
+    assert upsert_event_candidates_watchlist.main() == 2
+    assert not output_json.exists()
+    assert "unsafe event candidate artifact" in capsys.readouterr().err
+
+
+def test_cli_rejects_incomplete_feature_data_before_supabase_or_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    candidates_json = tmp_path / "incomplete-candidates.json"
+    output_json = tmp_path / "watchlist.json"
+    payload = _payload()
+    payload["candidates"][0]["feature_data_complete"] = False
+    payload["candidates"][0]["valuation_reference_bar_date"] = "2026-01-19"
+    payload["candidates"][0]["valuation_reference_available_at"] = "2026-01-19T06:30:00+00:00"
+    payload["summary"]["missing_signal_date_ohlcv_count"] = 1
+    candidates_json.write_text(json.dumps(payload), encoding="utf-8")
+
+    def fail_network(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("Supabase client constructed for incomplete feature data")
+
+    monkeypatch.setattr(upsert_event_candidates_watchlist.httpx, "Client", fail_network)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "upsert-event-candidates-watchlist.py",
+            "--candidates-json",
+            str(candidates_json),
+            "--output-json",
+            str(output_json),
+        ],
+    )
+
+    assert upsert_event_candidates_watchlist.main() == 2
+    assert not output_json.exists()
+    assert "feature data is incomplete" in capsys.readouterr().err
