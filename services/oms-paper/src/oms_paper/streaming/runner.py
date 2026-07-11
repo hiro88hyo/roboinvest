@@ -1398,6 +1398,7 @@ class StreamRunner:
             target_price=order.target_price,
             max_hold_days=order.max_hold_days,
             scheduled_exit_date=order.scheduled_exit_date,
+            scheduled_exit_time=order.scheduled_exit_time,
             trailing_stop_pct=order.trailing_stop_pct,
             executed_at=order.created_at,
         )
@@ -1428,6 +1429,9 @@ class StreamRunner:
             new_max_hold_days=(new_position.max_hold_days if new_position is not None else None),
             new_scheduled_exit_date=(
                 new_position.scheduled_exit_date if new_position is not None else None
+            ),
+            new_scheduled_exit_time=(
+                new_position.scheduled_exit_time if new_position is not None else None
             ),
             new_trailing_stop_pct=(
                 new_position.trailing_stop_pct if new_position is not None else None

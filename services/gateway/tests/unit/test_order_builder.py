@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time
 from decimal import Decimal
 
 import pytest
@@ -26,6 +26,7 @@ def test_build_buy_order(unified_signal_factory) -> None:  # type: ignore[no-unt
         trailing_stop_pct=Decimal("0.02"),
         max_hold_days=5,
         scheduled_exit_date=date(2026, 5, 1),
+        scheduled_exit_time=time(15, 30),
     )
     stamp = datetime(2026, 4, 23, 10, 0, tzinfo=UTC)
     order = order_builder.build(
@@ -50,6 +51,7 @@ def test_build_buy_order(unified_signal_factory) -> None:  # type: ignore[no-unt
     assert order.trailing_stop_pct == Decimal("0.02")
     assert order.max_hold_days == 5
     assert order.scheduled_exit_date == date(2026, 5, 1)
+    assert order.scheduled_exit_time == time(15, 30)
     assert order.created_at == stamp
 
 

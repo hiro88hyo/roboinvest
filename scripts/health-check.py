@@ -64,6 +64,7 @@ SUPABASE_TABLES: tuple[str, ...] = (
 
 SUPABASE_COLUMN_CHECKS: tuple[tuple[str, str], ...] = (
     ("positions", "scheduled_exit_date"),
+    ("positions", "scheduled_exit_time"),
     ("positions", "position_generation_id"),
     ("trades_paper", "order_id"),
     ("trades_paper", "position_generation_id"),
@@ -85,6 +86,7 @@ OMS_PAPER_APPLY_FILL_PROBE: dict[str, object] = {
     "p_new_stop_loss_price": None,
     "p_new_max_hold_days": None,
     "p_new_scheduled_exit_date": None,
+    "p_new_scheduled_exit_time": None,
     "p_new_trailing_stop_pct": None,
 }
 
@@ -272,7 +274,7 @@ async def check_supabase(timeout: float, *, quiet: bool) -> CheckResult:
 
     headers = {"apikey": key, "Authorization": f"Bearer {key}"}
     async with httpx.AsyncClient(
-        base_url=url.rstrip("/"), headers=headers, timeout=timeout
+        base_url=url.rstrip("/"), headers=headers, timeout=timeout, trust_env=False
     ) as client:
         for table in SUPABASE_TABLES:
             try:

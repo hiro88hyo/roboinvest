@@ -30,6 +30,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
+from zoneinfo import ZoneInfo
 
 from trade_contracts.enums import TradingStyle
 
@@ -37,6 +38,7 @@ from .models import PaperPosition, SwingDecision
 
 _PRICE_QUANT = Decimal("1")
 _HOLD = SwingDecision(action="hold")
+_TOKYO = ZoneInfo("Asia/Tokyo")
 
 
 def find_max_hold_due_swing_positions(
@@ -96,4 +98,13 @@ def evaluate_swing_exit(
 def _is_max_hold_elapsed(*, position: PaperPosition, now: datetime) -> bool:
     if position.scheduled_exit_date is None:
         return False
-    return now.date() >= position.scheduled_exit_date
+    # Preserve the legacy date semantics for positions without an explicit
+    # close-session profile.  The new profile alone opts into JST timing.
+    if position.scheduled_exit_time is None:
+        return now.date() >= position.scheduled_exit_date
+    local_now = now.astimezone(_TOKYO)
+    if local_now.date() > position.scheduled_exit_date:
+        return True
+    if local_now.date() < position.scheduled_exit_date:
+        return False
+    return local_now.time() >= position.scheduled_exit_time

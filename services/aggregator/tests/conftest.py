@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import AsyncIterator, Callable, Iterator
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -36,6 +36,7 @@ def _make_signal(
     trailing_stop_pct: Decimal | None = None,
     max_hold_days: int | None = None,
     scheduled_exit_date: date | None = None,
+    scheduled_exit_time: time | None = None,
     best_bid: Decimal | None = None,
     best_ask: Decimal | None = None,
     spread_bps: Decimal | None = None,
@@ -66,6 +67,7 @@ def _make_signal(
         trailing_stop_pct=trailing_stop_pct,
         max_hold_days=max_hold_days,
         scheduled_exit_date=scheduled_exit_date,
+        scheduled_exit_time=scheduled_exit_time,
         best_bid=best_bid,
         best_ask=best_ask,
         spread_bps=spread_bps,

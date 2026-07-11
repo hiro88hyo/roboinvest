@@ -274,6 +274,7 @@ export type Database = {
           position_generation_id: string | null
           quantity: number
           scheduled_exit_date: string | null
+          scheduled_exit_time: string | null
           side: string
           stop_loss_price: number | null
           symbol: string
@@ -291,6 +292,7 @@ export type Database = {
           position_generation_id?: string | null
           quantity: number
           scheduled_exit_date?: string | null
+          scheduled_exit_time?: string | null
           side: string
           stop_loss_price?: number | null
           symbol: string
@@ -308,6 +310,7 @@ export type Database = {
           position_generation_id?: string | null
           quantity?: number
           scheduled_exit_date?: string | null
+          scheduled_exit_time?: string | null
           side?: string
           stop_loss_price?: number | null
           symbol?: string
@@ -607,33 +610,62 @@ export type Database = {
           status: string
         }[]
       }
-      oms_paper_apply_fill: {
-        Args: {
-          p_executed_at: string
-          p_expected_position_opened_at: string
-          p_fill_price: number
-          p_filled_quantity: number
-          p_new_holding_type: string
-          p_new_max_hold_days: number
-          p_new_scheduled_exit_date: string
-          p_new_stop_loss_price: number
-          p_new_target_price: number
-          p_new_trailing_stop_pct: number
-          p_order_id: string
-          p_side: string
-          p_signal_source: string
-          p_symbol: string
-          p_trade_id: string
-          p_unified_signal_id: string
-        }
-        Returns: {
-          committed_trade_id: string
-          outcome: string
-          position_action: string
-          reason: string
-          resulting_position: Json
-        }[]
-      }
+      oms_paper_apply_fill:
+        | {
+            Args: {
+              p_executed_at: string
+              p_expected_position_opened_at: string
+              p_fill_price: number
+              p_filled_quantity: number
+              p_new_holding_type: string
+              p_new_max_hold_days: number
+              p_new_scheduled_exit_date: string
+              p_new_stop_loss_price: number
+              p_new_target_price: number
+              p_new_trailing_stop_pct: number
+              p_order_id: string
+              p_side: string
+              p_signal_source: string
+              p_symbol: string
+              p_trade_id: string
+              p_unified_signal_id: string
+            }
+            Returns: {
+              committed_trade_id: string
+              outcome: string
+              position_action: string
+              reason: string
+              resulting_position: Json
+            }[]
+          }
+        | {
+            Args: {
+              p_executed_at: string
+              p_expected_position_opened_at: string
+              p_fill_price: number
+              p_filled_quantity: number
+              p_new_holding_type: string
+              p_new_max_hold_days: number
+              p_new_scheduled_exit_date: string
+              p_new_scheduled_exit_time: string
+              p_new_stop_loss_price: number
+              p_new_target_price: number
+              p_new_trailing_stop_pct: number
+              p_order_id: string
+              p_side: string
+              p_signal_source: string
+              p_symbol: string
+              p_trade_id: string
+              p_unified_signal_id: string
+            }
+            Returns: {
+              committed_trade_id: string
+              outcome: string
+              position_action: string
+              reason: string
+              resulting_position: Json
+            }[]
+          }
       oms_paper_update_stop_loss: {
         Args: {
           p_expected_position_opened_at: string

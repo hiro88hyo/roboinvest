@@ -96,8 +96,8 @@ Future frozen-v1 success criteria (not satisfied by the current stress E2E):
   fill, position creation, and scheduled exit ordering are reproducible from
   logs.
 - Every opened paper position has `holding_type=swing`, catastrophic
-  `stop_loss_price`, `max_hold_days=20`, and a deterministic
-  `scheduled_exit_date`.
+  `stop_loss_price`, `max_hold_days=20`, a deterministic `scheduled_exit_date`,
+  and the frozen `scheduled_exit_time=15:30 JST` close-session profile.
 - Entry fills are attributable to the intended next-session opening sequence,
   with entry slippage versus the publisher's selected fresh ask reported in
   basis points. The valuation reference remains non-executable context.
@@ -196,7 +196,8 @@ Current causal dry-run sequence:
 `StrategySignal`, `UnifiedTradeSignal`, and `OrderRequest` now carry
 `stop_loss_pct`, constrained to `0 < stop_loss_pct < 1`. A relative stop and an
 absolute `stop_loss_price` are mutually exclusive. `OrderRequest` also carries
-`holding_type`, `max_hold_days`, and `scheduled_exit_date`; Gateway preserves
+`holding_type`, `max_hold_days`, `scheduled_exit_date`, and optional
+`scheduled_exit_time`; Gateway preserves
 those fields and Aggregator includes the relative stop in its order-field
 passthrough.
 
@@ -308,15 +309,18 @@ OMS Paper already supports swing positions, absolute-stop monitoring, and
 `opening-swing-exits` for its current fixed-hold stress path. The order path now
 derives a new
 position's `holding_type` from `OrderRequest`, resolves an absolute stop from the
-actual BUY fill, and carries `max_hold_days` and `scheduled_exit_date`. Its 14:50
+actual BUY fill, and carries `max_hold_days`, `scheduled_exit_date`, and an
+event-only `scheduled_exit_time=15:30 JST`. Existing swing positions without
+that optional field retain their legacy due-date behavior. Its 14:50
 day closeout ignores swing positions.
 
 OMS Paper persists `trades_paper` and the corresponding `positions` mutation in
 one idempotent transaction. The emulator E2E now covers new entry, redelivery,
 partial/full exit, and scheduled opening-exit ordering. These checks do not
-prove the frozen 20th-session-close contract. Before any frozen-v1 activation,
-add and verify a propagated close-session exit profile; migration/RPC health is
-necessary but not sufficient. Its PAPER_ONLY path requires a fresh
+prove the frozen 20th-session-close contract. A propagated close-session profile
+and its contract/migration source are now implemented and verified through the
+local RPC/E2E path; target migration/RPC health is necessary but not sufficient
+for frozen-v1 activation. Its PAPER_ONLY path requires a fresh
 wall-clock-checked `received_at`.
 
 ## Operational Timeline

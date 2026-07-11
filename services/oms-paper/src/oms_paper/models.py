@@ -13,7 +13,7 @@ contracts に上げず本サービス内に閉じている理由:
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, time
 from decimal import Decimal
 from enum import StrEnum
 from typing import Literal, Self
@@ -34,6 +34,9 @@ class PaperPosition(BaseModel):
     stop_loss_price: Decimal | None = None
     max_hold_days: int | None = Field(default=None, ge=1)
     scheduled_exit_date: date | None = None
+    # Optional JST close-session time for a fixed-hold exit.  ``None`` retains
+    # the legacy behaviour of exiting as soon as the scheduled date is due.
+    scheduled_exit_time: time | None = None
     trailing_stop_pct: Decimal | None = None
     opened_at: datetime
     # The immutable first-BUY trade ID for this position.  Legacy rows created

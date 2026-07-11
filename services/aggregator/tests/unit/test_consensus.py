@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time
 from decimal import Decimal
 
 import pytest
@@ -90,6 +90,7 @@ def test_rule_only_carries_order_fields(signal_factory) -> None:  # type: ignore
         trailing_stop_pct=Decimal("0.002"),
         max_hold_days=20,
         scheduled_exit_date=date(2026, 5, 20),
+        scheduled_exit_time=time(15, 30),
     )
     unified = aggregate([rule], config=_cfg())
     assert unified is not None
@@ -100,6 +101,7 @@ def test_rule_only_carries_order_fields(signal_factory) -> None:  # type: ignore
     assert unified.trailing_stop_pct == Decimal("0.002")
     assert unified.max_hold_days == 20
     assert unified.scheduled_exit_date == date(2026, 5, 20)
+    assert unified.scheduled_exit_time == time(15, 30)
 
 
 def test_event_identity_and_paper_only_intent_are_preserved(signal_factory) -> None:  # type: ignore[no-untyped-def]

@@ -4,6 +4,11 @@ Purpose: validate the research assumption behind `exit_before_entry_at_open=true
 This is a paper-only operational gate. It is not a live procedure and does not
 promote any swing candidate to paper/live trading by itself.
 
+This runbook is for positions whose exit is due at the opening. It must not be
+used as the event-cluster fixed-hold exit procedure: positions carrying
+`scheduled_exit_time=15:30 JST` are intentionally not due during this command's
+morning window.
+
 ## Scope
 
 Validate this sequence:
@@ -31,7 +36,7 @@ Do not run this against live positions.
   - `PUBSUB_PROJECT_ID` when book warmup is enabled
   - `PUBSUB_EMULATOR_HOST` or managed Pub/Sub configuration, matching the environment
 - Supabase schema health check passes, including `positions.scheduled_exit_date`,
-  `trades_paper.order_id`, `rpc:oms_paper_apply_fill`, and
+  `positions.scheduled_exit_time`, `trades_paper.order_id`, `rpc:oms_paper_apply_fill`, and
   `rpc:oms_paper_update_stop_loss`.
 - Raw book subscription for `oms-paper` is receiving order book messages.
 - Gateway is not processing the corresponding BUY signals before this command completes.
@@ -46,6 +51,8 @@ op run --env-file infra/env.production -- \
 ```
 
 If `positions.scheduled_exit_date` is `NG`, apply migration 017. If
+`positions.scheduled_exit_time` is `NG`, apply
+`contracts/sql/022_positions_scheduled_exit_time.sql`. If
 `trades_paper.order_id` or either OMS Paper RPC is `NG`, apply
 `contracts/sql/018_oms_paper_apply_fill_rpc.sql`. Do not run this gate against a
 target where any of these checks fail.
@@ -110,7 +117,8 @@ Interpretation:
 After the command and before BUY signal processing, confirm:
 
 ```sql
-select symbol, quantity, holding_type, opened_at, max_hold_days, scheduled_exit_date
+select symbol, quantity, holding_type, opened_at, max_hold_days, scheduled_exit_date,
+       scheduled_exit_time
 from positions
 where trade_type = 'paper'
   and holding_type = 'swing'

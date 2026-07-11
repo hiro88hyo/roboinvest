@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import AsyncIterator, Callable, Iterator
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time
 from decimal import Decimal
 from uuid import uuid4
 
@@ -41,6 +41,7 @@ def _make_unified_signal(
     trailing_stop_pct: Decimal | None = None,
     max_hold_days: int | None = None,
     scheduled_exit_date: date | None = None,
+    scheduled_exit_time: time | None = None,
     spread_bps: Decimal | None = None,
     spread_ticks: Decimal | None = None,
     ask_depth_5: int | None = None,
@@ -63,6 +64,7 @@ def _make_unified_signal(
         trailing_stop_pct=trailing_stop_pct,
         max_hold_days=max_hold_days,
         scheduled_exit_date=scheduled_exit_date,
+        scheduled_exit_time=scheduled_exit_time,
         spread_bps=spread_bps,
         spread_ticks=spread_ticks,
         ask_depth_5=ask_depth_5,

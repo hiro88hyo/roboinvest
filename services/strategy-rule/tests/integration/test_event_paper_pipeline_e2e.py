@@ -638,6 +638,7 @@ async def test_event_paper_pipeline_is_paper_only_and_idempotent(
             assert Decimal(str(position["entry_price"])) == Decimal("1000")
             assert Decimal(str(position["stop_loss_price"])) == Decimal("900.00")
             assert position["max_hold_days"] == 20
+            assert position["scheduled_exit_time"] == "15:30:00"
             assert position["position_generation_id"] == entry_trades[0]["trade_id"]
             expected_exit_date = nth_tse_business_day_after(TARGET_DATE, 20)
             assert expected_exit_date is not None
@@ -647,8 +648,8 @@ async def test_event_paper_pipeline_is_paper_only_and_idempotent(
                 expected_exit_date.year,
                 expected_exit_date.month,
                 expected_exit_date.day,
-                0,
-                1,
+                6,
+                30,
                 tzinfo=UTC,
             )
             oms_now[0] = exit_clock

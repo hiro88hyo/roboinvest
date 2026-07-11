@@ -21,6 +21,7 @@ EVENT_MAX_BOOK_AGE_SECONDS = 10.0
 EVENT_MAX_FUTURE_SKEW_SECONDS = 5.0
 EVENT_ENTRY_WINDOW_START = time(9, 0)
 EVENT_ENTRY_WINDOW_END = time(9, 30)
+EVENT_EXIT_TIME = time(15, 30)
 EVENT_EXECUTION_PROFILE = "opening_transport_stress_v1"
 EVENT_EXECUTION_STRATEGY_KEY = f"{EVENT_STRATEGY_KEY}__{EVENT_EXECUTION_PROFILE}"
 
@@ -79,6 +80,7 @@ class EventPaperSignalFields(BaseModel):
     stop_loss_pct: Decimal = EVENT_STOP_LOSS_PCT
     max_hold_days: int = EVENT_MAX_HOLD_DAYS
     scheduled_exit_date: date | None = None
+    scheduled_exit_time: time = EVENT_EXIT_TIME
     best_bid: Decimal = Field(gt=0)
     best_ask: Decimal = Field(gt=0)
     spread_bps: Decimal = Field(ge=0)
@@ -103,6 +105,8 @@ class EventPaperSignalFields(BaseModel):
             raise ValueError("event max hold drifted from 20")
         if self.scheduled_exit_date is not None:
             raise ValueError("event scheduled exit must be derived by OMS Paper from the fill")
+        if self.scheduled_exit_time != EVENT_EXIT_TIME:
+            raise ValueError("event scheduled exit time is frozen at 15:30 JST")
         if self.price != self.best_ask:
             raise ValueError("event signal price must equal the selected best ask")
         if self.best_bid >= self.best_ask:
