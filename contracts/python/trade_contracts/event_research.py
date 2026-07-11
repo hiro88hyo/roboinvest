@@ -176,6 +176,10 @@ class ObservationRecord(BaseModel):
     data_available_at: datetime
     entry_price: Decimal | None = None
     valuation_price: Decimal | None = None
+    # The exact TSE session whose daily bar was required at the frozen feature
+    # cutoff.  ``source_bar_date`` is ``None`` rather than an older fallback
+    # when this session is absent from the archive.
+    required_ohlcv_session_date: str | None = None
     source_bar_date: str | None = None
     source_bar_available_at: datetime | None = None
     previous_forecast_source_record_id: str | None = None

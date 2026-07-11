@@ -3,12 +3,16 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
 from aggregator.clients.supabase import SupabaseError, SupabaseWriter
 from trade_contracts.enums import Action, SignalSource, TradeMode, TradingStyle
+from trade_contracts.event_paper_dispatch import (
+    EVENT_PAPER_EXECUTION_STRATEGY_KEY,
+    EventPaperDispatchStage,
+)
 from trade_contracts.signal import UnifiedTradeSignal
 
 Handler = Callable[[httpx.Request], Coroutine[None, None, httpx.Response]]
@@ -151,3 +155,90 @@ async def test_read_long_quantity_sums_position_rows() -> None:
     assert req.url.params.get("symbol") == "eq.7203"
     assert req.url.params.get("trade_type") == "eq.paper"
     assert req.url.params.get("side") == "eq.LONG"
+
+
+async def test_event_paper_dispatch_client_uses_rpc_and_parses_confirmed_checkpoint() -> None:
+    signal_id = uuid4()
+    input_payload = {
+        "routing_intent": "PAPER_ONLY",
+        "strategy_key": EVENT_PAPER_EXECUTION_STRATEGY_KEY,
+        "symbol": "7203",
+    }
+    calls: list[dict[str, object]] = []
+    state = {
+        "stage": "aggregator",
+        "input_signal_id": str(signal_id),
+        "input_payload": input_payload,
+        "input_payload_sha256": "a" * 64,
+        "output_payload": input_payload,
+        "output_payload_sha256": "b" * 64,
+        "destination_topic": "trade-signals",
+        "status": "prepared",
+        "attempt_id": None,
+        "attempted_at": None,
+        "pubsub_message_id": None,
+        "confirmed_at": None,
+        "last_error": None,
+    }
+
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/rest/v1/rpc/event_paper_stage_dispatch"
+        payload = json.loads(request.content.decode())
+        calls.append(payload)
+        action = payload["p_action"]
+        if action == "prepare":
+            state.update(
+                input_payload_sha256=payload["p_input_payload_sha256"],
+                output_payload_sha256=payload["p_output_payload_sha256"],
+            )
+            outcome = "prepared"
+        elif action == "begin":
+            state.update(
+                status="attempting",
+                attempt_id=payload["p_attempt_id"],
+                attempted_at=payload["p_occurred_at"],
+            )
+            outcome = "attempt_started"
+        elif action == "confirm":
+            state.update(
+                status="confirmed",
+                pubsub_message_id=payload["p_pubsub_message_id"],
+                confirmed_at=payload["p_occurred_at"],
+            )
+            outcome = "confirmed"
+        else:
+            raise AssertionError(f"unexpected action: {action}")
+        return httpx.Response(200, json=[{"outcome": outcome, **state}])
+
+    now = datetime(2026, 4, 20, 9, 0, tzinfo=UTC)
+    async with SupabaseWriter(
+        url="https://example.supabase.co",
+        secret_key="k",
+        transport=httpx.MockTransport(_handler),
+    ) as writer:
+        prepared = await writer.prepare_event_paper_dispatch(
+            stage=EventPaperDispatchStage.AGGREGATOR,
+            input_signal_id=signal_id,
+            input_payload=input_payload,
+            output_payload=input_payload,
+            destination_topic="trade-signals",
+        )
+        begun = await writer.begin_event_paper_dispatch(
+            stage=EventPaperDispatchStage.AGGREGATOR,
+            input_signal_id=signal_id,
+            attempt_id="attempt-1",
+            attempted_at=now,
+        )
+        confirmed = await writer.confirm_event_paper_dispatch(
+            stage=EventPaperDispatchStage.AGGREGATOR,
+            input_signal_id=signal_id,
+            attempt_id="attempt-1",
+            pubsub_message_id="message-1",
+            confirmed_at=now,
+        )
+
+    assert prepared.outcome.value == "prepared"
+    assert begun.outcome.value == "attempt_started"
+    assert confirmed.outcome.value == "confirmed"
+    assert confirmed.confirmed_at == now
+    assert [call["p_action"] for call in calls] == ["prepare", "begin", "confirm"]

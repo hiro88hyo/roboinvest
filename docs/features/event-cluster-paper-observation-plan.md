@@ -139,7 +139,7 @@ The separately gated path below is an operational stress profile, not frozen-v1
 execution reproduction:
 
 ```text
-schema v2 causal artifact + dedicated event-paper-raw-books
+schema v3 causal artifact + dedicated event-paper-raw-books
   -> strategy_rule event-paper-publish (opening_transport_stress_v1)
   -> durable first-quote claim + single-attempt CAS journal + separate receipt
   -> strategy-signals-a (RULE / SWING / PAPER_ONLY)
@@ -163,10 +163,13 @@ Current causal dry-run sequence:
    exporter-recorded receipt provenance. Evaluate the frozen cluster v1 rule
    at each disclosure's original `data_available_at/feature_cutoff_at`; the
    later local `source_received_at` must not advance that feature vintage.
-   Write candidate and exclusion output without consulting T+1 OHLCV. If the
-   latest expected signal-date bar is absent after close, preserve the frozen
-   selection with `feature_data_complete=false`; pre-open/watchlist/publisher
-   reject execution rather than changing the research cohort.
+   Write candidate and exclusion output without consulting T+1 OHLCV. The
+   required daily bar is the signal-date session at or after 15:30 JST and the
+   preceding TSE business session before that cutoff. If that exact row is
+   absent, preserve the frozen occurrence with
+   `feature_data_complete=false` rather than substituting an older bar;
+   pre-open/watchlist/publisher reject execution rather than changing the
+   research cohort.
 2. Next trading day pre-open preparation: ensure event symbols are in the
    watchlist for market-data capture only after
    `production-preopen-check.py --swing-candidates-json` validates causality,
@@ -239,9 +242,9 @@ The local plumbing and safety verification gates are complete:
   atomic confirmed or ambiguous stress receipt to be reconstructed without
   another publish. Same-filesystem-namespace invocations are locked; operations
   must also use one designated coordinator because the cursor is shared;
-- the real emulator + PostgREST path verifies publisher redelivery,
-  Aggregator/Gateway duplication, exactly one BUY fill, fill-anchored stop,
-  scheduled partial/full SELLs, position deletion, and no live message; and
+- the real emulator + PostgREST path verifies publisher redelivery, durable
+  Aggregator/Gateway duplicate suppression, exactly one BUY fill, fill-anchored
+  stop, scheduled partial/full SELLs, position deletion, and no live message; and
 - CI runs that focused path on pull requests alongside the actual atomic RPC
   tests.
 
@@ -325,7 +328,7 @@ T day through 23:59 JST
 After T day ends, before next TSE business day 09:00 JST
   exporter records the complete signal-date response and receipt provenance
   event batch detects cluster v1 candidates without consulting T+1 OHLCV
-  schema v2 causal dry-run artifact is written; detector cannot publish
+  schema v3 causal dry-run artifact is written; detector cannot publish
   production-preopen-check validates the candidate artifact
   event candidates are added to watchlist for data capture
   all due swing exits complete before entry preflight
@@ -447,9 +450,10 @@ Phase 3:
 - `--publish-receipt-json` validates artifact SHA-256, target date, complete
   `execution_candidate_id` coverage, fixed topic/strategy, and deterministic
   signal IDs. It distinguishes confirmed delivery from
-  `publication_ambiguous` without authorizing a resend. Null-lineage
-  scheduled/stop SELLs are attributed only after an exactly linked BUY and
-  before a later BUY generation.
+  `publication_ambiguous` without authorizing a resend. Exit attribution uses
+  the persisted `position_generation_id`, aggregates every SELL in the exact
+  generation, and fails closed for a non-origin event BUY, any later BUY added
+  to that generation, or legacy null lineage.
 - Reports expose `execution_profile=opening_transport_stress_v1` and
   `comparable_to_registered_backtest=false`; their PnL/trades cannot satisfy
   frozen-v1 paper/live gates.

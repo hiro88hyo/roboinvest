@@ -16,6 +16,7 @@ tolerated because the Supabase write upserts on `signal_id`.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import time
@@ -23,13 +24,20 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
+from uuid import uuid4
 
 from pydantic import ValidationError
 from trade_contracts.enums import Action
+from trade_contracts.event_paper_dispatch import (
+    EventPaperDispatchOutcome,
+    EventPaperDispatchStage,
+    EventPaperDispatchStatus,
+    is_event_paper_execution_signal,
+)
 from trade_contracts.signal import StrategySignal, UnifiedTradeSignal
 
 from ..clients.pubsub import PubSubPublisher, PubSubSubscriber, PulledMessage
-from ..clients.supabase import SupabaseWriter
+from ..clients.supabase import SupabaseError, SupabaseWriter
 from ..config import AggregatorSettings
 from ..consensus import ConsensusConfig, aggregate
 from .buffer import Origin, PairingBuffer, ReadyBucket
@@ -52,6 +60,15 @@ class BatchStats:
     unified_emitted: int
     acked_a: int
     acked_b: int
+    duplicates_suppressed: int = 0
+    ambiguous: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class _EventDispatch:
+    published: bool = False
+    duplicate_suppressed: bool = False
+    ambiguous: bool = False
 
 
 @dataclass(slots=True)
@@ -111,7 +128,14 @@ class StreamRunner:
         )
 
         ready = self._buffer.drain_ready(self.monotonic())
-        buckets_emitted, unified_emitted, acked_a, acked_b = await self._emit(ready)
+        (
+            buckets_emitted,
+            unified_emitted,
+            acked_a,
+            acked_b,
+            duplicates_suppressed,
+            ambiguous,
+        ) = await self._emit(ready)
 
         return BatchStats(
             pulled_a=pulled_a,
@@ -121,6 +145,8 @@ class StreamRunner:
             unified_emitted=unified_emitted,
             acked_a=acked_a + poison_acked_a,
             acked_b=acked_b + poison_acked_b,
+            duplicates_suppressed=duplicates_suppressed,
+            ambiguous=ambiguous,
         )
 
     async def flush(self) -> BatchStats | None:
@@ -128,7 +154,14 @@ class StreamRunner:
         remaining = self._buffer.drain_all()
         if not remaining:
             return None
-        buckets_emitted, unified_emitted, acked_a, acked_b = await self._emit(remaining)
+        (
+            buckets_emitted,
+            unified_emitted,
+            acked_a,
+            acked_b,
+            duplicates_suppressed,
+            ambiguous,
+        ) = await self._emit(remaining)
         return BatchStats(
             pulled_a=0,
             pulled_b=0,
@@ -137,6 +170,8 @@ class StreamRunner:
             unified_emitted=unified_emitted,
             acked_a=acked_a,
             acked_b=acked_b,
+            duplicates_suppressed=duplicates_suppressed,
+            ambiguous=ambiguous,
         )
 
     async def _pull_into_buffer(
@@ -165,15 +200,21 @@ class StreamRunner:
             await subscriber.acknowledge(subscription, poison_ack_ids)
         return len(messages), parse_errors, len(poison_ack_ids)
 
-    async def _emit(self, ready: list[ReadyBucket]) -> tuple[int, int, int, int]:
+    async def _emit(self, ready: list[ReadyBucket]) -> tuple[int, int, int, int, int, int]:
         unified_batch: list[UnifiedTradeSignal] = []
         ack_ids_a: list[str] = []
         ack_ids_b: list[str] = []
         for bucket in ready:
+            # Event-paper IDs intentionally exclude wall-clock time.  Using
+            # ``self.wall_clock()`` here would make an otherwise identical
+            # redelivery hash-mismatch its durable journal payload.  Its
+            # frozen StrategySignal timestamp is the canonical aggregate
+            # timestamp instead.
+            event_created_at = _event_paper_bucket_created_at(bucket.signals)
             merged = aggregate(
                 bucket.signals,
                 config=self.consensus_config,
-                now=self.wall_clock(),
+                now=event_created_at or self.wall_clock(),
             )
             if merged is not None:
                 unified_batch.append(merged)
@@ -182,7 +223,18 @@ class StreamRunner:
 
         unified_batch = await self._filter_sell_without_position(unified_batch)
 
+        event_paper_batch: list[UnifiedTradeSignal] = []
+        ordinary_batch: list[UnifiedTradeSignal] = []
         for unified in unified_batch:
+            if is_event_paper_execution_signal(
+                routing_intent=unified.routing_intent,
+                strategy_key=unified.strategy_key,
+            ):
+                event_paper_batch.append(unified)
+            else:
+                ordinary_batch.append(unified)
+
+        for unified in ordinary_batch:
             await self.publisher.publish(
                 self.settings.pubsub_topic_trade_signals,
                 data=unified.model_dump_json().encode("utf-8"),
@@ -194,8 +246,17 @@ class StreamRunner:
                     "candidate_id": unified.candidate_id or "",
                 },
             )
-        if unified_batch:
-            await self.writer.insert_aggregator_logs(unified_batch)
+        if ordinary_batch:
+            await self.writer.insert_aggregator_logs(ordinary_batch)
+
+        event_paper_published = 0
+        duplicates_suppressed = 0
+        ambiguous = 0
+        for unified in event_paper_batch:
+            result = await self._publish_event_paper_unified(unified)
+            event_paper_published += int(result.published)
+            duplicates_suppressed += int(result.duplicate_suppressed)
+            ambiguous += int(result.ambiguous)
 
         if ack_ids_a:
             await self.subscriber_a.acknowledge(
@@ -206,7 +267,153 @@ class StreamRunner:
                 self.settings.pubsub_subscription_signals_b, ack_ids_b
             )
 
-        return len(ready), len(unified_batch), len(ack_ids_a), len(ack_ids_b)
+        return (
+            len(ready),
+            len(ordinary_batch) + event_paper_published,
+            len(ack_ids_a),
+            len(ack_ids_b),
+            duplicates_suppressed,
+            ambiguous,
+        )
+
+    async def _publish_event_paper_unified(self, signal: UnifiedTradeSignal) -> _EventDispatch:
+        """Publish the isolated event path through its durable stage journal."""
+
+        input_payload = signal.model_dump(mode="json")
+        prepared = await self.writer.prepare_event_paper_dispatch(
+            stage=EventPaperDispatchStage.AGGREGATOR,
+            input_signal_id=signal.signal_id,
+            input_payload=input_payload,
+            output_payload=input_payload,
+            destination_topic=self.settings.pubsub_topic_trade_signals,
+        )
+        if prepared.outcome in {
+            EventPaperDispatchOutcome.PAYLOAD_MISMATCH,
+            EventPaperDispatchOutcome.ATTEMPT_MISMATCH,
+        }:
+            raise SupabaseError(
+                "event-paper aggregator journal payload mismatch: "
+                f"signal_id={signal.signal_id} outcome={prepared.outcome.value}"
+            )
+        if prepared.outcome is EventPaperDispatchOutcome.CONFIRMED:
+            logger.info(
+                "event-paper aggregator duplicate suppressed: signal_id=%s status=confirmed",
+                signal.signal_id,
+            )
+            return _EventDispatch(duplicate_suppressed=True)
+        if prepared.outcome is EventPaperDispatchOutcome.AMBIGUOUS or prepared.status in {
+            EventPaperDispatchStatus.ATTEMPTING,
+            EventPaperDispatchStatus.AMBIGUOUS,
+        }:
+            logger.error(
+                "event-paper aggregator publish is ambiguous; automatic retry blocked: "
+                "signal_id=%s status=%s",
+                signal.signal_id,
+                prepared.status.value,
+            )
+            return _EventDispatch(ambiguous=True)
+        if prepared.status is not EventPaperDispatchStatus.PREPARED:
+            raise SupabaseError(
+                "event-paper aggregator journal returned unexpected prepared state: "
+                f"signal_id={signal.signal_id} status={prepared.status.value}"
+            )
+
+        try:
+            canonical = UnifiedTradeSignal.model_validate(prepared.output_payload)
+        except ValidationError as exc:
+            raise SupabaseError("event-paper aggregator journal output is invalid") from exc
+        if canonical.signal_id != signal.signal_id or not is_event_paper_execution_signal(
+            routing_intent=canonical.routing_intent,
+            strategy_key=canonical.strategy_key,
+        ):
+            raise SupabaseError("event-paper aggregator journal output identity mismatch")
+
+        # This write is still safely retryable because no external publish has
+        # started.  Store the canonical output rather than a redelivery's clock
+        # dependent reconstruction.
+        await self.writer.insert_aggregator_logs([canonical])
+        attempt_id = uuid4().hex
+        begun = await self.writer.begin_event_paper_dispatch(
+            stage=EventPaperDispatchStage.AGGREGATOR,
+            input_signal_id=signal.signal_id,
+            attempt_id=attempt_id,
+            attempted_at=self.wall_clock(),
+        )
+        if begun.outcome is EventPaperDispatchOutcome.CONFIRMED:
+            return _EventDispatch(duplicate_suppressed=True)
+        if begun.outcome is EventPaperDispatchOutcome.AMBIGUOUS:
+            logger.error(
+                "event-paper aggregator attempt already ambiguous; automatic retry blocked: "
+                "signal_id=%s",
+                signal.signal_id,
+            )
+            return _EventDispatch(ambiguous=True)
+        if begun.outcome is not EventPaperDispatchOutcome.ATTEMPT_STARTED:
+            raise SupabaseError(
+                "event-paper aggregator journal did not start publication attempt: "
+                f"signal_id={signal.signal_id} outcome={begun.outcome.value}"
+            )
+
+        try:
+            message_id = await self.publisher.publish(
+                self.settings.pubsub_topic_trade_signals,
+                data=canonical.model_dump_json().encode("utf-8"),
+                attributes={
+                    "symbol": canonical.symbol,
+                    "signal_source": canonical.signal_source.value,
+                    "routing_intent": canonical.routing_intent.value,
+                    "strategy_key": canonical.strategy_key or "",
+                    "candidate_id": canonical.candidate_id or "",
+                },
+            )
+        except Exception as exc:
+            logger.exception(
+                "event-paper aggregator publish outcome is ambiguous: signal_id=%s",
+                signal.signal_id,
+            )
+            with contextlib.suppress(Exception):
+                await self.writer.mark_event_paper_dispatch_ambiguous(
+                    stage=EventPaperDispatchStage.AGGREGATOR,
+                    input_signal_id=signal.signal_id,
+                    attempt_id=attempt_id,
+                    occurred_at=self.wall_clock(),
+                    error=f"pubsub_publish_error:{type(exc).__name__}",
+                )
+            return _EventDispatch(ambiguous=True)
+
+        try:
+            checkpoint = await self.writer.confirm_event_paper_dispatch(
+                stage=EventPaperDispatchStage.AGGREGATOR,
+                input_signal_id=signal.signal_id,
+                attempt_id=attempt_id,
+                pubsub_message_id=message_id,
+                confirmed_at=self.wall_clock(),
+            )
+        except Exception as exc:
+            logger.exception(
+                "event-paper aggregator checkpoint outcome is ambiguous: signal_id=%s",
+                signal.signal_id,
+            )
+            with contextlib.suppress(Exception):
+                checkpoint = await self.writer.mark_event_paper_dispatch_ambiguous(
+                    stage=EventPaperDispatchStage.AGGREGATOR,
+                    input_signal_id=signal.signal_id,
+                    attempt_id=attempt_id,
+                    occurred_at=self.wall_clock(),
+                    error=f"checkpoint_error:{type(exc).__name__}",
+                )
+                if checkpoint.outcome is EventPaperDispatchOutcome.CONFIRMED:
+                    return _EventDispatch(published=True)
+            return _EventDispatch(ambiguous=True)
+
+        if checkpoint.outcome is EventPaperDispatchOutcome.CONFIRMED:
+            return _EventDispatch(published=True)
+        if checkpoint.outcome is EventPaperDispatchOutcome.AMBIGUOUS:
+            return _EventDispatch(ambiguous=True)
+        raise SupabaseError(
+            "event-paper aggregator journal did not confirm publication: "
+            f"signal_id={signal.signal_id} outcome={checkpoint.outcome.value}"
+        )
 
     async def _filter_sell_without_position(
         self, signals: list[UnifiedTradeSignal]
@@ -256,3 +463,19 @@ def _parse_signal(msg: PulledMessage) -> StrategySignal | None:
     except ValidationError:
         logger.exception("schema invalid: message_id=%s", msg.message_id)
         return None
+
+
+def _event_paper_bucket_created_at(signals: list[StrategySignal]) -> datetime | None:
+    """Return the immutable event source timestamp for an event-only bucket."""
+
+    timestamps = [
+        signal.created_at
+        for signal in signals
+        if is_event_paper_execution_signal(
+            routing_intent=signal.routing_intent,
+            strategy_key=signal.strategy_key,
+        )
+    ]
+    if not timestamps:
+        return None
+    return min(timestamps)

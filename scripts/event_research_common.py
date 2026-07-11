@@ -27,7 +27,7 @@ from trade_contracts.event_research import (
     TechnicalContextV0,
     ValuationFeaturesV0,
 )
-from universe_scanner.calendar import next_business_day
+from universe_scanner.calendar import is_tse_business_day, next_business_day, previous_business_day
 
 FEATURE_SCHEMA_VERSION = "event_research_v0"
 PURGE_TRADING_DAYS = 20
@@ -317,23 +317,20 @@ def build_candidate_features(
     previous_by_event_id = previous_forecast_snapshots(events)
     for event in events:
         bars = by_symbol.get(event.symbol, [])
-        if not bars:
-            continue
-        signal_idx = latest_available_bar_index(bars, event.feature_cutoff_at)
-        if signal_idx is None:
-            continue
-        signal_bar = bars[signal_idx]
+        required_session_date = required_ohlcv_session_date(event.feature_cutoff_at)
+        signal_idx = index_by_date(bars, required_session_date)
+        signal_bar = None if signal_idx is None else bars[signal_idx]
         raw = event.raw
         previous = previous_by_event_id.get(event.event_id)
         fundamental = build_fundamental_features(raw, event, previous=previous)
         valuation = build_valuation_features(
             raw,
             event,
-            valuation_price=signal_bar.close,
+            valuation_price=None if signal_bar is None else signal_bar.close,
             sector_medians=sector_medians_for_date(
                 by_symbol=by_symbol,
                 sector_by_symbol=sector_by_symbol,
-                signal_date=signal_bar.date,
+                signal_date=required_session_date,
             ),
             sector=sector_by_symbol.get(event.symbol),
         )
@@ -362,9 +359,12 @@ def build_candidate_features(
                 feature_cutoff_at=event.feature_cutoff_at,
                 data_available_at=event.data_available_at,
                 entry_price=None,
-                valuation_price=signal_bar.close,
-                source_bar_date=signal_bar.date.isoformat(),
-                source_bar_available_at=daily_bar_available_at(signal_bar.date),
+                valuation_price=None if signal_bar is None else signal_bar.close,
+                required_ohlcv_session_date=required_session_date.isoformat(),
+                source_bar_date=None if signal_bar is None else signal_bar.date.isoformat(),
+                source_bar_available_at=(
+                    None if signal_bar is None else daily_bar_available_at(signal_bar.date)
+                ),
                 previous_forecast_source_record_id=None
                 if previous is None
                 else previous.source_record_id,
@@ -394,6 +394,11 @@ def attach_forward_labels(
     by_symbol = group_ohlcv_by_symbol(ohlcv_rows)
     observations: list[ObservationRecord] = []
     for candidate in candidates:
+        if (
+            candidate.required_ohlcv_session_date is not None
+            and candidate.source_bar_date != candidate.required_ohlcv_session_date
+        ):
+            continue
         bars = by_symbol.get(candidate.symbol, [])
         entry_idx = index_by_date(bars, date.fromisoformat(candidate.entry_date))
         if entry_idx is None:
@@ -648,7 +653,7 @@ def build_valuation_features(
     raw: dict[str, Any],
     event: EventRecord,
     *,
-    valuation_price: Decimal,
+    valuation_price: Decimal | None,
     sector_medians: dict[str, Decimal],
     sector: str | None,
 ) -> ValuationFeaturesV0:
@@ -659,14 +664,18 @@ def build_valuation_features(
     dividend = _decimal(
         _first(raw, "ForecastDividendPerShareAnnual", "ForecastDividend", "FDivAnn")
     )
-    trailing_per = _per(valuation_price, eps_latest)
-    forecast_per = _per(valuation_price, forecast_eps)
-    pbr = None if bps is None or bps <= 0 else valuation_price / bps
+    trailing_per = None if valuation_price is None else _per(valuation_price, eps_latest)
+    forecast_per = None if valuation_price is None else _per(valuation_price, forecast_eps)
+    pbr = None if valuation_price is None or bps is None or bps <= 0 else valuation_price / bps
     dividend_yield = (
-        None if dividend is None or valuation_price <= 0 else dividend / valuation_price
+        None
+        if dividend is None or valuation_price is None or valuation_price <= 0
+        else dividend / valuation_price
     )
     earnings_yield = (
-        None if forecast_eps is None or forecast_eps <= 0 else forecast_eps / valuation_price
+        None
+        if valuation_price is None or forecast_eps is None or forecast_eps <= 0
+        else forecast_eps / valuation_price
     )
     sector_per = sector_medians.get(f"{sector}:forecast_per") if sector else None
     sector_pbr = sector_medians.get(f"{sector}:pbr") if sector else None
@@ -706,10 +715,21 @@ def build_valuation_features(
 def build_technical_context(
     *,
     bars: list[OhlcvRow],
-    signal_idx: int,
+    signal_idx: int | None,
     feature_cutoff_at: datetime,
     source_record_id: str,
 ) -> TechnicalContextV0:
+    if signal_idx is None:
+        meta = {
+            "source_disclosed_at": feature_cutoff_at,
+            "available_at": feature_cutoff_at,
+            "feature_cutoff_at": feature_cutoff_at,
+            "age_days": 0,
+            "source_record_id": source_record_id,
+        }
+        return TechnicalContextV0(
+            **{name: feature(None, False, **meta) for name in TechnicalContextV0.model_fields}
+        )
     close = bars[signal_idx].close
     closes = [bar.close for bar in bars]
     turnovers = [bar.turnover for bar in bars]
@@ -1451,11 +1471,23 @@ def daily_bar_available_at(bar_date: date) -> datetime:
     return datetime.combine(bar_date, DAILY_BAR_AVAILABLE_TIME_JST, tzinfo=TOKYO).astimezone(UTC)
 
 
-def latest_available_bar_index(bars: list[OhlcvRow], cutoff_at: datetime) -> int | None:
-    for idx in range(len(bars) - 1, -1, -1):
-        if daily_bar_available_at(bars[idx].date) <= cutoff_at:
-            return idx
-    return None
+def required_ohlcv_session_date(feature_cutoff_at: datetime) -> date:
+    """Return the one daily session permitted for a frozen feature cutoff.
+
+    A same-day bar is usable only at or after its fixed 15:30 JST availability
+    time.  Before then (and on non-business days), the immediately preceding
+    TSE business session is required; callers must not silently substitute an
+    even older row when it is absent.
+    """
+
+    if feature_cutoff_at.tzinfo is None:
+        raise ValueError("feature_cutoff_at must be timezone-aware")
+    cutoff_date = feature_cutoff_at.astimezone(TOKYO).date()
+    if is_tse_business_day(cutoff_date) and feature_cutoff_at >= daily_bar_available_at(
+        cutoff_date
+    ):
+        return cutoff_date
+    return previous_business_day(cutoff_date)
 
 
 def event_cluster_id(symbol: str, disclosed_at: datetime) -> str:

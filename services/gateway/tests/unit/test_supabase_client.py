@@ -10,6 +10,10 @@ import httpx
 import pytest
 from gateway.clients.supabase import SupabaseClient, SupabaseError
 from trade_contracts.enums import TradeMode
+from trade_contracts.event_paper_dispatch import (
+    EVENT_PAPER_EXECUTION_STRATEGY_KEY,
+    EventPaperDispatchStage,
+)
 
 Handler = Callable[[httpx.Request], Coroutine[None, None, httpx.Response]]
 
@@ -238,6 +242,57 @@ async def test_release_risk_reservation_posts_rpc() -> None:
         "p_order_id": str(order_id),
         "p_reason": "publish_failed",
     }
+
+
+async def test_event_paper_dispatch_client_parses_ambiguous_terminal_state() -> None:
+    signal_id = uuid4()
+    now = datetime(2026, 4, 20, 9, 0, tzinfo=UTC)
+    captured: list[httpx.Request] = []
+
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "outcome": "ambiguous",
+                    "stage": "gateway",
+                    "input_signal_id": str(signal_id),
+                    "input_payload": {
+                        "routing_intent": "PAPER_ONLY",
+                        "strategy_key": EVENT_PAPER_EXECUTION_STRATEGY_KEY,
+                    },
+                    "input_payload_sha256": "a" * 64,
+                    "output_payload": {
+                        "routing_intent": "PAPER_ONLY",
+                        "strategy_key": EVENT_PAPER_EXECUTION_STRATEGY_KEY,
+                        "trade_mode": "paper",
+                    },
+                    "output_payload_sha256": "b" * 64,
+                    "destination_topic": "paper-orders",
+                    "status": "ambiguous",
+                    "attempt_id": "attempt-1",
+                    "attempted_at": now.isoformat(),
+                    "pubsub_message_id": None,
+                    "confirmed_at": None,
+                    "last_error": "pubsub_publish_error:PubSubError",
+                }
+            ],
+        )
+
+    async with _build_client(_handler) as client:
+        result = await client.mark_event_paper_dispatch_ambiguous(
+            stage=EventPaperDispatchStage.GATEWAY,
+            input_signal_id=signal_id,
+            attempt_id="attempt-1",
+            occurred_at=now,
+            error="pubsub_publish_error:PubSubError",
+        )
+
+    assert result.outcome.value == "ambiguous"
+    assert result.attempted_at == now
+    assert captured[0].url.path == "/rest/v1/rpc/event_paper_stage_dispatch"
+    assert json.loads(captured[0].content.decode())["p_action"] == "ambiguous"
 
 
 async def test_read_long_quantity_returns_zero_when_no_row() -> None:

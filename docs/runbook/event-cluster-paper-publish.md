@@ -24,7 +24,7 @@ stress identity and record `comparable_to_registered_backtest=false`.
   intentionally blocked.
 - Do not interpret a candidate artifact as an executable order or a
   profitability result.
-- Require artifact `schema_version=2`, an exact `target_date` match, and a
+- Require artifact `schema_version=3`, an exact `target_date` match, and a
   separate publication receipt. Never edit the detector artifact to make it
   executable.
 
@@ -76,16 +76,19 @@ Confirm `causality_verified=true`, `publish_enabled=false`, and
 `causality.candidate_artifact_contains_entry_price=false`. A candidate may now
 be detected with OHLCV ending on `SIGNAL_DATE`; T+1 OHLCV is not required and,
 even if present in the CSV, is not consulted for candidate features. The
-valuation bar is the latest bar available at the original disclosure-time
+valuation bar must be the one required at the original disclosure-time
 `feature_cutoff_at`; a next-morning fetch is recorded separately as
 `source_received_at` and must never advance that cutoff.
 
-If a post-close disclosure has no signal-date OHLCV row, the detector keeps the
-frozen research selection instead of silently changing the cohort, but writes
-`feature_data_complete=false`. The artifact remains reportable; strict pre-open,
+For each disclosure, the detector requires exactly one daily OHLCV session:
+the signal-date bar at or after 15:30 JST, otherwise the preceding TSE business
+session. If that required row is absent, it does not substitute an older bar or
+evaluate the PER guard with one. Instead it preserves the frozen event
+occurrence as a reportable `feature_data_complete=false` candidate with
+`selection_status=incomplete_required_ohlcv_session`. Strict pre-open,
 watchlist preparation, and publisher checks must reject it for execution until
-the source archive is complete. `missing_signal_date_ohlcv_count` counts these
-operationally ineligible candidate rows.
+the source archive is complete. `missing_required_ohlcv_session_count` counts
+these operationally ineligible candidate rows.
 
 The financial-summary exporter records `_roboinvest_fetched_at` on each source
 row and writes a fetch-metadata row, including for a date with zero disclosures.
@@ -173,14 +176,19 @@ Already implemented while publication remains blocked:
   The execution key is
   `<frozen-selection-key>__opening_transport_stress_v1`, so these rows cannot be
   silently pooled with frozen-v1 evidence;
+- the isolated event-paper path persists its immutable input/output payload
+  before Aggregator or Gateway publishes. A confirmed replay is suppressed;
+  an uncheckpointed external attempt becomes `ambiguous` and is never
+  automatically re-published;
 - OMS Paper persists every normal/closeout/swing/day-stop fill and its position
   transition through one `oms_paper_apply_fill` transaction, keyed primarily by
   `trades_paper.order_id`; actual-RPC tests cover concurrent BUYs, redelivery,
-  partial/full SELL, rollback, position-generation ABA rejection, and role
-  restrictions; and
-- health check verifies `trades_paper.order_id` plus safe executable presence of
-  `event_paper_cas_strategy_reasoning`, `oms_paper_apply_fill`, and
-  generation-checked `oms_paper_update_stop_loss`;
+  partial/full SELL, rollback, `opened_at` ABA rejection, persistent
+  `position_generation_id` lineage, and role restrictions; and
+- health check verifies `trades_paper.order_id` / `position_generation_id` plus
+  safe executable presence of `event_paper_cas_strategy_reasoning`,
+  `event_paper_stage_dispatch`, `oms_paper_apply_fill`, and generation-checked
+  `oms_paper_update_stop_loss`;
 - the one-shot publisher consumes only `event-paper-raw-books`, uses a targeted
   seek, validates a `received_at`-proven fresh best ask (age at most 10 seconds,
   future skew at most 5 seconds), and emits RULE/SWING/PAPER_ONLY with frozen
@@ -209,11 +217,13 @@ Still required before any target publication can be reconsidered:
 - replace or formally resolve the cited same-symbol random evidence: random
   rows used an 8% stop while selected rows used the frozen 10% stop. Do not
   rerun/inspect the locked OOS window without ADR-required approval;
-- deployment of `contracts/sql/018_oms_paper_apply_fill_rpc.sql` and
-  `contracts/sql/019_event_paper_claim_cas_rpc.sql` to the target Supabase
-  project, with `scripts/health-check.py --check supabase` reporting
-  `trades_paper.order_id`, both OMS Paper RPCs, and
-  `event_paper_cas_strategy_reasoning` as `OK`;
+- deployment of `contracts/sql/018_oms_paper_apply_fill_rpc.sql`,
+  `contracts/sql/019_event_paper_claim_cas_rpc.sql`,
+  `contracts/sql/020_event_paper_stage_dispatch_journal.sql`, and
+  `contracts/sql/021_oms_paper_position_generation_lineage.sql` to the target
+  Supabase project, with `scripts/health-check.py --check supabase` reporting
+  both Paper OMS RPCs, `event_paper_cas_strategy_reasoning`, and
+  `event_paper_stage_dispatch` as `OK`;
 - verification that the managed `event-paper-raw-books` subscription exists,
   is filtered to book messages, and is owned only by one designated one-shot
   coordinator host. Never run different occurrences concurrently from separate
@@ -370,11 +380,13 @@ op run --env-file infra/env.production -- \
 
 The reporter verifies the artifact digest, target date, occurrence coverage,
 frozen selection/stress execution identities, topic, and deterministic signal
-IDs. A BUY is recognized only
-through `receipt signal_id -> aggregator strategy_signal_id_a -> paper
-unified_signal_id`; a same-symbol unrelated BUY or later position is not event
-evidence. Scheduled/stop SELL rows with null unified IDs are attributed only
-after that linked BUY and before any later BUY generation.
+IDs. A BUY is recognized only through `receipt signal_id -> aggregator
+strategy_signal_id_a -> paper unified_signal_id`; a same-symbol unrelated BUY
+or later position is not event evidence. Scheduled/stop SELL rows are attributed
+only by the linked BUY's persisted `position_generation_id`, so every partial
+and final exit in that exact generation is reported. A non-origin event BUY or
+any later BUY added to that generation, or legacy null lineage is marked
+unverifiable rather than inferred from time.
 
 The report sets `execution_profile=opening_transport_stress_v1` and
 `comparable_to_registered_backtest=false`. Do not aggregate its PnL/trade count
@@ -401,6 +413,9 @@ Key statuses:
 - `no_open_position_no_sell`: a linked BUY exists, but neither its exact
   position generation nor an attributable exit is visible; investigate rather
   than treating it as a confirmed close.
+- `unverifiable_generation_lineage`: the event BUY was a later add-on to an
+  existing generation, its generation later received another BUY, or it predates
+  persisted lineage; do not attribute exits or position state.
 
 `position_unrealized_pnl` is open-position PnL only. Do not count it as
 confirmed realized paper execution evidence.

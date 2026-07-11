@@ -105,6 +105,7 @@ def make_paper_position(
     scheduled_exit_date: date | None = None,
     trailing_stop_pct: Decimal | None = None,
     opened_at: datetime | None = None,
+    position_generation_id: UUID | None = None,
 ) -> PaperPosition:
     return PaperPosition(
         symbol=symbol,
@@ -117,4 +118,5 @@ def make_paper_position(
         scheduled_exit_date=scheduled_exit_date,
         trailing_stop_pct=trailing_stop_pct,
         opened_at=opened_at or DEFAULT_TS,
+        position_generation_id=position_generation_id,
     )

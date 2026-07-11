@@ -1,6 +1,6 @@
 # Handoff Memo (for coding AIs)
 
-最終更新: 2026-07-10 / branch: `fix/event-candidate-causality`
+最終更新: 2026-07-11 / branch: `fix/event-paper-review-followup`
 
 このファイルは、次の coding AI が最初に読むための短い索引です。日次の長い運用ログはここに積まず、必要な詳細だけリンク先で確認してください。
 
@@ -34,19 +34,24 @@
   Gateway/Order/OMS 防御、strategy/candidate pairing 分離、決定的 ID、OMS の
   wall-clock stale/future 判定も実装済み。
 - detector 内蔵の event `--publish-paper` は引き続き fail closed。独立した
-  paper-only one-shot publisher、single-attempt CAS journal、confirmed/ambiguous
-  receipt、Pub/Sub + Supabase 実 E2E はローカル実装・検証済み。ただし現
+  paper-only one-shot publisher、single-attempt CAS journal、Aggregator/Gateway の
+  event 専用 durable dispatch journal、confirmed/ambiguous receipt、Pub/Sub +
+  Supabase 実 E2E はローカル実装・検証済み。下流は confirmed の再送を抑止し、
+  外部 publish が曖昧なら自動再送しない。ただし現
   publisher は `opening_transport_stress_v1` で、凍結済み next-open / 20日目
   close を再現せず `comparable_to_registered_backtest=false`。そのため trades/PnL
   は v1 evidence に数えず、target 実行は禁止。加えて将来の実行には
   `contracts/sql/018_oms_paper_apply_fill_rpc.sql`（infra migration 019）と
-  `contracts/sql/019_event_paper_claim_cas_rpc.sql`（infra migration 020）の適用、
-  3 RPC health、および単一 coordinator が所有する managed subscription の
+  `contracts/sql/019_event_paper_claim_cas_rpc.sql`（infra migration 020）、
+  `contracts/sql/020_event_paper_stage_dispatch_journal.sql`（infra migration 021）、
+  `contracts/sql/021_oms_paper_position_generation_lineage.sql`（infra migration 022）
+  の適用、4 RPC health、および単一 coordinator が所有する managed subscription の
   確認が publish 前提。
-- detector は post-close 時点で signal-date OHLCV が欠けても凍結済み選定を
-  落とさず `feature_data_complete=false` として記録する。artifact は報告可能だが、
-  pre-open/watchlist/publisher は実行を拒否する。これによりデータ欠損を理由に
-  research cohort を変更しない。
+- detector は feature cutoff から必須OHLCV sessionを厳密に決める（15:30 JST
+  以降は signal-date、それ以前は直前TSE営業日）。当該行が欠けても古いbarを
+  代用せず、凍結済み occurrence を `feature_data_complete=false` として記録する。
+  artifact は報告可能だが、pre-open/watchlist/publisher は実行を拒否する。これにより
+  データ欠損を理由に research cohort を変更しない。
 - ローカル transport stress は loopback Pub/Sub emulator + `--no-seek`、
   loopback Supabase、`trade-ai-dev` / `local-dev` project の組合せだけ許可する。
   remote emulator、cloud Supabase、production project は client 構築前に拒否し、
@@ -135,14 +140,18 @@
      `candidate_id` は戦略 ID ではなく cluster/observation occurrence を使う。
    - OMS Paper の全 fill path は `oms_paper_apply_fill` RPC へ統一済み。
      order/signal/trade ID 冪等性、symbol lock、rollback、partial exit cache 維持、
-     position `opened_at` 世代照合、closeout の fresh-book bounded retry、Python と
+     `opened_at` の ABA 照合、初回 BUY `trade_id` を固定する
+     `position_generation_id` lineage、closeout の fresh-book bounded retry、Python と
      SQL の1円平均単価丸めを実装。ローカル実 RPC の並行 BUY・時刻/約定値が
      変わる redelivery・partial/full SELL・FK rollback・ABA reject・並行 trailing
      stop の単調増加・anon deny を確認済み。
+   - 将来の独立 hardening として、stale exit/stop の expected 値にも
+     `position_generation_id` を伝播する余地がある。現行の `opened_at` ABA guard を
+     置換するには RPC interface の migration が必要なため、このレビューでは混在させない。
    - detector 内蔵の event `--publish-paper` は fail closed のまま。独立 publisher
      と実 E2E は `opening_transport_stress_v1` として完成したが、next-open / 20日目
      close の整合と stop 条件を揃えた matched-random evidence がない。target DB の
-     両 migration/3 RPC health、managed subscription の単一 coordinator 所有も
+     4 migration/4 RPC health、managed subscription の単一 coordinator 所有も
      含め、すべて解消するまで activation しない。
    - kill switch、PER threshold、20日 exit、-10% stop の戦略値は変更しない。
 

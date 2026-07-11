@@ -24,6 +24,11 @@ import httpx
 from pydantic import ValidationError
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 from trade_contracts.enums import TradeMode
+from trade_contracts.event_paper_dispatch import (
+    EventPaperDispatchResult,
+    EventPaperDispatchStage,
+    canonical_payload_sha256,
+)
 from trade_contracts.risk import KillSwitchState
 
 logger = logging.getLogger(__name__)
@@ -120,6 +125,179 @@ class SupabaseClient:
         if self._client is not None:
             await self._client.aclose()
             self._client = None
+
+    async def read_event_paper_dispatch(
+        self,
+        *,
+        stage: EventPaperDispatchStage,
+        input_signal_id: UUID,
+    ) -> EventPaperDispatchResult | None:
+        """Read a durable event-paper delivery state, if one exists."""
+
+        return await self._event_paper_stage_dispatch(
+            action="read",
+            stage=stage,
+            input_signal_id=input_signal_id,
+            allow_missing=True,
+        )
+
+    async def prepare_event_paper_dispatch(
+        self,
+        *,
+        stage: EventPaperDispatchStage,
+        input_signal_id: UUID,
+        input_payload: dict[str, Any],
+        output_payload: dict[str, Any],
+        destination_topic: str,
+    ) -> EventPaperDispatchResult:
+        """Persist immutable event-paper input/output before any publish attempt."""
+
+        result = await self._event_paper_stage_dispatch(
+            action="prepare",
+            stage=stage,
+            input_signal_id=input_signal_id,
+            input_payload=input_payload,
+            input_payload_sha256=canonical_payload_sha256(input_payload),
+            output_payload=output_payload,
+            output_payload_sha256=canonical_payload_sha256(output_payload),
+            destination_topic=destination_topic,
+            allow_missing=False,
+        )
+        assert result is not None
+        return result
+
+    async def begin_event_paper_dispatch(
+        self,
+        *,
+        stage: EventPaperDispatchStage,
+        input_signal_id: UUID,
+        attempt_id: str,
+        attempted_at: datetime,
+    ) -> EventPaperDispatchResult:
+        """Durably cross the point of no return before publishing to Pub/Sub."""
+
+        result = await self._event_paper_stage_dispatch(
+            action="begin",
+            stage=stage,
+            input_signal_id=input_signal_id,
+            attempt_id=attempt_id,
+            occurred_at=attempted_at,
+            allow_missing=False,
+        )
+        assert result is not None
+        return result
+
+    async def confirm_event_paper_dispatch(
+        self,
+        *,
+        stage: EventPaperDispatchStage,
+        input_signal_id: UUID,
+        attempt_id: str,
+        pubsub_message_id: str,
+        confirmed_at: datetime,
+    ) -> EventPaperDispatchResult:
+        """Checkpoint a successful Pub/Sub publish for the durable receipt."""
+
+        result = await self._event_paper_stage_dispatch(
+            action="confirm",
+            stage=stage,
+            input_signal_id=input_signal_id,
+            attempt_id=attempt_id,
+            pubsub_message_id=pubsub_message_id,
+            occurred_at=confirmed_at,
+            allow_missing=False,
+        )
+        assert result is not None
+        return result
+
+    async def mark_event_paper_dispatch_ambiguous(
+        self,
+        *,
+        stage: EventPaperDispatchStage,
+        input_signal_id: UUID,
+        attempt_id: str,
+        occurred_at: datetime,
+        error: str,
+    ) -> EventPaperDispatchResult:
+        """Make an uncheckpointed external attempt terminal for automatic workers."""
+
+        result = await self._event_paper_stage_dispatch(
+            action="ambiguous",
+            stage=stage,
+            input_signal_id=input_signal_id,
+            attempt_id=attempt_id,
+            occurred_at=occurred_at,
+            error=error,
+            allow_missing=False,
+        )
+        assert result is not None
+        return result
+
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((httpx.HTTPError, SupabaseError)),
+    )
+    async def _event_paper_stage_dispatch(
+        self,
+        *,
+        action: str,
+        stage: EventPaperDispatchStage,
+        input_signal_id: UUID,
+        input_payload: dict[str, Any] | None = None,
+        input_payload_sha256: str | None = None,
+        output_payload: dict[str, Any] | None = None,
+        output_payload_sha256: str | None = None,
+        destination_topic: str | None = None,
+        attempt_id: str | None = None,
+        pubsub_message_id: str | None = None,
+        occurred_at: datetime | None = None,
+        error: str | None = None,
+        allow_missing: bool,
+    ) -> EventPaperDispatchResult | None:
+        assert self._client is not None
+        response = await self._client.post(
+            "/rest/v1/rpc/event_paper_stage_dispatch",
+            json={
+                "p_action": action,
+                "p_stage": stage.value,
+                "p_input_signal_id": str(input_signal_id),
+                "p_input_payload": input_payload,
+                "p_input_payload_sha256": input_payload_sha256,
+                "p_output_payload": output_payload,
+                "p_output_payload_sha256": output_payload_sha256,
+                "p_destination_topic": destination_topic,
+                "p_attempt_id": attempt_id,
+                "p_pubsub_message_id": pubsub_message_id,
+                "p_occurred_at": occurred_at.isoformat() if occurred_at is not None else None,
+                "p_error": error,
+            },
+        )
+        if response.status_code >= 500:
+            raise SupabaseError(
+                "transient error: rpc=event_paper_stage_dispatch "
+                f"status={response.status_code} body={response.text[:200]}"
+            )
+        if response.status_code >= 300:
+            raise SupabaseError(
+                "rpc failed: rpc=event_paper_stage_dispatch "
+                f"status={response.status_code} body={response.text[:200]}"
+            )
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise SupabaseError("invalid event_paper_stage_dispatch response JSON") from exc
+        if not isinstance(payload, list):
+            raise SupabaseError("invalid event_paper_stage_dispatch response: expected a list")
+        if not payload and allow_missing:
+            return None
+        if len(payload) != 1 or not isinstance(payload[0], dict):
+            raise SupabaseError("invalid event_paper_stage_dispatch response row count")
+        try:
+            return EventPaperDispatchResult.model_validate(payload[0])
+        except ValidationError as exc:
+            raise SupabaseError("invalid event_paper_stage_dispatch response") from exc
 
     @retry(
         reraise=True,

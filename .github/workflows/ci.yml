@@ -31,6 +31,9 @@ jobs:
       - name: Sync workspace
         run: uv sync --all-packages
 
+      - name: Verify Supabase deployment SQL artifacts
+        run: uv run python scripts/check-supabase-migration-contracts.py
+
       - name: ruff format --check
         run: uv run ruff format --check .
 
@@ -146,6 +149,50 @@ jobs:
             psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
             -c "notify pgrst, 'reload schema';"
 
+      - name: Verify event-paper RPC security
+        run: |
+          docker exec -i supabase_db_trade-ai-agent \
+            psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+          do $$
+          declare
+              function_signature text;
+              function_oid oid;
+              function_is_security_definer boolean;
+              function_config text[];
+          begin
+              foreach function_signature in array array[
+                  'public.event_paper_cas_strategy_reasoning(uuid,text,text)',
+                  'public.event_paper_stage_dispatch(text,text,uuid,jsonb,text,jsonb,text,text,text,text,timestamptz,text)'
+              ] loop
+                  function_oid := function_signature::regprocedure;
+                  if has_function_privilege('anon', function_signature, 'EXECUTE') then
+                      raise exception 'anon may execute %', function_signature;
+                  end if;
+                  if has_function_privilege('authenticated', function_signature, 'EXECUTE') then
+                      raise exception 'authenticated may execute %', function_signature;
+                  end if;
+                  if not has_function_privilege('service_role', function_signature, 'EXECUTE') then
+                      raise exception 'service_role cannot execute %', function_signature;
+                  end if;
+
+                  select prosecdef, coalesce(proconfig, array[]::text[])
+                  into function_is_security_definer, function_config
+                  from pg_proc
+                  where oid = function_oid;
+                  if not found then
+                      raise exception 'event-paper RPC is missing: %', function_signature;
+                  end if;
+                  if function_is_security_definer then
+                      raise exception 'event-paper RPC must be security invoker: %', function_signature;
+                  end if;
+                  if not ('search_path=""' = any(function_config)) then
+                      raise exception 'event-paper RPC must set an empty search_path: %', function_signature;
+                  end if;
+              end loop;
+          end;
+          $$;
+          SQL
+
       - name: Export Supabase env
         working-directory: infra
         run: |
@@ -173,6 +220,7 @@ jobs:
         run: >-
           uv run pytest -q
           services/strategy-rule/tests/integration/test_event_paper_pipeline_e2e.py
+          services/strategy-rule/tests/integration/test_strategy_rule_event_paper_rpc_security.py
 
       - name: Dump Pub/Sub emulator logs on failure
         if: failure()

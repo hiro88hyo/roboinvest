@@ -115,7 +115,7 @@ class SupabaseClient:
                 "select": (
                     "symbol,quantity,entry_price,holding_type,"
                     "target_price,stop_loss_price,max_hold_days,scheduled_exit_date,"
-                    "trailing_stop_pct,opened_at,side"
+                    "trailing_stop_pct,opened_at,position_generation_id,side"
                 ),
                 "symbol": f"eq.{symbol}",
                 "trade_type": "eq.paper",
@@ -143,7 +143,7 @@ class SupabaseClient:
                 "select": (
                     "symbol,quantity,entry_price,holding_type,"
                     "target_price,stop_loss_price,max_hold_days,scheduled_exit_date,"
-                    "trailing_stop_pct,opened_at,side"
+                    "trailing_stop_pct,opened_at,position_generation_id,side"
                 ),
                 "trade_type": "eq.paper",
             },

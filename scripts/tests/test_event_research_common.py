@@ -178,6 +178,49 @@ def test_intraday_and_unknown_time_do_not_use_same_day_bar() -> None:
     assert unknown.entry_date == "2026-01-22"
     assert intraday_obs.source_bar_date == "2026-01-20"
     assert unknown_obs.source_bar_date == "2026-01-20"
+    assert intraday_obs.required_ohlcv_session_date == "2026-01-20"
+    assert unknown_obs.required_ohlcv_session_date == "2026-01-20"
+
+
+@pytest.mark.parametrize(
+    ("feature_cutoff_at", "expected"),
+    [
+        (datetime(2026, 1, 20, 6, 29, 59, tzinfo=UTC), date(2026, 1, 19)),
+        (datetime(2026, 1, 20, 6, 30, tzinfo=UTC), date(2026, 1, 20)),
+        (datetime(2026, 1, 19, 5, 0, tzinfo=UTC), date(2026, 1, 16)),
+        (datetime(2026, 1, 18, 7, 0, tzinfo=UTC), date(2026, 1, 16)),
+    ],
+)
+def test_required_ohlcv_session_uses_tse_calendar_and_1530_boundary(
+    feature_cutoff_at: datetime,
+    expected: date,
+) -> None:
+    assert event_research.required_ohlcv_session_date(feature_cutoff_at) == expected
+
+
+def test_missing_required_intraday_bar_is_not_replaced_by_an_older_bar() -> None:
+    all_bars = _bars()
+    event = _event(_raw(DiscTime="14:00"), all_bars)
+    bars_without_required_session = [bar for bar in all_bars if bar.date != date(2026, 1, 20)]
+
+    [candidate] = event_research.build_candidate_features(
+        [event],
+        ohlcv_rows=bars_without_required_session,
+    )
+
+    assert candidate.required_ohlcv_session_date == "2026-01-20"
+    assert candidate.source_bar_date is None
+    assert candidate.source_bar_available_at is None
+    assert candidate.valuation_price is None
+    assert candidate.valuation_features_v0.forecast_per.valid is False
+    assert candidate.technical_context_v0.atr_pct_14d.valid is False
+    assert (
+        event_research.attach_forward_labels(
+            [candidate],
+            ohlcv_rows=all_bars,
+        )
+        == []
+    )
 
 
 def test_real_jquants_summary_keys_are_mapped_point_in_time() -> None:

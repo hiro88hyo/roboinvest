@@ -45,7 +45,7 @@ from google.api_core.exceptions import GoogleAPICallError, NotFound
 from google.cloud import pubsub_v1
 from strategy_rule.event_paper.artifact import EventArtifactError, load_event_paper_artifact
 from trade_contracts.scanner_gate import ScannerGateThresholds, scanner_gate_reject_reason
-from universe_scanner.calendar import previous_business_day
+from universe_scanner.calendar import is_tse_business_day, previous_business_day
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 COMPOSE_FILE = REPO_ROOT / "infra" / "docker-compose.prod.yml"
@@ -57,7 +57,7 @@ GCP_CREDENTIALS_OP_REF = "op://roboinvest/production/GOOGLE_APPLICATION_CREDENTI
 SMOKE_TOPIC = "adr-0001-smoke-test"
 SMOKE_SUBSCRIPTION = "adr-0001-smoke-test-sub"
 EVENT_CLUSTER_CANDIDATE_ID = "event_cluster_earnings_dividend_value_guard_fixed20_stop_v1_research"
-EVENT_CLUSTER_ARTIFACT_SCHEMA_VERSION = 2
+EVENT_CLUSTER_ARTIFACT_SCHEMA_VERSION = 3
 EVENT_CLUSTER_MAX_HOLD_DAYS = 20
 EVENT_CLUSTER_CAT_STOP_PCT = "-0.10"
 
@@ -732,7 +732,7 @@ def check_swing_paper_candidates(reporter: Reporter, args: argparse.Namespace) -
     except EventArtifactError as exc:
         reporter.emit("NG", "candidate artifact contract", str(exc))
         return
-    reporter.emit("OK", "candidate artifact contract", "strict schema v2")
+    reporter.emit("OK", "candidate artifact contract", "strict schema v3")
 
     schema_version = payload.get("schema_version")
     if schema_version == EVENT_CLUSTER_ARTIFACT_SCHEMA_VERSION:
@@ -954,25 +954,18 @@ def check_swing_paper_candidates(reporter: Reporter, args: argparse.Namespace) -
         data_available = _parse_iso_datetime(item.get("data_available_at"))
         feature_cutoff = _parse_iso_datetime(item.get("feature_cutoff_at"))
         source_received = _parse_iso_datetime(item.get("source_received_at"))
-        signal_bar_available = (
-            None
-            if signal_date is None
-            else datetime.combine(
-                signal_date,
-                datetime_time(15, 30),
-                tzinfo=ZoneInfo("Asia/Tokyo"),
-            )
+        required_session_date = (
+            None if feature_cutoff is None else _required_ohlcv_session_date(feature_cutoff)
         )
+        complete = item.get("feature_data_complete") is True
+        selection_status = item.get("selection_status")
         if (
             reference_date is None
-            or signal_date is None
-            or reference_date > signal_date
-            or (
-                data_available is not None
-                and signal_bar_available is not None
-                and data_available >= signal_bar_available
-                and reference_date != signal_date
-            )
+            or required_session_date is None
+            or item.get("required_ohlcv_session_date") != required_session_date.isoformat()
+            or reference_date != required_session_date
+            or not complete
+            or selection_status != "eligible"
         ):
             bad_reference_dates.append(symbol)
         if (
@@ -1105,6 +1098,19 @@ def _parse_iso_datetime(value: Any) -> datetime | None:
     except (TypeError, ValueError):
         return None
     return parsed if parsed.tzinfo is not None else None
+
+
+def _required_ohlcv_session_date(feature_cutoff_at: datetime) -> date:
+    local_zone = ZoneInfo("Asia/Tokyo")
+    cutoff_date = feature_cutoff_at.astimezone(local_zone).date()
+    same_day_available_at = datetime.combine(
+        cutoff_date,
+        datetime_time(15, 30),
+        tzinfo=local_zone,
+    )
+    if is_tse_business_day(cutoff_date) and feature_cutoff_at >= same_day_available_at:
+        return cutoff_date
+    return previous_business_day(cutoff_date)
 
 
 def _is_nonnegative_int(value: Any) -> bool:

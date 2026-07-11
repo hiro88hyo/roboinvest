@@ -17,7 +17,7 @@ from aggregator.clients.pubsub import PubSubPublisher as AggregatorPublisher
 from aggregator.clients.pubsub import PubSubSubscriber as AggregatorSubscriber
 from aggregator.clients.supabase import SupabaseWriter as AggregatorWriter
 from aggregator.config import AggregatorSettings
-from aggregator.consensus import ConsensusConfig
+from aggregator.consensus import ConsensusConfig, aggregate
 from aggregator.streaming.runner import StreamRunner as AggregatorRunner
 from gateway.clients.pubsub import PubSubPublisher as GatewayPublisher
 from gateway.clients.pubsub import PubSubSubscriber as GatewaySubscriber
@@ -119,6 +119,8 @@ async def event_resources(
         "aggregator_b": f"it-event-aggregator-b-{suffix}",
         "gateway": f"it-event-gateway-{suffix}",
         "oms_orders": f"it-event-oms-orders-{suffix}",
+        "trade_observer": f"it-event-trade-observer-{suffix}",
+        "paper_observer": f"it-event-paper-observer-{suffix}",
         "live_observer": f"it-event-live-observer-{suffix}",
     }
     base_url = (
@@ -143,7 +145,9 @@ async def event_resources(
             (resources["aggregator_a"], STRATEGY_A_TOPIC),
             (resources["aggregator_b"], STRATEGY_B_TOPIC),
             (resources["gateway"], TRADE_TOPIC),
+            (resources["trade_observer"], TRADE_TOPIC),
             (resources["oms_orders"], PAPER_TOPIC),
+            (resources["paper_observer"], PAPER_TOPIC),
             (resources["live_observer"], LIVE_TOPIC),
         ):
             await _ensure_subscription(
@@ -434,9 +438,61 @@ async def test_event_paper_pipeline_is_paper_only_and_idempotent(
                 wall_clock=lambda: clock,
             )
             aggregate_first = await aggregator.run_once()
-            aggregate_second = await aggregator.run_once()
+            aggregate_second = await AggregatorRunner(
+                subscriber_a=sub_a,
+                subscriber_b=sub_b,
+                publisher=aggregator_publisher,
+                writer=aggregator_writer,
+                settings=aggregator_settings,
+                consensus_config=consensus,
+                monotonic=lambda: 1.0,
+                wall_clock=lambda: clock,
+            ).run_once()
         assert aggregate_first.unified_emitted == 1
-        assert aggregate_second.unified_emitted == 1
+        assert aggregate_second.unified_emitted == 0
+        assert aggregate_second.duplicates_suppressed == 1
+
+        # The Aggregator stage emitted exactly one business message.  The
+        # later direct replay below exercises Gateway's independent durable
+        # inbox without treating it as a second Aggregator output.
+        async with GatewaySubscriber(
+            project_id=pubsub_project_id,
+            emulator_host=pubsub_emulator_host,
+            timeout_seconds=2.0,
+        ) as trade_observer:
+            trade_messages = await trade_observer.pull(
+                event_resources["trade_observer"],
+                max_messages=10,
+                return_immediately=True,
+            )
+            assert len(trade_messages) == 1
+            await trade_observer.acknowledge(
+                event_resources["trade_observer"],
+                [message.ack_id for message in trade_messages],
+            )
+
+        replay_unified = aggregate(
+            [replay_signal],
+            config=consensus,
+            now=replay_signal.created_at,
+        )
+        assert replay_unified is not None
+        async with GatewayPublisher(
+            project_id=pubsub_project_id,
+            emulator_host=pubsub_emulator_host,
+        ) as gateway_replay_publisher:
+            await gateway_replay_publisher.publish(
+                TRADE_TOPIC,
+                data=replay_unified.model_dump_json().encode("utf-8"),
+                attributes={
+                    "symbol": replay_unified.symbol,
+                    "signal_source": replay_unified.signal_source.value,
+                    "routing_intent": replay_unified.routing_intent.value,
+                    "strategy_key": replay_unified.strategy_key or "",
+                    "candidate_id": replay_unified.candidate_id or "",
+                    "event_paper_replay": "true",
+                },
+            )
 
         gateway_settings = GatewaySettings(
             supabase_url=supabase_url,
@@ -490,9 +546,35 @@ async def test_event_paper_pipeline_is_paper_only_and_idempotent(
                 monotonic=lambda: 1.0,
             )
             gateway_first = await gateway.run_once()
-            gateway_second = await gateway.run_once()
+            gateway_second = await GatewayRunner(
+                subscriber=gateway_subscriber,
+                publisher=gateway_publisher,
+                supabase=gateway_supabase,
+                settings=gateway_settings,
+                risk_config=RiskConfig.from_settings(gateway_settings),
+                routing=TopicRouting(live_topic=LIVE_TOPIC, paper_topic=PAPER_TOPIC),
+                wall_clock=lambda: clock,
+                monotonic=lambda: 1.0,
+            ).run_once()
         assert gateway_first.approved == 1
-        assert gateway_second.approved == 1
+        assert gateway_second.approved == 0
+        assert gateway_second.duplicates_suppressed == 1
+
+        async with OmsSubscriber(
+            project_id=pubsub_project_id,
+            emulator_host=pubsub_emulator_host,
+            timeout_seconds=2.0,
+        ) as paper_observer:
+            paper_messages = await paper_observer.pull(
+                event_resources["paper_observer"],
+                max_messages=10,
+                return_immediately=True,
+            )
+            assert len(paper_messages) == 1
+            await paper_observer.acknowledge(
+                event_resources["paper_observer"],
+                [message.ack_id for message in paper_messages],
+            )
 
         oms_settings = OmsPaperSettings(
             supabase_url=supabase_url,
@@ -528,9 +610,9 @@ async def test_event_paper_pipeline_is_paper_only_and_idempotent(
                 monotonic=lambda: 1.0,
             )
             oms_stats = await oms.run_once()
-            assert oms_stats.orders_pulled == 2
+            assert oms_stats.orders_pulled == 1
             assert oms_stats.filled == 1
-            assert oms_stats.skipped_duplicate == 1
+            assert oms_stats.skipped_duplicate == 0
 
             entry_trades = await _read_rows(
                 url=supabase_url,
@@ -547,6 +629,7 @@ async def test_event_paper_pipeline_is_paper_only_and_idempotent(
             assert len(entry_trades) == 1
             assert entry_trades[0]["side"] == "BUY"
             assert Decimal(str(entry_trades[0]["price"])) == Decimal("1000")
+            assert entry_trades[0]["position_generation_id"] == entry_trades[0]["trade_id"]
             assert len(entry_positions) == 1
             position = entry_positions[0]
             assert position["trade_type"] == "paper"
@@ -555,6 +638,7 @@ async def test_event_paper_pipeline_is_paper_only_and_idempotent(
             assert Decimal(str(position["entry_price"])) == Decimal("1000")
             assert Decimal(str(position["stop_loss_price"])) == Decimal("900.00")
             assert position["max_hold_days"] == 20
+            assert position["position_generation_id"] == entry_trades[0]["trade_id"]
             expected_exit_date = nth_tse_business_day_after(TARGET_DATE, 20)
             assert expected_exit_date is not None
             assert position["scheduled_exit_date"] == expected_exit_date.isoformat()
@@ -645,6 +729,9 @@ async def test_event_paper_pipeline_is_paper_only_and_idempotent(
             Decimal("1100"),
             Decimal("1099"),
         ]
+        assert {row["position_generation_id"] for row in final_trades} == {
+            final_trades[0]["trade_id"]
+        }
 
         async with GatewaySubscriber(
             project_id=pubsub_project_id,

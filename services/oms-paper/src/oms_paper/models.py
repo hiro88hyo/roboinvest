@@ -36,6 +36,9 @@ class PaperPosition(BaseModel):
     scheduled_exit_date: date | None = None
     trailing_stop_pct: Decimal | None = None
     opened_at: datetime
+    # The immutable first-BUY trade ID for this position.  Legacy rows created
+    # before lineage support can be null; new RPC-managed positions cannot.
+    position_generation_id: UUID | None = None
 
 
 class FillResult(BaseModel):
