@@ -5,10 +5,12 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 LOCK_DIR="/tmp/roboinvest-universe-scanner.lock"
+GCP_CREDENTIALS_OP_REF="op://roboinvest/production/GOOGLE_APPLICATION_CREDENTIALS_JSON"
 TARGET_DATE=""
 RUN_BUILD=0
 SKIP_HEALTH_CHECK=0
 SKIP_OMS_LIVE_SYNC=0
+TEMP_GCP_CREDENTIALS=""
 
 usage() {
   cat <<'USAGE'
@@ -100,6 +102,9 @@ sync_oms_live_allowed_symbols() {
 
 cleanup() {
   rm -rf "$LOCK_DIR"
+  if [ -n "$TEMP_GCP_CREDENTIALS" ]; then
+    rm -f "$TEMP_GCP_CREDENTIALS"
+  fi
 }
 
 if ! mkdir "$LOCK_DIR" 2>/dev/null; then
@@ -120,12 +125,17 @@ if [ ! -f infra/env.production ]; then
 fi
 
 GCP_CREDENTIALS_HOST_PATH="${GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH:-/dev/shm/roboinvest/gcp-pubsub-sa.json}"
-export GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH="$GCP_CREDENTIALS_HOST_PATH"
-
-if [ ! -f "$GCP_CREDENTIALS_HOST_PATH" ]; then
-  echo "missing $GCP_CREDENTIALS_HOST_PATH" >&2
-  exit 1
+if [ ! -f "$GCP_CREDENTIALS_HOST_PATH" ] || [ ! -r "$GCP_CREDENTIALS_HOST_PATH" ]; then
+  TEMP_GCP_CREDENTIALS="$(mktemp /tmp/roboinvest-gcp-pubsub-sa-XXXXXX.json)"
+  chmod 600 "$TEMP_GCP_CREDENTIALS"
+  if ! op read --out-file "$TEMP_GCP_CREDENTIALS" --force "$GCP_CREDENTIALS_OP_REF" >/dev/null; then
+    echo "failed to materialize temporary Pub/Sub credentials" >&2
+    exit 1
+  fi
+  GCP_CREDENTIALS_HOST_PATH="$TEMP_GCP_CREDENTIALS"
+  echo "using temporary Pub/Sub credentials"
 fi
+export GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH="$GCP_CREDENTIALS_HOST_PATH"
 
 export TZ=Asia/Tokyo
 STARTED_AT="$(date '+%Y-%m-%d %H:%M:%S %Z')"
