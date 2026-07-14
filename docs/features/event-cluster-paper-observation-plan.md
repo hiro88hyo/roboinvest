@@ -57,10 +57,10 @@ ADR-0004 Paper Observation Gate:
 |---|---:|---|---|
 | Aggregate OOS PF | `> 1.10`, target `1.15` | Locked OOS portfolio PF: 1M `2.036`, 2M `2.193`, 5M `2.904` | PASS |
 | Aggregate OOS max DD | `< capital * 0.12` | 1M `41,194`, 2M `117,894`, 5M `161,253` | PASS |
-| Matched random p75 or better | target p75 | Reported percentile: 1M `0.737`, 2M `0.853`, 5M `0.927`, but random rows used an 8% stop while selected rows used 10% | NOT COMPARABLE / BLOCKED |
-| `same_symbol_random_date` percentile | `>= 0.65` | Same mismatched-stop percentile series | NOT COMPARABLE / BLOCKED |
+| Matched random p75 or better | target p75 | Approved corrected 10% stop run: 1M `0.713`, 2M `0.837`, 5M `0.937` | **FAIL at 1M / BLOCKED** |
+| `same_symbol_random_date` percentile | `>= 0.65` | Corrected series exceeds 0.65 at all capitals | PASS |
 | Execution stress does not materially break result | positive stressed result | entry10_exit25: 1M PF `1.784`, 2M `2.015`, 5M `2.655`; exit50: 1M PF `1.808`, 2M `1.975`, 5M `2.568` | PASS |
-| Backtest data timing matches paper ordering | disclosure-time PIT features, next-open entry, 20th-session close exit | Detector now preserves the frozen disclosure-time feature vintage. The local fresh-ask/opening-exit E2E is a separate transport stress | SELECTION FIXED / EXECUTION REPRODUCTION PENDING |
+| Backtest data timing matches paper ordering | disclosure-time PIT features, next-open entry, 20th-session close exit | Frozen opening-window/close-session local E2E passes; official-open/close reconciliation remains absent | PARTIAL / BLOCKED |
 | Prompt/model/feature schema can be frozen | required for AI path | This is LLM-free rule-only. Rule definition is frozen instead. | PASS BY SCOPE |
 
 The earlier paper-observation argument is no longer sufficient: in addition to
@@ -70,6 +70,19 @@ not reinterpret those percentiles as gate evidence and do not inspect/rerun the
 locked OOS window without the ADR-required approval. The simulator is corrected
 for future runs, but that code fix does not retroactively validate the cited
 locked report.
+
+On 2026-07-12 the user approved one corrective locked-OOS calculation limited
+to the 10% stop matched-random mismatch. The corrected result is recorded in
+[Event Cluster Matched-Random Corrective Inspection](../reports/event-cluster-matched-random-corrective-inspection-2026-07-12.md).
+It does not clear the gate because the conservative 1M portfolio remains below
+random p75 at percentile `0.713`. No further locked-OOS rerun is authorized.
+
+On 2026-07-12 the user adopted 2M JPY as the primary evaluation capital because
+the 1M result is materially constrained by 100-share lot feasibility. The
+amendment and its one-week cooling-off period are recorded in
+[ADR-0006](../adr/0006-primary-evaluation-capital.md). It cannot affect an
+activation decision before 2026-07-19 JST and does not remove the remaining
+forward-evidence or execution-reconciliation gates.
 
 ## Paper Observation Decision
 
@@ -83,6 +96,12 @@ Current decision:
   matched-random comparison before a new activation decision.
 - Keep all candidate parameters frozen.
 - Do not inspect the frozen locked OOS window again.
+
+The implementation contract for the future frozen-v1 execution profile is
+fixed in [event-frozen-v1-execution-contract.md](event-frozen-v1-execution-contract.md).
+In particular, a quote at or after 09:01 JST must not substitute for the
+registered next-open sequence, and initial receipts remain non-comparable until
+official-open/close reconciliation and the matched-random gate are complete.
 
 Paper observation success and failure must be judged before any live discussion.
 The initial observation horizon is the earlier of:

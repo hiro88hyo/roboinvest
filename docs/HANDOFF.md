@@ -1,6 +1,6 @@
 # Handoff Memo (for coding AIs)
 
-最終更新: 2026-07-11
+最終更新: 2026-07-12
 
 このファイルは、次の coding AI が最初に読むための短い索引です。日次の長い運用ログはここに積まず、必要な詳細だけリンク先で確認してください。
 
@@ -19,7 +19,42 @@
 
 ## 2. Current State
 
-2026-07-11 時点の要点:
+2026-07-12 時点の要点:
+
+- 日々の運用を「day戦略のpaper収益検証」から「tick/板/featureの継続収集 +
+  2M event/swing shadow forward」へ変更し、ユーザー承認済みの固定ルールを
+  `docs/runbook/data-capture-shadow-forward-operations.md` に記録した。既存day BUY、
+  event target publish、liveは無効のまま。Universe Scanner、Feeder、Feature Engine、
+  J-Quants export、causal detector、forward ledgerは継続する。
+
+- ユーザー承認により、cluster v1の主評価資本を1Mから2M JPYへ変更する方針を
+  採用した。1Mは小資本感応度、5Mはcapacity診断として維持する。結果確認後の
+  gate変更なので、ADR-0006に理由を記録し、2026-07-19 JSTまでは1週間の
+  cooling-offとする。この変更だけではpaper/liveを有効化しない。
+
+- 2026-07-12 に、明示承認された一回限りの cluster v1 locked-OOS
+  matched-random corrective inspectionを実施した。selected/random双方を凍結済み
+  10% stopへ揃えた結果、percentileは1M `0.713`、2M `0.837`、5M `0.937`。
+  主判定の1Mがp75未達のためpaper activationは引き続きBLOCKED。追加のlocked-OOS
+  再実行・retune・target publicationは許可されていない。正本は
+  `docs/reports/event-cluster-matched-random-corrective-inspection-2026-07-12.md`。
+- `frozen_opening_close_v1` execution profileをtransport stressと別identityで実装。
+  entry bookは09:00:00〜09:00:59 JSTだけを許可し、09:01以降の代用を拒否する。
+  共有dispatch contractとSupabase RPC allowlistも2つの明示profileだけへ拡張した
+  （contracts migration 023 / infra migration 024）。ローカル実Pub/Sub + Supabase
+  E2Eは両profileで成功し、paper-only、重複抑止、fill基準10% stop、20営業日目
+  15:30 exit、live topic流出ゼロを確認した。target DBへmigration 024は未適用で、
+  managed publisherの禁止も維持している。
+- 2026-07以降のprospective evidence用にhash-chain ledgerを追加した。
+  `scripts/record-event-forward-evidence.py`はcausal schema-v3 artifactだけを受付し、
+  改変・重複・逆順・legacy artifactを拒否する。
+  2026-07-10はfinancial summary 93件、OHLCV 4,196件からcausal artifactを生成し、
+  完全な候補0件を`no_candidate_complete_artifact`として初回記録した。正本は
+  `docs/reports/event-forward-evidence-2026-07-10.md`。
+- 次回以降は`op run ... uv run python scripts/run-event-forward-evidence.py
+  --signal-date YYYY-MM-DD`で、取得→detector→ledger追記を一括実行する。明示した
+  signal dateの市場・開示終了後かつ次営業日09:00 JST前に行う。次の予定日は
+  2026-07-13だが、完了前に実行しない。
 
 - 全 9 サービス + Dashboard は実装済み。
 - 現在の最優先は event candidate の因果性修正。運用候補と研究用

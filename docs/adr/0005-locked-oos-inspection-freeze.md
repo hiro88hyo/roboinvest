@@ -63,3 +63,30 @@ weaken ADR-0004 or the project kill switch in `AGENTS.md`.
 - Past-direction data expansion must not move validation or locked OOS
   boundaries for promotion decisions; use a fixed split manifest when adding
   older J-Quants history.
+
+## Approved Corrective Inspection — 2026-07-12
+
+The user explicitly approved one named corrective locked-OOS inspection after
+the 2026-07-10 erratum showed that historical selected portfolios used the
+frozen 10% catastrophic stop while matched-random portfolios used 8%.
+
+Approved scope:
+
+- candidate:
+  `event_cluster_earnings_dividend_value_guard_fixed20_stop_v1_research`
+- split: existing `locked-oos` only, with the existing frozen split boundaries
+- calculation: portfolio-level `same_symbol_random_date`, 300 seeds
+- selected and random paths both use the corrected 10% catastrophic stop
+- capitals: 1M, 2M, and 5M JPY
+- no parameter, threshold, selection-order, exit, cost, or cohort changes
+- output is written to new dated files; historical artifacts are not overwritten
+- this approval does not authorize target publication or another locked-OOS run
+
+Frozen inputs before execution:
+
+- observations SHA-256:
+  `4e8cefbfb0521d50ea00a0c9742e1e56746f7a4dec79eb6d5b6ac67ce2e3c63c`
+- daily OHLCV SHA-256:
+  `74b2a6449e11d1a9c0115f5328bdc36b081a7ccd9437a80229373bc36e962166`
+- simulator SHA-256:
+  `c2d1b12c1848b6e6c1b255ff5dab9cd58f166295d85f74d0477b0c8f48b26ce0`

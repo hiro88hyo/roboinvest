@@ -25,6 +25,9 @@ receivers:
       - id: drop_non_json_body
         type: filter
         expr: 'body matches "^\\s*\\{" == false'
+      - id: drop_non_app_json_body
+        type: filter
+        expr: 'body matches "\\\"timestamp\\\"\\s*:" == false or body matches "\\\"service\\\"\\s*:" == false or body matches "\\\"event\\\"\\s*:" == false'
       - id: parse_app_json
         type: json_parser
         parse_from: body

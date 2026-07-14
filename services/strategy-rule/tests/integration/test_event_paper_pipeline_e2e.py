@@ -38,7 +38,13 @@ from strategy_rule.event_paper._testing import (
     make_event_candidate,
 )
 from strategy_rule.event_paper.artifact import load_event_paper_artifact
-from strategy_rule.event_paper.models import EventPaperPublishConfig, claim_json
+from strategy_rule.event_paper.models import (
+    EVENT_EXECUTION_PROFILE,
+    EVENT_FROZEN_EXECUTION_PROFILE,
+    EventExecutionProfile,
+    EventPaperPublishConfig,
+    claim_json,
+)
 from strategy_rule.event_paper.publisher import signal_from_claim
 from strategy_rule.event_paper.runner import EventPaperPublisherRunner
 from strategy_rule.event_paper.supabase import EventPaperSupabaseClient
@@ -243,6 +249,7 @@ async def _run_publisher(
     supabase_url: str,
     supabase_key: str,
     clock: datetime,
+    execution_profile: EventExecutionProfile,
 ) -> Any:
     async with (
         PubSubSubscriber(
@@ -263,6 +270,7 @@ async def _run_publisher(
             publisher=publisher,
             supabase=supabase,
             config=EventPaperPublishConfig(
+                execution_profile=execution_profile,
                 subscription=resources["publisher_raw"],
                 max_pull_batches=20,
                 idle_backoff_seconds=0.01,
@@ -273,6 +281,13 @@ async def _run_publisher(
         ).run()
 
 
+@pytest.mark.parametrize(
+    ("execution_profile", "clock"),
+    [
+        (EVENT_EXECUTION_PROFILE, datetime(2026, 1, 21, 0, 1, tzinfo=UTC)),
+        (EVENT_FROZEN_EXECUTION_PROFILE, datetime(2026, 1, 21, 0, 0, 30, tzinfo=UTC)),
+    ],
+)
 async def test_event_paper_pipeline_is_paper_only_and_idempotent(
     tmp_path: Path,
     event_resources: dict[str, str],
@@ -280,6 +295,8 @@ async def test_event_paper_pipeline_is_paper_only_and_idempotent(
     pubsub_emulator_host: str,
     supabase_url: str,
     supabase_secret_key: str,
+    execution_profile: EventExecutionProfile,
+    clock: datetime,
 ) -> None:
     suffix = uuid4().hex[:8]
     symbol = f"IT{suffix.upper()}"
@@ -297,7 +314,6 @@ async def test_event_paper_pipeline_is_paper_only_and_idempotent(
         json.dumps(make_event_artifact_payload(candidates=[candidate])),
         encoding="utf-8",
     )
-    clock = datetime(2026, 1, 21, 0, 1, tzinfo=UTC)
     # Keep the synthetic spread within the production execution gate (2 ticks).
     book = make_event_book(symbol=symbol, received_at=clock, best_bid="999.8")
     original_status = await _read_system_status(url=supabase_url, key=supabase_secret_key)
@@ -331,6 +347,7 @@ async def test_event_paper_pipeline_is_paper_only_and_idempotent(
             supabase_url=supabase_url,
             supabase_key=supabase_secret_key,
             clock=clock,
+            execution_profile=execution_profile,
         )
         second_receipt = await _run_publisher(
             artifact_path=artifact_path,
@@ -340,8 +357,9 @@ async def test_event_paper_pipeline_is_paper_only_and_idempotent(
             supabase_url=supabase_url,
             supabase_key=supabase_secret_key,
             clock=clock,
+            execution_profile=execution_profile,
         )
-        assert first_receipt.execution_profile == "opening_transport_stress_v1"
+        assert first_receipt.execution_profile == execution_profile
         assert first_receipt.comparable_to_registered_backtest is False
         assert first_receipt.published[0].signal_id == second_receipt.published[0].signal_id
         assert first_receipt.published[0].observed_ask == Decimal("1000")

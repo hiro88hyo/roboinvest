@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "metrics": [
+    {
+      "name": "roboinvest_unexpected_error_count",
+      "description": "Structured roboinvest application logs at ERROR severity or higher.",
+      "filter": "logName=\"projects/${PROJECT_ID}/logs/roboinvest\" AND severity>=ERROR"
+    },
+    {
+      "name": "roboinvest_closeout_invariant_count",
+      "description": "OMS Live closeout invariant violations requiring operator review.",
+      "filter": "logName=\"projects/${PROJECT_ID}/logs/roboinvest\" AND jsonPayload.service=\"oms-live\" AND jsonPayload.event=\"closeout_invariant\""
+    },
+    {
+      "name": "roboinvest_market_data_stale_count",
+      "description": "Feature Engine or OMS market-data stale warnings during the JPX session.",
+      "filter": "logName=\"projects/${PROJECT_ID}/logs/roboinvest\" AND jsonPayload.event=\"market_data_stale\" AND severity>=WARNING"
+    },
+    {
+      "name": "roboinvest_broker_order_rejected_count",
+      "description": "Broker order rejections emitted by OMS Live.",
+      "filter": "logName=\"projects/${PROJECT_ID}/logs/roboinvest\" AND jsonPayload.service=\"oms-live\" AND jsonPayload.event=\"broker_order_rejected\""
+    },
+    {
+      "name": "roboinvest_market_data_summary_count",
+      "description": "Periodic market-data processing summaries emitted by consumers.",
+      "filter": "logName=\"projects/${PROJECT_ID}/logs/roboinvest\" AND jsonPayload.event=\"market_data_summary\""
+    },
+    {
+      "name": "roboinvest_order_published_count",
+      "description": "Orders published by Gateway after risk validation.",
+      "filter": "logName=\"projects/${PROJECT_ID}/logs/roboinvest\" AND jsonPayload.service=\"gateway\" AND jsonPayload.event=\"order_published\""
+    },
+    {
+      "name": "roboinvest_order_filled_count",
+      "description": "Live orders confirmed filled by OMS Live.",
+      "filter": "logName=\"projects/${PROJECT_ID}/logs/roboinvest\" AND jsonPayload.service=\"oms-live\" AND jsonPayload.event=\"order_filled\""
+    },
+    {
+      "name": "roboinvest_closeout_completed_count",
+      "description": "Closeout orders completed by OMS Live.",
+      "filter": "logName=\"projects/${PROJECT_ID}/logs/roboinvest\" AND jsonPayload.service=\"oms-live\" AND jsonPayload.event=\"closeout_completed\""
+    }
+  ]
+}

@@ -112,6 +112,9 @@ Status: Implemented with Follow-ups
 - PII / secret / 注文関連のマスキングルールは、必要に応じて具体化する。
 - ログ量、保持期間、除外フィルタ、コスト上限は別途運用判断する。
 - Alerting / Monitoring / 通知は別 feature として扱う。
+- 2026-07-11: ERROR、closeout invariant、market data stale、broker reject の
+  log-based counter metric 定義を `infra/monitoring/log-based-metrics.json` に分離した。
+  適用手順は `docs/runbook/log-based-metrics.md`。Alert policy はまだ作成しない。
 
 ## 13. 段階的な進め方
 

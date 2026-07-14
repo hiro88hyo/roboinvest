@@ -13,7 +13,6 @@ from trade_contracts.tick_size import tse_tick_size
 
 from .artifact import EventPaperCandidate
 from .models import (
-    EVENT_EXECUTION_STRATEGY_KEY,
     EventPaperPublishConfig,
     EventPaperSignalClaim,
     EventPaperSignalFields,
@@ -114,6 +113,7 @@ def build_signal_claim(
     bid_depth_5 = sum(level.quantity for level in book.bids[:5])
     ask_depth_5 = sum(level.quantity for level in book.asks[:5])
     fields = EventPaperSignalFields(
+        strategy_key=config.execution_strategy_key,
         candidate_id=candidate.execution_candidate_id,
         symbol=candidate.symbol,
         price=best_ask,
@@ -131,6 +131,7 @@ def build_signal_claim(
         created_at=book.received_at,
     )
     claim = EventPaperSignalClaim(
+        execution_profile=config.execution_profile,
         artifact_sha256=artifact_sha256,
         raw_book_message_id=raw_book_message_id,
         raw_book_received_at=book.received_at,
@@ -174,7 +175,7 @@ def signal_from_claim(
         }
     )
     expected_signal_id = deterministic_strategy_signal_id(
-        strategy_key=EVENT_EXECUTION_STRATEGY_KEY,
+        strategy_key=claim.signal_fields.strategy_key,
         candidate_id=candidate.execution_candidate_id,
         source=SignalSource.RULE,
         symbol=candidate.symbol,

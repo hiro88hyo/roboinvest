@@ -18,7 +18,6 @@ from trade_contracts.signal import StrategySignal, deterministic_strategy_signal
 
 from .artifact import EventPaperCandidate, LoadedEventPaperArtifact
 from .models import (
-    EVENT_EXECUTION_STRATEGY_KEY,
     EventPaperPublishConfig,
     EventPaperPublishedRecord,
     EventPaperPublishReceipt,
@@ -74,7 +73,7 @@ class EventPaperPublisherRunner:
         # crash without touching Pub/Sub, even after the entry window closes.
         for symbol, candidate in list(pending.items()):
             signal_id = deterministic_strategy_signal_id(
-                strategy_key=EVENT_EXECUTION_STRATEGY_KEY,
+                strategy_key=self.config.execution_strategy_key,
                 candidate_id=candidate.execution_candidate_id,
                 source=SignalSource.RULE,
                 symbol=candidate.symbol,
@@ -496,6 +495,7 @@ class EventPaperPublisherRunner:
         skipped: dict[str, int],
     ) -> EventPaperPublishReceipt:
         return EventPaperPublishReceipt(
+            execution_profile=self.config.execution_profile,
             target_date=self.target_date,
             artifact_path=str(self.artifact.source_path),
             artifact_sha256=self.artifact.sha256,

@@ -12,6 +12,8 @@ from .enums import (
 )
 from .event_paper_dispatch import (
     EVENT_PAPER_EXECUTION_STRATEGY_KEY,
+    EVENT_PAPER_EXECUTION_STRATEGY_KEYS,
+    EVENT_PAPER_FROZEN_EXECUTION_STRATEGY_KEY,
     EventPaperDispatchOutcome,
     EventPaperDispatchResult,
     EventPaperDispatchStage,
@@ -46,6 +48,8 @@ from .tick_size import tse_tick_size
 
 __all__ = [
     "EVENT_PAPER_EXECUTION_STRATEGY_KEY",
+    "EVENT_PAPER_EXECUTION_STRATEGY_KEYS",
+    "EVENT_PAPER_FROZEN_EXECUTION_STRATEGY_KEY",
     "Action",
     "EntryArm",
     "EventAiJob",

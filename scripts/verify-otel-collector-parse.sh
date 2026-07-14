@@ -22,5 +22,9 @@ if printf '%s\n' "$logs" | rg -q 'plain startup line from a non-json process'; t
   printf 'unexpected non-json log was exported\n' >&2
   exit 1
 fi
+if printf '%s\n' "$logs" | rg -q 'non-app JSON without timestamp'; then
+  printf 'unexpected non-app JSON log was exported\n' >&2
+  exit 1
+fi
 
 printf 'otel collector parse fixture: ok\n'

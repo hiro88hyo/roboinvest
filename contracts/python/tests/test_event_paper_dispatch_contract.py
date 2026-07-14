@@ -5,7 +5,13 @@ from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
-from trade_contracts.event_paper_dispatch import EventPaperDispatchResult
+from trade_contracts.enums import RoutingIntent
+from trade_contracts.event_paper_dispatch import (
+    EVENT_PAPER_EXECUTION_STRATEGY_KEY,
+    EVENT_PAPER_FROZEN_EXECUTION_STRATEGY_KEY,
+    EventPaperDispatchResult,
+    is_event_paper_execution_signal,
+)
 
 
 def _payload() -> dict[str, str]:
@@ -52,6 +58,17 @@ def test_confirmed_dispatch_requires_checkpoint_and_timezone_aware_timestamps() 
         )
     )
     assert result.confirmed_at == now
+
+
+@pytest.mark.parametrize(
+    "strategy_key",
+    [EVENT_PAPER_EXECUTION_STRATEGY_KEY, EVENT_PAPER_FROZEN_EXECUTION_STRATEGY_KEY],
+)
+def test_event_paper_profiles_use_the_isolated_dispatch_path(strategy_key: str) -> None:
+    assert is_event_paper_execution_signal(
+        routing_intent=RoutingIntent.PAPER_ONLY,
+        strategy_key=strategy_key,
+    )
 
 
 @pytest.mark.parametrize(

@@ -26,7 +26,7 @@
 | Cloud Logging へのログ集約 | Done | サービスログの収集先を GCP に統一する | [features/cloud-logging/index.md](features/cloud-logging/index.md)。pipeline は実装済み。イベント構造化の拡張は follow-up |
 | アプリログの stdout/stderr 統一 | Draft | ファイル依存を減らし、実行基盤の標準収集に寄せる | `trade-ai-logs:/app/logs` volume はあるが、現状は実質未活用 |
 | 構造化 JSON ログ対応 | Idea | 検索・相関分析・メトリクス化をしやすくする | 共通キー候補: `service`, `env`, `symbol`, `signal_id`, `order_id` |
-| ログベースメトリクス / Alerting | Idea | 例外・注文失敗・Pub/Sub 停滞などを監視する | Cloud Logging 導入後に具体化する |
+| ログベースメトリクス / Alerting | Draft | 例外・注文失敗・Pub/Sub 停滞などを監視する | 主要4イベントのmetricと無効状態Alert policyをコード化。実測後の有効化・通知接続は未実施 |
 | Discord 通知 | Draft | 監視 alert と約定・決済イベントを Discord に通知する | [features/discord-notifications.md](features/discord-notifications.md)。監視系と取引系で topic / Function を分ける |
 | 監査ログと運用ログの責務分離 | Draft | DB に残す業務記録と、運用観測用ログを分離する | `strategy_logs` / `aggregator_logs` は監査寄り、アプリ例外は運用ログ寄り |
 
