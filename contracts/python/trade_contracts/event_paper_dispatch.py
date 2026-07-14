@@ -20,11 +20,21 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from .enums import RoutingIntent
 
 EVENT_PAPER_EXECUTION_PROFILE = "opening_transport_stress_v1"
+EVENT_PAPER_FROZEN_EXECUTION_PROFILE = "frozen_opening_close_v1"
 EVENT_PAPER_RESEARCH_STRATEGY_KEY = (
     "event_cluster_earnings_dividend_value_guard_fixed20_stop_v1_research"
 )
 EVENT_PAPER_EXECUTION_STRATEGY_KEY = (
     f"{EVENT_PAPER_RESEARCH_STRATEGY_KEY}__{EVENT_PAPER_EXECUTION_PROFILE}"
+)
+EVENT_PAPER_FROZEN_EXECUTION_STRATEGY_KEY = (
+    f"{EVENT_PAPER_RESEARCH_STRATEGY_KEY}__{EVENT_PAPER_FROZEN_EXECUTION_PROFILE}"
+)
+EVENT_PAPER_EXECUTION_STRATEGY_KEYS = frozenset(
+    {
+        EVENT_PAPER_EXECUTION_STRATEGY_KEY,
+        EVENT_PAPER_FROZEN_EXECUTION_STRATEGY_KEY,
+    }
 )
 
 
@@ -124,7 +134,7 @@ def is_event_paper_execution_signal(
 
     return (
         routing_intent is RoutingIntent.PAPER_ONLY
-        and strategy_key == EVENT_PAPER_EXECUTION_STRATEGY_KEY
+        and strategy_key in EVENT_PAPER_EXECUTION_STRATEGY_KEYS
     )
 
 

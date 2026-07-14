@@ -24,7 +24,10 @@ from .config import StrategyRuleSettings
 from .engine import StrategyEngine
 from .event_paper.artifact import EventArtifactError, load_event_paper_artifact
 from .event_paper.models import (
+    EVENT_EXECUTION_PROFILE,
+    EVENT_FROZEN_EXECUTION_PROFILE,
     EVENT_PUBLISH_ENABLED_ENV,
+    EventExecutionProfile,
     EventPaperPublishConfig,
     receipt_dict,
 )
@@ -98,6 +101,15 @@ def _build_parser() -> argparse.ArgumentParser:
         "--publish-paper",
         action="store_true",
         help=f"実発行を許可する明示ラッチ。{EVENT_PUBLISH_ENABLED_ENV}=true も必要。",
+    )
+    event.add_argument(
+        "--execution-profile",
+        choices=[EVENT_EXECUTION_PROFILE, EVENT_FROZEN_EXECUTION_PROFILE],
+        default=EVENT_EXECUTION_PROFILE,
+        help=(
+            "実行identity。frozen_opening_close_v1は09:00-09:01 JSTだけを許可し、"
+            "初期receiptは引き続きbacktest非比較扱い。"
+        ),
     )
     event.add_argument(
         "--max-pull-batches",
@@ -322,6 +334,7 @@ async def _run_event_paper_publish_cmd(
     publish_paper: bool,
     max_pull_batches: int,
     no_seek: bool,
+    execution_profile: EventExecutionProfile = EVENT_EXECUTION_PROFILE,
     execution_candidate_id: str | None = None,
 ) -> int:
     settings = StrategyRuleSettings()
@@ -381,6 +394,7 @@ async def _run_event_paper_publish_cmd(
                 artifact = load_event_paper_artifact(candidates_json)
                 artifact.artifact.validate_target_date(target_date)
                 config = EventPaperPublishConfig(
+                    execution_profile=execution_profile,
                     max_pull_batches=max_pull_batches,
                     seek_before_pull=not no_seek,
                 )
@@ -459,6 +473,7 @@ def main() -> None:
                     publish_paper=args.publish_paper,
                     max_pull_batches=args.max_pull_batches,
                     no_seek=args.no_seek,
+                    execution_profile=args.execution_profile,
                     execution_candidate_id=args.execution_candidate_id,
                 )
             )

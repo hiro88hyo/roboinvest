@@ -28,7 +28,8 @@ GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH=/dev/shm/roboinvest/gcp-pubsub-sa.json
 
 ローカル調査などでプレーンテキストへ戻す場合だけ `JSON_LOGS=false` を使う。
 Collector は `service` と `event` を持つアプリ JSON だけを Cloud Logging へ送る。
-JSON parse できない行や、別基盤由来の Docker logs は Cloud Logging へ送らない。
+parser前に `timestamp` / `service` / `event` を持たない行を除外する。JSON parseできない行や、
+health responseなど別基盤由来のDocker JSON logsはCloud Loggingへ送らない。
 
 ## 3. Config Validation
 

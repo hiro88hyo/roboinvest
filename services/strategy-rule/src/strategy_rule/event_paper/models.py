@@ -21,13 +21,21 @@ EVENT_MAX_BOOK_AGE_SECONDS = 10.0
 EVENT_MAX_FUTURE_SKEW_SECONDS = 5.0
 EVENT_ENTRY_WINDOW_START = time(9, 0)
 EVENT_ENTRY_WINDOW_END = time(9, 30)
+EVENT_FROZEN_ENTRY_WINDOW_END = time(9, 1)
 EVENT_EXIT_TIME = time(15, 30)
-EVENT_EXECUTION_PROFILE = "opening_transport_stress_v1"
+EVENT_EXECUTION_PROFILE: Literal["opening_transport_stress_v1"] = "opening_transport_stress_v1"
+EVENT_FROZEN_EXECUTION_PROFILE: Literal["frozen_opening_close_v1"] = "frozen_opening_close_v1"
 EVENT_EXECUTION_STRATEGY_KEY = f"{EVENT_STRATEGY_KEY}__{EVENT_EXECUTION_PROFILE}"
+EVENT_FROZEN_EXECUTION_STRATEGY_KEY = f"{EVENT_STRATEGY_KEY}__{EVENT_FROZEN_EXECUTION_PROFILE}"
+EventExecutionProfile = Literal[
+    "opening_transport_stress_v1",
+    "frozen_opening_close_v1",
+]
 
 
 @dataclass(frozen=True, slots=True)
 class EventPaperPublishConfig:
+    execution_profile: EventExecutionProfile = EVENT_EXECUTION_PROFILE
     subscription: str = EVENT_BOOK_SUBSCRIPTION
     signal_topic: str = EVENT_SIGNAL_TOPIC
     confidence: float = EVENT_SIGNAL_CONFIDENCE
@@ -42,6 +50,16 @@ class EventPaperPublishConfig:
     allow_test_resource_overrides: bool = False
 
     def __post_init__(self) -> None:
+        expected_window_end = (
+            EVENT_FROZEN_ENTRY_WINDOW_END
+            if self.execution_profile == EVENT_FROZEN_EXECUTION_PROFILE
+            else EVENT_ENTRY_WINDOW_END
+        )
+        if (
+            self.execution_profile == EVENT_FROZEN_EXECUTION_PROFILE
+            and self.entry_window_end == EVENT_ENTRY_WINDOW_END
+        ):
+            object.__setattr__(self, "entry_window_end", expected_window_end)
         if not self.allow_test_resource_overrides and self.subscription != EVENT_BOOK_SUBSCRIPTION:
             raise ValueError("event publisher subscription is fixed")
         if not self.allow_test_resource_overrides and self.signal_topic != EVENT_SIGNAL_TOPIC:
@@ -56,11 +74,16 @@ class EventPaperPublishConfig:
             raise ValueError("pull limits must be positive")
         if self.idle_backoff_seconds < 0:
             raise ValueError("idle_backoff_seconds must be non-negative")
-        if (
-            self.entry_window_start != EVENT_ENTRY_WINDOW_START
-            or self.entry_window_end != EVENT_ENTRY_WINDOW_END
+        if self.entry_window_start != EVENT_ENTRY_WINDOW_START or (
+            self.entry_window_end != expected_window_end
         ):
-            raise ValueError("event entry window is frozen at 09:00-09:30 JST")
+            raise ValueError("event entry window drifted from its frozen execution profile")
+
+    @property
+    def execution_strategy_key(self) -> str:
+        if self.execution_profile == EVENT_FROZEN_EXECUTION_PROFILE:
+            return EVENT_FROZEN_EXECUTION_STRATEGY_KEY
+        return EVENT_EXECUTION_STRATEGY_KEY
 
 
 class EventPaperSignalFields(BaseModel):
@@ -97,7 +120,10 @@ class EventPaperSignalFields(BaseModel):
     def validate_frozen_fields(self) -> Self:
         if self.confidence != EVENT_SIGNAL_CONFIDENCE:
             raise ValueError("event confidence drifted from 0.5")
-        if self.strategy_key != EVENT_EXECUTION_STRATEGY_KEY:
+        if self.strategy_key not in {
+            EVENT_EXECUTION_STRATEGY_KEY,
+            EVENT_FROZEN_EXECUTION_STRATEGY_KEY,
+        }:
             raise ValueError("event execution strategy key drifted")
         if self.stop_loss_pct != EVENT_STOP_LOSS_PCT:
             raise ValueError("event stop loss drifted from 0.10")
@@ -158,7 +184,7 @@ class EventPaperSignalClaim(BaseModel):
     selection_strategy_key: Literal[
         "event_cluster_earnings_dividend_value_guard_fixed20_stop_v1_research"
     ] = "event_cluster_earnings_dividend_value_guard_fixed20_stop_v1_research"
-    execution_profile: Literal["opening_transport_stress_v1"] = "opening_transport_stress_v1"
+    execution_profile: EventExecutionProfile = EVENT_EXECUTION_PROFILE
     comparable_to_registered_backtest: Literal[False] = False
     artifact_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     raw_book_message_id: str = Field(min_length=1)
@@ -181,13 +207,25 @@ class EventPaperSignalClaim(BaseModel):
         expected = f"{self.cluster_id}:{self.observation_id}"
         if self.signal_fields.candidate_id != expected:
             raise ValueError("claim occurrence identity mismatch")
+        expected_strategy_key = (
+            EVENT_FROZEN_EXECUTION_STRATEGY_KEY
+            if self.execution_profile == EVENT_FROZEN_EXECUTION_PROFILE
+            else EVENT_EXECUTION_STRATEGY_KEY
+        )
+        if self.signal_fields.strategy_key != expected_strategy_key:
+            raise ValueError("claim execution profile and strategy key differ")
+        entry_window_end = (
+            EVENT_FROZEN_ENTRY_WINDOW_END
+            if self.execution_profile == EVENT_FROZEN_EXECUTION_PROFILE
+            else EVENT_ENTRY_WINDOW_END
+        )
         if self.publication_attempt is not None:
             attempted_local = self.publication_attempt.attempted_at.astimezone(
                 ZoneInfo("Asia/Tokyo")
             )
             attempted_time = attempted_local.time().replace(tzinfo=None)
             if attempted_local.date() != self.entry_date or not (
-                time(9, 0) <= attempted_time < time(9, 30)
+                EVENT_ENTRY_WINDOW_START <= attempted_time < entry_window_end
             ):
                 raise ValueError("event publication attempt is outside the entry window")
             attempt_age = (
@@ -208,7 +246,7 @@ class EventPaperSignalClaim(BaseModel):
             published_local = self.publication.published_at.astimezone(ZoneInfo("Asia/Tokyo"))
             published_time = published_local.time().replace(tzinfo=None)
             if published_local.date() != self.entry_date or not (
-                time(9, 0) <= published_time < time(9, 30)
+                EVENT_ENTRY_WINDOW_START <= published_time < entry_window_end
             ):
                 raise ValueError("event publication is outside the target entry window")
             age_seconds = (
@@ -242,7 +280,10 @@ class EventPaperPublishedRecord(BaseModel):
 
     @model_validator(mode="after")
     def validate_publication_state(self) -> Self:
-        if self.strategy_key != EVENT_EXECUTION_STRATEGY_KEY:
+        if self.strategy_key not in {
+            EVENT_EXECUTION_STRATEGY_KEY,
+            EVENT_FROZEN_EXECUTION_STRATEGY_KEY,
+        }:
             raise ValueError("publication record has the wrong execution strategy key")
         if self.attempted_at.tzinfo is None:
             raise ValueError("publication attempt timestamp must be timezone-aware")
@@ -261,7 +302,7 @@ class EventPaperPublishReceipt(BaseModel):
 
     schema_version: Literal[1] = 1
     mode: Literal["paper_publish"] = "paper_publish"
-    execution_profile: Literal["opening_transport_stress_v1"] = "opening_transport_stress_v1"
+    execution_profile: EventExecutionProfile = EVENT_EXECUTION_PROFILE
     comparable_to_registered_backtest: Literal[False] = False
     target_date: date
     artifact_path: str

@@ -39,6 +39,10 @@ CONTRACT_MIGRATION_PAIRS = (
         "021_oms_paper_position_generation_lineage.sql",
         "022_oms_paper_position_generation_lineage.sql",
     ),
+    (
+        "023_event_paper_frozen_execution_profile.sql",
+        "024_event_paper_frozen_execution_profile.sql",
+    ),
 )
 
 

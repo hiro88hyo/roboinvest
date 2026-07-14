@@ -21,6 +21,8 @@ from strategy_rule.event_paper.artifact import load_event_paper_artifact
 from strategy_rule.event_paper.models import (
     EVENT_EXECUTION_PROFILE,
     EVENT_EXECUTION_STRATEGY_KEY,
+    EVENT_FROZEN_EXECUTION_PROFILE,
+    EVENT_FROZEN_EXECUTION_STRATEGY_KEY,
     EventPaperPublicationAttempt,
     EventPaperPublishConfig,
     EventPaperSignalClaim,
@@ -194,6 +196,7 @@ async def _run(
     wall_clock: Callable[[], datetime] | None = None,
     artifact_payload: dict[str, Any] | None = None,
     execution_candidate_id: str | None = None,
+    config: EventPaperPublishConfig | None = None,
 ) -> Any:
     transport_pubsub = httpx.MockTransport(pubsub)
     transport_supabase = httpx.MockTransport(supabase)
@@ -221,7 +224,7 @@ async def _run(
             publisher=publisher,
             supabase=client,
             execution_candidate_id=execution_candidate_id,
-            config=EventPaperPublishConfig(max_pull_batches=2, idle_backoff_seconds=0),
+            config=config or EventPaperPublishConfig(max_pull_batches=2, idle_backoff_seconds=0),
             wall_clock=wall_clock or (lambda: now),
         ).run()
 
@@ -286,6 +289,47 @@ async def test_publisher_uses_fresh_best_ask_and_paper_only_identity(tmp_path: P
     assert receipt.comparable_to_registered_backtest is False
     assert len(supabase.strategy_logs) == 1
     assert events == ["claim", "publish"]
+
+
+async def test_frozen_profile_keeps_distinct_identity_and_non_comparable_receipt(
+    tmp_path: Path,
+) -> None:
+    now = datetime(2026, 1, 21, 0, 0, 30, tzinfo=UTC)
+    book = make_event_book(received_at=now)
+    pubsub = _PubSubRouter(
+        pull_batches=[
+            {
+                "receivedMessages": [
+                    _pull_message(
+                        ack_id="opening",
+                        message_id="opening-book",
+                        payload=book.model_dump_json().encode(),
+                        attributes={"kind": "book", "symbol": "7203"},
+                    )
+                ]
+            }
+        ]
+    )
+
+    receipt = await _run(
+        tmp_path=tmp_path,
+        pubsub=pubsub,
+        supabase=_SupabaseRouter(),
+        now=now,
+        config=EventPaperPublishConfig(
+            execution_profile=EVENT_FROZEN_EXECUTION_PROFILE,
+            max_pull_batches=2,
+            idle_backoff_seconds=0,
+        ),
+    )
+
+    message = json.loads(pubsub.published[0].content.decode())["messages"][0]
+    signal = StrategySignal.model_validate_json(base64.b64decode(message["data"]))
+    claim = parse_claim_json(signal.reasoning)
+    assert signal.strategy_key == EVENT_FROZEN_EXECUTION_STRATEGY_KEY
+    assert claim.execution_profile == EVENT_FROZEN_EXECUTION_PROFILE
+    assert receipt.execution_profile == EVENT_FROZEN_EXECUTION_PROFILE
+    assert receipt.comparable_to_registered_backtest is False
 
 
 async def test_publisher_acks_stale_book_then_uses_fresh_book(tmp_path: Path) -> None:
@@ -768,6 +812,48 @@ def test_book_gate_rejects_unsafe_execution_quote(
 def test_event_publish_config_freezes_timing_contract(override: dict[str, Any]) -> None:
     with pytest.raises(ValueError, match="frozen"):
         EventPaperPublishConfig(**override)
+
+
+def test_frozen_execution_profile_uses_only_first_opening_minute(tmp_path: Path) -> None:
+    from strategy_rule.event_paper.publisher import build_signal_claim
+
+    config = EventPaperPublishConfig(execution_profile=EVENT_FROZEN_EXECUTION_PROFILE)
+    candidate = _write_artifact(tmp_path).artifact.candidates[0]
+    opening_book = make_event_book(received_at=datetime(2026, 1, 21, 0, 0, 30, tzinfo=UTC))
+    late_book = make_event_book(received_at=datetime(2026, 1, 21, 0, 1, tzinfo=UTC))
+    assert opening_book.received_at is not None
+    assert late_book.received_at is not None
+
+    assert config.entry_window_end == time(9, 1)
+    assert config.execution_strategy_key == EVENT_FROZEN_EXECUTION_STRATEGY_KEY
+    assert (
+        book_rejection_reason(
+            book=opening_book,
+            candidate=candidate,
+            now=opening_book.received_at,
+            config=config,
+        )
+        is None
+    )
+    assert (
+        book_rejection_reason(
+            book=late_book,
+            candidate=candidate,
+            now=late_book.received_at,
+            config=config,
+        )
+        == "book_after_entry_window"
+    )
+    claim, signal = build_signal_claim(
+        candidate=candidate,
+        book=opening_book,
+        raw_book_message_id="opening-book",
+        artifact_sha256="a" * 64,
+        config=config,
+    )
+    assert claim.execution_profile == EVENT_FROZEN_EXECUTION_PROFILE
+    assert claim.comparable_to_registered_backtest is False
+    assert signal.strategy_key == EVENT_FROZEN_EXECUTION_STRATEGY_KEY
 
 
 async def test_allowed_future_skew_can_complete_durable_publication(tmp_path: Path) -> None:

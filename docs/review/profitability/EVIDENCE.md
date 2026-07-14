@@ -47,11 +47,18 @@ while random portfolio candidates were generated with an 8% stop
 simulator is corrected for future preregistered runs, but that code correction
 does not retroactively validate these locked-OOS percentiles.
 
+**Corrective inspection (2026-07-12):** after explicit user approval under
+ADR-0005, the same locked-OOS portfolio comparison was run once with the 10%
+stop applied to selected and matched-random paths. Corrected 1M/2M/5M
+percentiles are `0.713/0.837/0.937`. The 1M case remains below the required p75,
+so the paper-observation gate still fails. No further locked-OOS run or tuning
+is authorized. See the
+[corrective inspection report](../../reports/event-cluster-matched-random-corrective-inspection-2026-07-12.md).
+
 Frozen-v1 paper observation is **BLOCKED**, not the next evidence-collection
-step. A valid matched-random comparison and execution reproduction are required
-before a new activation decision. Do not rerun or inspect the frozen locked-OOS
-window to repair this evidence without the explicit approval required by
-[ADR-0005](../../adr/0005-locked-oos-inspection-freeze.md).
+step. The corrected matched-random evidence fails at 1M, and official-open/close
+execution reconciliation is still required before any new activation decision.
+Do not rerun or inspect the frozen locked-OOS window again.
 
 Primary tracked source:
 [Event Cluster Paper Observation Plan](../../features/event-cluster-paper-observation-plan.md).

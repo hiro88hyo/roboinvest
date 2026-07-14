@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "policies": [
+    {
+      "id": "unexpected-errors",
+      "display_name": "roboinvest: unexpected application errors",
+      "metric": "roboinvest_unexpected_error_count",
+      "severity": "ERROR",
+      "threshold": 0,
+      "alignment_period": "600s",
+      "duration": "0s",
+      "documentation": "Investigate the ERROR log, identify the affected service and event, and confirm whether processing recovered. Runbook: docs/runbook/cloud-logging.md"
+    },
+    {
+      "id": "closeout-invariant",
+      "display_name": "roboinvest: closeout invariant violation",
+      "metric": "roboinvest_closeout_invariant_count",
+      "severity": "CRITICAL",
+      "threshold": 0,
+      "alignment_period": "600s",
+      "duration": "0s",
+      "documentation": "Treat as an immediate operator intervention. Compare Supabase positions with broker holdings before allowing further live operation. Runbook: docs/runbook/cloud-logging.md"
+    },
+    {
+      "id": "market-data-stale",
+      "display_name": "roboinvest: market data stale",
+      "metric": "roboinvest_market_data_stale_count",
+      "severity": "WARNING",
+      "threshold": 0,
+      "alignment_period": "600s",
+      "duration": "0s",
+      "documentation": "Check feeder connectivity, the raw-market-data path, and the corresponding recovery event. Do not infer recovery from silence alone. Runbook: docs/runbook/cloud-logging.md"
+    },
+    {
+      "id": "broker-order-rejected",
+      "display_name": "roboinvest: broker order rejected",
+      "metric": "roboinvest_broker_order_rejected_count",
+      "severity": "WARNING",
+      "threshold": 0,
+      "alignment_period": "600s",
+      "duration": "0s",
+      "documentation": "Review the broker code/message and the order context. Confirm cash, exchange, trading password, and order constraints before retrying. Runbook: docs/runbook/cloud-logging.md"
+    }
+  ]
+}

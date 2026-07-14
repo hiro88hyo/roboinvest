@@ -1,0 +1,118 @@
+{
+  "name": "projects/${PROJECT_ID}/dashboards/roboinvest-operations",
+  "displayName": "roboinvest Operations",
+  "labels": {
+    "managed_by": "roboinvest"
+  },
+  "mosaicLayout": {
+    "columns": 12,
+    "tiles": [
+      {
+        "xPos": 0,
+        "yPos": 0,
+        "width": 12,
+        "height": 1,
+        "widget": {
+          "text": {
+            "content": "## roboinvest Operations\nApplication counters are derived from structured Cloud Logging events. Pub/Sub charts use Google-provided metrics. Alert policies remain disabled until baseline observation is complete.",
+            "format": "MARKDOWN"
+          }
+        }
+      },
+      {
+        "xPos": 0,
+        "yPos": 1,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Operational anomalies (10m sum)",
+          "xyChart": {
+            "dataSets": [
+              {"legendTemplate": "errors", "timeSeriesQuery": {"timeSeriesFilter": {"filter": "metric.type=\"logging.googleapis.com/user/roboinvest_unexpected_error_count\" AND resource.type=\"global\"", "aggregation": {"alignmentPeriod": "600s", "perSeriesAligner": "ALIGN_SUM", "crossSeriesReducer": "REDUCE_SUM"}}}},
+              {"legendTemplate": "closeout invariant", "timeSeriesQuery": {"timeSeriesFilter": {"filter": "metric.type=\"logging.googleapis.com/user/roboinvest_closeout_invariant_count\" AND resource.type=\"global\"", "aggregation": {"alignmentPeriod": "600s", "perSeriesAligner": "ALIGN_SUM", "crossSeriesReducer": "REDUCE_SUM"}}}},
+              {"legendTemplate": "market stale", "timeSeriesQuery": {"timeSeriesFilter": {"filter": "metric.type=\"logging.googleapis.com/user/roboinvest_market_data_stale_count\" AND resource.type=\"global\"", "aggregation": {"alignmentPeriod": "600s", "perSeriesAligner": "ALIGN_SUM", "crossSeriesReducer": "REDUCE_SUM"}}}},
+              {"legendTemplate": "broker rejected", "timeSeriesQuery": {"timeSeriesFilter": {"filter": "metric.type=\"logging.googleapis.com/user/roboinvest_broker_order_rejected_count\" AND resource.type=\"global\"", "aggregation": {"alignmentPeriod": "600s", "perSeriesAligner": "ALIGN_SUM", "crossSeriesReducer": "REDUCE_SUM"}}}}
+            ],
+            "timeshiftDuration": "0s",
+            "yAxis": {"label": "events / 10m", "scale": "LINEAR"}
+          }
+        }
+      },
+      {
+        "xPos": 6,
+        "yPos": 1,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Order and closeout flow (10m sum)",
+          "xyChart": {
+            "dataSets": [
+              {"legendTemplate": "published", "timeSeriesQuery": {"timeSeriesFilter": {"filter": "metric.type=\"logging.googleapis.com/user/roboinvest_order_published_count\" AND resource.type=\"global\"", "aggregation": {"alignmentPeriod": "600s", "perSeriesAligner": "ALIGN_SUM", "crossSeriesReducer": "REDUCE_SUM"}}}},
+              {"legendTemplate": "live filled", "timeSeriesQuery": {"timeSeriesFilter": {"filter": "metric.type=\"logging.googleapis.com/user/roboinvest_order_filled_count\" AND resource.type=\"global\"", "aggregation": {"alignmentPeriod": "600s", "perSeriesAligner": "ALIGN_SUM", "crossSeriesReducer": "REDUCE_SUM"}}}},
+              {"legendTemplate": "closeout completed", "timeSeriesQuery": {"timeSeriesFilter": {"filter": "metric.type=\"logging.googleapis.com/user/roboinvest_closeout_completed_count\" AND resource.type=\"global\"", "aggregation": {"alignmentPeriod": "600s", "perSeriesAligner": "ALIGN_SUM", "crossSeriesReducer": "REDUCE_SUM"}}}}
+            ],
+            "timeshiftDuration": "0s",
+            "yAxis": {"label": "events / 10m", "scale": "LINEAR"}
+          }
+        }
+      },
+      {
+        "xPos": 0,
+        "yPos": 5,
+        "width": 4,
+        "height": 4,
+        "widget": {
+          "title": "Market-data summaries (10m sum)",
+          "xyChart": {
+            "dataSets": [
+              {"legendTemplate": "summary", "timeSeriesQuery": {"timeSeriesFilter": {"filter": "metric.type=\"logging.googleapis.com/user/roboinvest_market_data_summary_count\" AND resource.type=\"global\"", "aggregation": {"alignmentPeriod": "600s", "perSeriesAligner": "ALIGN_SUM", "crossSeriesReducer": "REDUCE_SUM"}}}}
+            ],
+            "yAxis": {"label": "summaries / 10m", "scale": "LINEAR"}
+          }
+        }
+      },
+      {
+        "xPos": 4,
+        "yPos": 5,
+        "width": 4,
+        "height": 4,
+        "widget": {
+          "title": "Pub/Sub oldest unacked message",
+          "xyChart": {
+            "dataSets": [
+              {"legendTemplate": "${resource.labels.subscription_id}", "timeSeriesQuery": {"timeSeriesFilter": {"filter": "metric.type=\"pubsub.googleapis.com/subscription/oldest_unacked_message_age\" AND resource.type=\"pubsub_subscription\"", "aggregation": {"alignmentPeriod": "60s", "perSeriesAligner": "ALIGN_MAX", "crossSeriesReducer": "REDUCE_MAX", "groupByFields": ["resource.label.subscription_id"]}}}}
+            ],
+            "yAxis": {"label": "seconds", "scale": "LINEAR"}
+          }
+        }
+      },
+      {
+        "xPos": 8,
+        "yPos": 5,
+        "width": 4,
+        "height": 4,
+        "widget": {
+          "title": "Pub/Sub undelivered messages",
+          "xyChart": {
+            "dataSets": [
+              {"legendTemplate": "${resource.labels.subscription_id}", "timeSeriesQuery": {"timeSeriesFilter": {"filter": "metric.type=\"pubsub.googleapis.com/subscription/num_undelivered_messages\" AND resource.type=\"pubsub_subscription\"", "aggregation": {"alignmentPeriod": "60s", "perSeriesAligner": "ALIGN_MAX", "crossSeriesReducer": "REDUCE_MAX", "groupByFields": ["resource.label.subscription_id"]}}}}
+            ],
+            "yAxis": {"label": "messages", "scale": "LINEAR"}
+          }
+        }
+      },
+      {
+        "xPos": 0,
+        "yPos": 9,
+        "width": 12,
+        "height": 4,
+        "widget": {
+          "title": "Recent ERROR logs",
+          "logsPanel": {
+            "filter": "logName=\"projects/${PROJECT_ID}/logs/roboinvest\" AND severity>=ERROR"
+          }
+        }
+      }
+    ]
+  }
+}
