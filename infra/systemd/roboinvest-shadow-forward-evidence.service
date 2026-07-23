@@ -1,0 +1,13 @@
+[Unit]
+Description=Run RoboInvest daily shadow-forward evidence
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+Environment=PATH=/home/hiroyuki/.local/bin:/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=/home/hiroyuki/workspaces/roboinvest
+ExecStart=/usr/bin/env bash /home/hiroyuki/workspaces/roboinvest/scripts/run-production-shadow-forward-evidence.sh
+Nice=10
+TimeoutStartSec=45min
+UMask=0077

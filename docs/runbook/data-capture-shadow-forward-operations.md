@@ -83,7 +83,29 @@ operation must not intentionally send day orders.
 
 ### After the signal date ends and before the next TSE session at 09:00 JST
 
-Run through 1Password:
+The normal path is the user systemd timer:
+
+- `roboinvest-shadow-forward-evidence.timer`
+- daily at `00:10 JST`
+- previous JST calendar day selected automatically
+- non-TSE business days and already-completed dates skipped successfully
+- partial artifact/ledger state and out-of-window catch-up fail closed
+- full source evidence runs through the last evaluable 2026-08-27 signal date
+- from 2026-08-28 through 2026-09-30, only official OHLCV export, outcome
+  finalization, and readiness refresh run so the final registered outcome can
+  mature without adding decision-ineligible candidates
+
+Install or refresh the timer with:
+
+    bash scripts/install-shadow-forward-evidence-timer.sh
+
+Inspect it with:
+
+    systemctl --user status roboinvest-shadow-forward-evidence.timer --no-pager
+    systemctl --user list-timers roboinvest-shadow-forward-evidence.timer --all --no-pager
+    journalctl --user -u roboinvest-shadow-forward-evidence.service -n 100 --no-pager
+
+For an explicitly authorized manual fallback, run through 1Password:
 
     set -a && . infra/.op.service-account.env && set +a
     op run --env-file infra/env.production -- \

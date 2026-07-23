@@ -1,0 +1,11 @@
+[Unit]
+Description=Run RoboInvest shadow-forward evidence at 00:10 JST
+
+[Timer]
+OnCalendar=*-*-* 00:10:00 Asia/Tokyo
+Persistent=true
+AccuracySec=1min
+Unit=roboinvest-shadow-forward-evidence.service
+
+[Install]
+WantedBy=timers.target
