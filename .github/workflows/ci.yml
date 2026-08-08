@@ -31,6 +31,14 @@ jobs:
       - name: Sync workspace
         run: uv sync --all-packages
 
+      # Frozen research authorizations record the original checkout root. Keep
+      # those immutable hashes while letting their path-bound tests run on the
+      # hosted runner's checkout.
+      - name: Map frozen research authorization root
+        run: |
+          sudo install -d -m 0755 /home/hiroyuki/workspaces
+          sudo ln -s "$GITHUB_WORKSPACE" /home/hiroyuki/workspaces/roboinvest
+
       - name: Verify Supabase deployment SQL artifacts
         run: uv run python scripts/check-supabase-migration-contracts.py
 
