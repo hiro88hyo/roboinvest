@@ -1,0 +1,155 @@
+{
+  "candidate_id": "liqimp1m_logdiff_v0_research",
+  "config_version": 1,
+  "evidence_class": "PAPER_INSPIRED_NOT_REPLICATION",
+  "status": "REGISTERED_BEFORE_FACTOR_AND_OUTCOME_COMPUTATION",
+  "registered_at": "2026-08-08",
+  "purpose": "Evaluate one fixed long-only monthly liquidity-improvement hypothesis without changing the current strategy or project kill-switch adjudication.",
+  "source_boundary": {
+    "paper_doi": "10.1016/j.pacfin.2023.102115",
+    "paper_title": "Liquidity changes and decomposition in the Japanese equity market",
+    "exact_liqc_formula_verified": false,
+    "claim": "This configuration is an independently specified proxy inspired by the paper's public abstract, not a replication of LIQC or its decomposition."
+  },
+  "inputs": {
+    "raw_archive_manifest": "data/liquidity-research-v0/manifest.json",
+    "normalized_archive_manifest": "data/liquidity-research-normalized-v0/normalized-manifest.json",
+    "bars_dataset": "equities_bars_daily",
+    "master_dataset": "equities_master_month_end"
+  },
+  "information_timing": {
+    "signal_frequency": "MONTH_END",
+    "signal_timestamp": "AFTER_CLOSE",
+    "entry_timestamp": "NEXT_TSE_SESSION_OPEN",
+    "master_join": "LATEST_MONTH_END_AS_OF_SIGNAL_DATE",
+    "no_future_backfill": true
+  },
+  "universe": {
+    "product_category_allowlist": [
+      "011"
+    ],
+    "market_code_allowlist": [
+      "0101",
+      "0102",
+      "0104",
+      "0106",
+      "0107",
+      "0111",
+      "0112",
+      "0113"
+    ],
+    "minimum_current_window_median_turnover_jpy": 50000000,
+    "required_valid_adjusted_closes": 41,
+    "required_valid_daily_illiq_observations": 40,
+    "exclude_missing_or_nonpositive_turnover": true,
+    "null_bar_handling": "Rows with null adjusted close or null/nonpositive turnover are not valid symbol sessions and are never filled. Windows use the most recent valid symbol sessions only.",
+    "exclude_tokyo_pro_and_other_market_codes": true,
+    "survivorship_rule": "Use only the historical master snapshot at or before each signal date; never use current master membership."
+  },
+  "feature": {
+    "feature_id": "LIQIMP1M_LOGDIFF_V0",
+    "return_definition": "log(adjusted_close_d / adjusted_close_previous_symbol_session)",
+    "daily_illiq_definition": "abs(log_return_d) / (turnover_jpy_d / 1000000000)",
+    "prior_window": "20 valid symbol sessions immediately preceding the current window",
+    "current_window": "20 valid symbol sessions ending on the signal date",
+    "aggregation": "ARITHMETIC_MEAN",
+    "formula": "ln(mean_daily_illiq_prior_20) - ln(mean_daily_illiq_current_20)",
+    "positive_sign_meaning": "Liquidity improved because price impact per JPY traded decreased.",
+    "zero_or_nonpositive_window_mean": "MISSING",
+    "winsorization": "NONE",
+    "cross_sectional_transform": "Descending deterministic rank by feature, then issue code",
+    "alternative_windows_or_signs_authorized": false
+  },
+  "selection": {
+    "eligible_percentile": "TOP_20_PERCENT_DESCENDING",
+    "eligible_count_rounding": "ceil(eligible_cross_section_count * 0.20), with a minimum of one when the eligible cross-section is nonempty",
+    "maximum_new_positions_per_signal_date": 5,
+    "backfill_after_non_executable_candidate": true,
+    "same_symbol_overlap": false,
+    "tie_breaker": "ISSUE_CODE_ASCENDING"
+  },
+  "execution": {
+    "capital_jpy": 2000000,
+    "long_only": true,
+    "lot_size": 100,
+    "maximum_positions": 5,
+    "maximum_position_fraction_of_starting_capital": 0.2,
+    "maximum_median_turnover_participation": 0.01,
+    "entry_price": "NEXT_SESSION_UNADJUSTED_OPEN",
+    "holding_sessions_including_entry": 20,
+    "scheduled_exit_price": "SESSION_20_UNADJUSTED_CLOSE",
+    "catastrophic_stop_fraction": 0.1,
+    "stop_fill": "After applying the day's split factor: open if open is at or below stop, otherwise stop when low reaches stop.",
+    "corporate_action_handling": "On an ex-date, multiply raw price references by AdjFactor and divide shares by AdjFactor before evaluating that session.",
+    "entry_missing_open": "SKIP_WITHOUT_FALLBACK_PRICE",
+    "exit_missing_close": "INCOMPLETE_OBSERVATION_FAIL_CLOSED",
+    "same_day_exit_cash_reuse": false,
+    "round_trip_cost_fraction": 0.00298,
+    "cost_allocation": "0.00149 per side on traded notional",
+    "stress_round_trip_cost_fraction": 0.005
+  },
+  "splits": {
+    "development": {
+      "signal_date_start": "2021-08-10",
+      "signal_date_end": "2024-06-28"
+    },
+    "validation": {
+      "signal_date_start": "2024-07-01",
+      "signal_date_end": "2025-06-30"
+    },
+    "locked_oos": {
+      "signal_date_start": "2025-07-01",
+      "signal_date_end": "2026-06-30"
+    },
+    "boundary_rule": "A trade belongs to a split only when signal, entry, and scheduled or stop exit all occur no later than that split's end date.",
+    "locked_oos_access": "PROHIBITED_UNTIL_DEVELOPMENT_AND_VALIDATION_GATES_PASS"
+  },
+  "evaluation": {
+    "profit_factor": "sum_positive_net_trade_pnl / abs(sum_negative_net_trade_pnl)",
+    "maximum_drawdown": "Maximum peak-to-trough decline of daily mark-to-market portfolio equity including open positions and costs.",
+    "primary_metrics": [
+      "opened_trades",
+      "net_pnl_jpy",
+      "profit_factor",
+      "maximum_drawdown_jpy",
+      "maximum_drawdown_fraction",
+      "same_date_random_percentile"
+    ],
+    "random_baseline": {
+      "type": "SAME_SIGNAL_DATE_ELIGIBLE_UNIVERSE",
+      "seeds": 300,
+      "same_execution_and_portfolio_rules": true,
+      "required_unmatched_candidates": 0,
+      "required_fallback_candidates": 0
+    }
+  },
+  "gates": {
+    "development": {
+      "minimum_opened_trades": 100,
+      "minimum_profit_factor_exclusive": 1.2,
+      "maximum_drawdown_fraction_exclusive": 0.1,
+      "minimum_stress_profit_factor_exclusive": 1.0,
+      "minimum_positive_calendar_year_fraction": 0.75
+    },
+    "validation": {
+      "minimum_opened_trades": 40,
+      "minimum_profit_factor_exclusive": 1.2,
+      "maximum_drawdown_fraction_exclusive": 0.1,
+      "minimum_same_date_random_percentile": 0.75,
+      "minimum_stress_profit_factor_exclusive": 1.0
+    },
+    "locked_oos": {
+      "minimum_opened_trades": 40,
+      "minimum_profit_factor_exclusive": 1.2,
+      "maximum_drawdown_fraction_exclusive": 0.1
+    }
+  },
+  "decision_contract": {
+    "development_fail": "Freeze this candidate. Do not inspect validation or alter windows, sign, threshold, stop, or costs under the same candidate ID.",
+    "validation_fail_or_inconclusive": "Freeze this candidate. Do not inspect locked OOS.",
+    "locked_oos_pass": "Permits only a separately approved prospective shadow-forward design; it does not authorize paper/live routing.",
+    "current_project_kill_switch": "UNCHANGED_AND_SEPARATE",
+    "counts_as_2026_09_30_kill_switch_evidence": false,
+    "paper_or_live_activation_authorized": false
+  }
+}

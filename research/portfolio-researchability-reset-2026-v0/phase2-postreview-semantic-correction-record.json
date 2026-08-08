@@ -1,0 +1,55 @@
+{
+  "record_id": "portfolio_researchability_reset_2026_v0_phase2_postreview_semantic_correction",
+  "recorded_at": "2026-08-08T23:30:15Z",
+  "phase": 2,
+  "authorization_id": "portfolio_researchability_reset_2026_v0_phase2_investable_instrument_inventory_once",
+  "advisory_review": {
+    "url": "https://chatgpt.com/s/t_6a77b85aec048191abd3c4b3e2fc3258",
+    "decision": "ACCEPT_WITH_REQUIRED_SEMANTIC_CORRECTIONS",
+    "role": "ADVISORY_SEMANTIC_REVIEW_NOT_PRIMARY_PRODUCT_OR_API_EVIDENCE"
+  },
+  "defects": [
+    {
+      "id": "TOPIX17_ROLE_WAS_MISLABELED_AS_MARKET_SEGMENT",
+      "before": "MARKET_SEGMENT",
+      "after": "SECTOR_EXPOSURE",
+      "remedy": "Record TOPIX-17 as confirmed INDUSTRY_SECTOR economic classification and SECTOR_EXPOSURE portfolio role; do not conflate sector exposure with a Prime, Standard, Growth, or other market segment."
+    },
+    {
+      "id": "TOPIX_BANKS_CLASSIFICATION_AND_LINEAGE_STATUS_WERE_CONFLATED",
+      "before": "1615 economic exposure and portfolio role were both CLASSIFICATION_PENDING",
+      "after": "Confirmed TOPIX_33_SECTOR/BANKS economic classification with pending portfolio role and incomplete methodology and benchmark lineage",
+      "remedy": "Separate what the instrument is exposed to from whether its point-in-time methodology and benchmark history are complete enough for Phase 3."
+    },
+    {
+      "id": "KABU_REGISTERED_SYMBOL_CAP_WAS_DESCRIBED_AS_PUSH_ONLY",
+      "before": "KABU_PUSH_REGISTRATION_LIMIT_50_BELOW_CURRENT_INVENTORY_53",
+      "after": "KABU_REST_PUSH_SHARED_REGISTERED_SYMBOL_CAP_50",
+      "remedy": "Scope the shared cap to simultaneous runtime monitoring and auction observation. It does not block static inventory or sequential compatibility verification."
+    }
+  ],
+  "superseded_artifact": {
+    "directory_before_quarantine": "out/portfolio-researchability-reset-2026-v0/phase2-instrument-inventory-v0",
+    "inventory_sha256": "a7bbddf3f96c8d0599fca7a22769ba745d962fc7ceb5876418776be575f105bf",
+    "run_manifest_sha256": "08f2f6b27eb6994a4299abfda7ac50ef7e5cf26d5e0844c432fd1a24bb16f02e",
+    "status": "SUPERSEDED_NOT_CURRENT_PHASE2_EVIDENCE",
+    "quarantine_directory": "out/portfolio-researchability-reset-2026-v0/phase2-instrument-inventory-v0-superseded-postreview-semantic-v2",
+    "eligible_for_active_manifest": false,
+    "eligible_for_phase3_input": false
+  },
+  "correction_boundary": {
+    "semantic_classification_gate_and_constraint_scope_only": true,
+    "source_or_snapshot_membership_changed": false,
+    "classified_instrument_count_changed": false,
+    "price_or_outcome_value_inspected": false,
+    "performance_value_computed": false,
+    "instrument_ranked_or_recommended": false,
+    "broker_endpoint_called": false,
+    "phase3_or_later_started": false,
+    "paper_or_live_modified": false,
+    "prior_authorization_or_correction_record_modified": false
+  },
+  "research_only": true,
+  "paper_live_enabled": false,
+  "counts_as_2026_09_30_kill_switch_evidence": false
+}

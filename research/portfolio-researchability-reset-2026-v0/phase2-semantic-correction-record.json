@@ -1,0 +1,52 @@
+{
+  "record_id": "portfolio_researchability_reset_2026_v0_phase2_semantic_classification_correction",
+  "recorded_at": "2026-08-08T22:11:16Z",
+  "phase": 2,
+  "authorization_id": "portfolio_researchability_reset_2026_v0_phase2_investable_instrument_inventory_once",
+  "advisory_review": {
+    "url": "https://chatgpt.com/s/t_6a77a836a6048191a6da824c7bca5971",
+    "role": "ADVISORY_SEMANTIC_REVIEW_NOT_PRIMARY_PRODUCT_OR_API_EVIDENCE"
+  },
+  "defects": [
+    {
+      "id": "JPX_MARKET_CATEGORY_WAS_OVERCLAIMED_AS_BROAD_MARKET",
+      "before": "BROAD_JAPAN_EQUITY_INDEX",
+      "after": "JPX_JAPANESE_EQUITY_MARKET_CATEGORY_ETF",
+      "remedy": "Treat all 34 rows as members of the official JPX Japanese Equity (Market) source category. Keep economic exposure and portfolio role CLASSIFICATION_PENDING until the complete official index methodology is bound."
+    },
+    {
+      "id": "SHORT_JGB_ETF_WAS_OVERCLAIMED_AS_CASH_EQUIVALENT",
+      "before": "JPY_CASH_OR_CASH_EQUIVALENT",
+      "after": "JPY_JAPAN_GOVERNMENT_BOND_0_1Y_ETF",
+      "remedy": "Record 570A as an ETF with JPY_JAPAN_GOVERNMENT_BOND_0_1Y economic exposure and CASH_PROXY_CANDIDATE role; settlement_cash and strict_cash_equivalent remain false and cash_proxy_status remains UNVALIDATED."
+    },
+    {
+      "id": "KABU_COMPATIBILITY_WAS_AGGREGATED_TOO_COARSELY",
+      "before": "PRODUCT_SPECIFIC_KABU_QUOTE_BOARD_AND_ORDER_ROUTE_NOT_VERIFIED",
+      "after": "K1_TO_K5_EXPLICIT_COMPATIBILITY_GATES",
+      "remedy": "Split product and order compatibility into K1 production symbol, K2 production board/register/PUSH, K3 validation order schema, K4 product/account cash-order and SOR eligibility, and K5 production order lifecycle. K1-K4 block Phase 3; K5 is deferred until after paper and explicit authorization."
+    }
+  ],
+  "superseded_artifact": {
+    "directory_before_quarantine": "out/portfolio-researchability-reset-2026-v0/phase2-instrument-inventory-v0",
+    "inventory_sha256": "43e845456fbcdfeef112f0f96bdc6cdc98dbea99123bf6a3738b5d44ff588bca",
+    "run_manifest_sha256": "a5fa8237f2d0964bd683704fcd86c518075afa0127d858e8fbb60469c11cc241",
+    "status": "SUPERSEDED_NOT_CURRENT_PHASE2_EVIDENCE",
+    "quarantine_directory": "out/portfolio-researchability-reset-2026-v0/phase2-instrument-inventory-v0-superseded-semantic-classification"
+  },
+  "correction_boundary": {
+    "semantic_classification_and_gate_decomposition_only": true,
+    "source_or_snapshot_membership_changed": false,
+    "classified_instrument_count_changed": false,
+    "price_or_outcome_value_inspected": false,
+    "performance_value_computed": false,
+    "instrument_ranked_or_recommended": false,
+    "broker_endpoint_called": false,
+    "phase3_or_later_started": false,
+    "paper_or_live_modified": false,
+    "original_authorization_record_modified": false
+  },
+  "research_only": true,
+  "paper_live_enabled": false,
+  "counts_as_2026_09_30_kill_switch_evidence": false
+}

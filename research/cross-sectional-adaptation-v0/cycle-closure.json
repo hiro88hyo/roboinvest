@@ -1,0 +1,41 @@
+{
+  "cycle_id": "cross_sectional_adaptation_v0",
+  "closed_at": "2026-08-08",
+  "status": "CLOSED_TWO_OF_TWO_CANDIDATES_REJECTED_DEVELOPMENT",
+  "preexecution_trial_registry": {
+    "path": "research/cross-sectional-adaptation-v0/trial-registry.json",
+    "sha256": "81218b7e8d22d7d84c59ff592e0004772bc49e35d1865ae83ece30ce6094f0da"
+  },
+  "candidate_limit": 2,
+  "candidates": [
+    {
+      "candidate_number": 1,
+      "candidate_id": "liqimp1m_logdiff_v0_research",
+      "status": "FROZEN_REJECTED_DEVELOPMENT",
+      "disposition_path": "research/liquidity/liqimp1m-logdiff-v0-disposition.json",
+      "disposition_sha256": "d7e6b51c3f4a40c4d01e835ee488760fe9c19558557983c16a5c97b76935e28a",
+      "advanced_to_validation": false
+    },
+    {
+      "candidate_number": 2,
+      "candidate_id": "imom6m_top5_fixed20_v0_research",
+      "status": "FROZEN_REJECTED_DEVELOPMENT_GATE_A",
+      "disposition_path": "research/imom/imom6m-top5-fixed20-v0-disposition.json",
+      "disposition_sha256": "02543c2dfefc0f40957e36c158b2443b202774346677804f816329d5045f7fb9",
+      "advanced_to_gate_b": false,
+      "advanced_to_validation": false
+    }
+  ],
+  "closure_contract": {
+    "immediate_additional_candidate_authorized": false,
+    "parameter_or_variant_rescue_authorized": false,
+    "validation_or_locked_oos_inspection_authorized": false,
+    "next_action": "Return to the higher-level strategy review. Any new research cycle requires a separately documented hypothesis, trial budget, and explicit authorization before outcome computation."
+  },
+  "project_boundary": {
+    "counts_as_2026_09_30_kill_switch_evidence": false,
+    "project_kill_switch_changed": false,
+    "current_live_strategy_changed": false,
+    "paper_or_live_changed": false
+  }
+}

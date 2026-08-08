@@ -80,6 +80,81 @@ Next.js Dashboard で構成されている。
 - Codex は、この条件を弱める変更、判定先送り、判定後の後付け例外を
   通常の改善として扱わない。必要ならユーザーに明示確認する。
 
+## Closed Cross-Sectional Research Cycle (2026-08-08)
+
+`cross_sectional_adaptation_v0` は、事前登録した上限 2 候補を使い切り、
+development で終了した。これは Project Kill Switch の判定証拠とは別であり、
+kill switch の期限・条件や現行 live/paper 戦略を変更しない。
+
+- Candidate 1 `liqimp1m_logdiff_v0_research`: development で
+  `FROZEN_REJECTED_DEVELOPMENT`。PF 0.368、最大 daily MTM DD 58.55%。
+- Candidate 2 `imom6m_top5_fixed20_v0_research`: Gate A で
+  `FROZEN_REJECTED_DEVELOPMENT_GATE_A`。28 形成月中、事前固定した exact
+  month-end outcome 完全性を満たしたのは 5 か月（最低 24）。完全 5 か月でも
+  D10-D1 平均 -1.0583%、rank IC 平均 -0.03249、後半 spread -1.8805%。
+- IMOM の欠損処理は outcome を見る前に固定した。適格銘柄に exact 翌月末終値が
+  1 件でも欠ける月は全体を不完全とし、前後日の価格代用や欠損銘柄だけを除く
+  complete-case 再計算は禁止する。
+- IMOM Gate B、trade/PF/DD、validation、locked OOS は未実行で、今後もこの
+  cycle の救済として実行しない。IMOM12M、skip-month、符号反転、quantile変更、
+  regime/HTP/quality/value 組合せも即時 variant として試さない。
+- 正本は `research/cross-sectional-adaptation-v0/cycle-closure.json`、
+  `research/imom/imom6m-top5-fixed20-v0-disposition.json`、
+  `docs/reports/imom6m-top5-fixed20-v0-gate-a-result-2026-08-08.md`。
+- 次の研究を行う場合は、上位の戦略方針へ戻り、新しい仮説・trial budget・
+  outcome 計算前の明示承認を別 cycle として文書化する。
+
+## Portfolio Researchability Reset Phase 1 (2026-08-08)
+
+`portfolio_researchability_reset_2026_v0` は alpha candidate ではない。9月30日まで
+新 candidate を作らず、将来の研究に必要なデータ基盤を非性能情報だけで監査する。
+
+- Phase 1 は既存 archive だけで実施し、Gate A の 57 missing symbol outcomes を再現。
+  57 件すべてで exact outcome bar row と同日付の同一 code historical master row が
+  ともに存在しなかった。
+- 日付 batch、receipt、raw/normalized hash、partition は整合したため archive 全体の
+  fetch/ingest failure ではない。ただし delisting、merger、share exchange、cash
+  consideration、code lineage/reuse の明示 dataset がなく、全 57 件を `UNKNOWN` とした。
+- 判定は `NO_GO_CURRENT_ARCHIVE_FOR_ALL_UNIVERSE_CROSS_SECTIONAL_RESEARCH`。
+  現 archive で欠損銘柄を落とす、前後日の bar を代用する、消失を推測で delisting
+  扱いする、IMOM/Gate A を再計算することは禁止する。
+- Phase 2、追加 source/API 取得、strategy candidate、return/PnL 計算、paper/live は
+  未承認。別の明示承認なしに進めない。
+- 正本は `out/portfolio-researchability-reset-2026-v0/phase1-missingness-existing-archive-v0/`
+  と `docs/reports/portfolio-researchability-missingness-audit-2026-08-08.md`。
+- この NO-GO は Project Kill Switch evidence ではなく、9月30日の期限・条件を変更しない。
+
+## Portfolio Researchability Reset Phase 2 (2026-08-08)
+
+- 非性能の inventory は `COMPLETE_NO_PERFORMANCE_USED`。2026-06-30 historical master
+  と公式 JPX category の交差から ETF 53件を固定し、判定は
+  `NO_GO_PHASE3_CURRENT_INSTRUMENT_DATA_FOUNDATION`。
+- 内訳は Japanese Equity (Market) category 34、sector/industry 18、570A 1。
+  Market category 34件を broad-market とみなさず、methodology/version 完備までは
+  `CLASSIFICATION_PENDING`。sector/industry は TOPIX-17 の17件を
+  `INDUSTRY_SECTOR / TOPIX_17 / SECTOR_EXPOSURE` とし、1615は経済分類を
+  `INDUSTRY_SECTOR / TOPIX_33_SECTOR / BANKS / CONFIRMED`、portfolio roleを
+  `CLASSIFICATION_PENDING` と分離する。現行methodology文書の取得済み状態を、
+  PIT methodology version coverageやbenchmark lineage完備とはみなさない。570A は
+  `JPY_JAPAN_GOVERNMENT_BOND_0_1Y` exposure の
+  `CASH_PROXY_CANDIDATE / UNVALIDATED` で、settlement cash / strict cash-equivalent
+  ではない。
+- kabu compatibility は K1 production symbol、K2 production board/register/PUSH、
+  K3 validation order schema、K4 product/account cash-order/SOR、K5A production
+  submit/cancel（意図的fillなし）、K5B minimum-lot execution/exit に分離。Phase 3 前に
+  K1〜K4 が必要。K5A/K5B は paper 後・live 前かつ別認可まで禁止。
+- 公式上限はPUSH専用ではなく、REST/PUSH共通のAPI登録銘柄上限50。static inventoryや
+  登録解除・入替を伴うsequential compatibility verificationは妨げないが、53件の
+  simultaneous runtime monitoringと寄り・引けauction observationには制約となる。
+  上限拡大や単純rotationを仮定せず、価格・return・performanceを見ずに50以下のsubsetを
+  固定する、代替market-data sourceを承認する、または必要な同時観測を失わないrotationを
+  証明する必要がある。
+- Phase 3を再認可する場合はscope、benchmark lineage、methodology version coverage、
+  必要時のPIT look-through、K4 evidence expiry、execution-data mode、venue/SOR policy、
+  provenanceを先に固定し、superseded成果物をactive pathから除外する。
+- Phase 3、追加 broker/API取得、価格・return/PnL、strategy、paper/live は未承認。
+  正本は `docs/reports/portfolio-researchability-instrument-inventory-2026-08-08.md`。
+
 ## Common Commands
 
 ```bash

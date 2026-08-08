@@ -1,0 +1,139 @@
+{
+  "completion_id": "portfolio_researchability_reset_2026_v0_phase2_completion",
+  "completed_at": "2026-08-08T23:43:42Z",
+  "reset_id": "portfolio_researchability_reset_2026_v0",
+  "phase": 2,
+  "identity": "NON_ALPHA_NON_STRATEGY_CANDIDATE_INSTRUMENT_AND_DATA_INVENTORY",
+  "phase_status": "COMPLETE_NO_PERFORMANCE_USED",
+  "authorization": {
+    "path": "research/portfolio-researchability-reset-2026-v0/phase2-authorization.json",
+    "sha256": "34c87708fbebda02e558c2657246067325579219e205d8fbda774234f5075837"
+  },
+  "source_manifest": {
+    "path": "data/portfolio-researchability-reset-2026-v0/phase2-primary-sources-v0/source-manifest.json",
+    "sha256": "b557026b2289be65e1e29095a14ab7e57db31a8b9c2c756b574e1956869869ab",
+    "official_primary_source_count": 13
+  },
+  "corrected_final_artifacts": {
+    "inventory": {
+      "path": "out/portfolio-researchability-reset-2026-v0/phase2-instrument-inventory-v0/instrument-inventory.json",
+      "sha256": "53ffa04614d7916954ea2a6aa7a4bad71f62bf88f216a9f6bac60e3d68acff0d"
+    },
+    "run_manifest": {
+      "path": "out/portfolio-researchability-reset-2026-v0/phase2-instrument-inventory-v0/run-manifest.json",
+      "sha256": "61061ab6d2672f66e292b8c78ec4ed067d4c0e4fde150bb8c7dcfc67201bd4fc"
+    },
+    "report": {
+      "path": "docs/reports/portfolio-researchability-instrument-inventory-2026-08-08.md",
+      "sha256": "70a04d1918849757967f9d094d5344cabde77e44047e3a4f6d68d6dfa118d222"
+    },
+    "builder": {
+      "path": "scripts/build-portfolio-researchability-instrument-inventory.py",
+      "sha256": "286bdc7e3a9281e31c187417020cf55d18b216b59054c18b214937f6b776787d"
+    },
+    "synthetic_tests": {
+      "path": "scripts/tests/test_build_portfolio_researchability_instrument_inventory.py",
+      "sha256": "7f804d604d17672f37daf54eeb5d931031056246025eab5e8342e9de293bea42"
+    }
+  },
+  "correction": {
+    "record": {
+      "path": "research/portfolio-researchability-reset-2026-v0/phase2-correction-record.json",
+      "sha256": "26999154f29e6a78bc4642b5005acada19cde1b4ff7cd1b45f054b1b6a566030"
+    },
+    "reason": "The first artifact omitted official unlevered sector row 1615 by incorrectly narrowing the sector class to TOPIX-17 only.",
+    "invalid_artifact_quarantine": "out/portfolio-researchability-reset-2026-v0/phase2-instrument-inventory-v0-invalid-sector-page-coverage",
+    "invalid_inventory_sha256": "81203c276fe3388aad25c3d23fe685195a9efb3ee9d9c6afcc3d7eceeff1b86a",
+    "invalid_run_manifest_sha256": "9c4695169e99c5a50bd08a819cac945a1e69239c3b2552e54590d47c3051e799",
+    "invalid_artifact_status": "INVALID_NOT_PHASE2_EVIDENCE",
+    "performance_or_price_basis_used": false
+  },
+  "semantic_correction": {
+    "record": {
+      "path": "research/portfolio-researchability-reset-2026-v0/phase2-semantic-correction-record.json",
+      "sha256": "5807ffbad8ef0f1c24caa2735a1598fbbdc88d5495900b7ed6f2fc78478e6547"
+    },
+    "reason": "The JPX Japanese Equity (Market) source category did not prove broad-market exposure, 570A was not settlement cash or a validated strict cash equivalent, and kabu compatibility required explicit K1-K5 gates.",
+    "superseded_artifact_quarantine": "out/portfolio-researchability-reset-2026-v0/phase2-instrument-inventory-v0-superseded-semantic-classification",
+    "superseded_inventory_sha256": "43e845456fbcdfeef112f0f96bdc6cdc98dbea99123bf6a3738b5d44ff588bca",
+    "superseded_run_manifest_sha256": "a5fa8237f2d0964bd683704fcd86c518075afa0127d858e8fbb60469c11cc241",
+    "superseded_artifact_status": "SUPERSEDED_NOT_CURRENT_PHASE2_EVIDENCE",
+    "source_or_snapshot_membership_changed": false,
+    "performance_or_price_basis_used": false,
+    "broker_endpoint_called": false
+  },
+  "postreview_semantic_correction": {
+    "record": {
+      "path": "research/portfolio-researchability-reset-2026-v0/phase2-postreview-semantic-correction-record.json",
+      "sha256": "b902d18177d2752874b73cf34ebb83d11b029487502346c59ee882702b3c9e3e"
+    },
+    "reason": "The second corrected artifact mislabeled TOPIX-17 portfolio role as MARKET_SEGMENT, conflated 1615 economic classification with methodology and benchmark lineage readiness, and described the shared REST/PUSH registered-symbol cap as PUSH-only.",
+    "superseded_artifact_quarantine": "out/portfolio-researchability-reset-2026-v0/phase2-instrument-inventory-v0-superseded-postreview-semantic-v2",
+    "superseded_inventory_sha256": "a7bbddf3f96c8d0599fca7a22769ba745d962fc7ceb5876418776be575f105bf",
+    "superseded_run_manifest_sha256": "08f2f6b27eb6994a4299abfda7ac50ef7e5cf26d5e0844c432fd1a24bb16f02e",
+    "superseded_artifact_status": "SUPERSEDED_NOT_CURRENT_PHASE2_EVIDENCE",
+    "eligible_for_active_manifest": false,
+    "eligible_for_phase3_input": false,
+    "source_or_snapshot_membership_changed": false,
+    "performance_or_price_basis_used": false,
+    "broker_endpoint_called": false
+  },
+  "snapshot": {
+    "date": "2026-06-30",
+    "snapshot_etf_count": 412,
+    "ordinary_equity_aggregate_baseline_count": 3899,
+    "classified_instrument_count": 53,
+    "class_counts": {
+      "JPX_JAPANESE_EQUITY_MARKET_CATEGORY_ETF": 34,
+      "JAPAN_EQUITY_SECTOR_OR_INDUSTRY_INDEX": 18,
+      "JPY_JAPAN_GOVERNMENT_BOND_0_1Y_ETF": 1
+    },
+    "snapshot_etf_not_in_three_classes_count": 359,
+    "descriptive_session_count": 60,
+    "descriptive_first_session": "2026-04-02",
+    "descriptive_last_session": "2026-06-30"
+  },
+  "integrity": {
+    "official_primary_source_hashes_verified": true,
+    "normalized_bar_partition_count_verified": 59,
+    "historical_master_partition_count_verified": 59,
+    "historical_master_snapshot_intersection_only": true,
+    "current_membership_backfill_used": false,
+    "price_columns_read": false,
+    "performance_values_computed": false,
+    "instrument_ranking_or_recommendation_created": false,
+    "broker_endpoint_called": false
+  },
+  "decision": "NO_GO_PHASE3_CURRENT_INSTRUMENT_DATA_FOUNDATION",
+  "decision_reasons": [
+    "POINT_IN_TIME_EXIT_TERMINATION_AND_SECURITY_LINEAGE_CONTRACT_INCOMPLETE",
+    "DISTRIBUTION_AND_TOTAL_OUTCOME_CONTRACT_INCOMPLETE",
+    "QUOTED_SPREAD_DEPTH_AND_AUCTION_HISTORY_NOT_AVAILABLE_IN_BOUND_ARCHIVE",
+    "METHODOLOGY_PIT_VERSION_COVERAGE_INCOMPLETE_FOR_EVERY_MEMBER",
+    "BENCHMARK_LINEAGE_INCOMPLETE_FOR_EVERY_MEMBER",
+    "ECONOMIC_CLASSIFICATION_PENDING_FOR_SOME_MEMBERS",
+    "KABU_K1_PRODUCTION_SYMBOL_NOT_VERIFIED_PER_PRODUCT",
+    "KABU_K2_PRODUCTION_BOARD_REGISTER_AND_PUSH_NOT_VERIFIED_PER_PRODUCT",
+    "KABU_K3_VALIDATION_ORDER_SCHEMA_NOT_VERIFIED_FOR_ALL_FROZEN_PROFILES",
+    "KABU_K4_PRODUCT_ACCOUNT_CASH_ORDER_AND_SOR_ELIGIBILITY_NOT_VERIFIED",
+    "KABU_API_REGISTERED_SYMBOL_CAP_PLAN_NOT_APPROVED",
+    "MICROSTRUCTURE_EVIDENCE_MODE_NOT_FROZEN"
+  ],
+  "verification": {
+    "corrected_phase2_synthetic_tests": "26 passed",
+    "make_lint_all": "passed",
+    "full_python_suite": "1679 passed, 29 skipped",
+    "dashboard_suite": "47 passed"
+  },
+  "authority_boundary": {
+    "phase2_complete": true,
+    "phase3_or_later_authorized": false,
+    "strategy_candidate_created": false,
+    "paper_or_live_modified": false,
+    "project_kill_switch_modified": false,
+    "counts_as_2026_09_30_kill_switch_evidence": false,
+    "next_action": "Stop. Phase 3 requires separate explicit authorization after freezing scope and provenance, then closing PIT instrument lineage, total-outcome, benchmark lineage, methodology version coverage, conditional look-through, execution-data mode, venue/SOR policy, K1-K4 (including K4 expiry), and the shared REST/PUSH registered-symbol-cap plan. Superseded artifacts remain excluded from the active path. K5A submit/cancel and K5B minimum-lot execution/exit remain deferred until after paper, before live, and require separate authorization. None of this may defer or weaken the 2026-09-30 Project Kill Switch."
+  },
+  "research_only": true,
+  "paper_live_enabled": false
+}

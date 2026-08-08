@@ -1,0 +1,44 @@
+{
+  "authorized_run_count": 1,
+  "authorized_split": "development",
+  "candidate_id": "liqimp1m_logdiff_v0_research",
+  "command": "env UV_CACHE_DIR=/tmp/uv-cache uv run python scripts/simulate-liquidity-improvement-development.py --normalized-dir data/liquidity-research-normalized-v0 --feature-dir data/liquidity-research-features-v0 --config research/liquidity/liqimp1m-logdiff-v0.json --run-registration research/liquidity/liqimp1m-logdiff-v0-development-run-v2.json --output-dir out/liquidity-improvement-v0-development-2026-08-08",
+  "corrective_scope": {
+    "change": "Treat an adjusted share count within 0.00000001 shares of an integer as that integer.",
+    "reason": "The first attempt stopped before result serialization when source AdjFactor 0.3333333333333333 made an economically integral 100-to-300 share conversion differ from an exact Decimal integer by source Float64 representation noise.",
+    "strategy_or_gate_changed": false
+  },
+  "execution_bindings": {
+    "calendar_year_denominator": "Every calendar year intersecting the development split, 2021 through 2024; a year with no exits has zero net PnL and is not positive.",
+    "corporate_action_timing": "For positions carried into a session, apply that session's positive AdjFactor to stop and prior raw mark and divide shares by AdjFactor before stop and close processing. Do not reapply AdjFactor on the entry session because the raw open is already ex-action.",
+    "daily_mark_when_close_missing": "Carry the prior raw mark after applying the current session's AdjFactor. This is portfolio valuation only and does not fill source data or authorize an exit price.",
+    "entry_and_same_day_exit_order": "Process all next-open entries before stop/scheduled exits, so cash and position slots released later that session cannot be reused at the open.",
+    "fractional_share_result": "Round only when the adjusted count is within 0.00000001 shares of an integer to absorb source Float64 representation noise; otherwise fail closed.",
+    "maximum_drawdown_denominator": "Starting capital, consistent with the registered max_drawdown < capital * 0.10 gate.",
+    "profit_factor_edge_case": "Positive PnL with no losing trades exceeds any finite PF threshold; no gains and no losses is undefined and fails.",
+    "scheduled_exit_missing_close": "Fail the whole run closed; do not substitute a prior close, open, adjusted price, or later session.",
+    "stop_and_scheduled_exit_order": "After corporate-action adjustment, evaluate gap stop and intraday stop before the scheduled-close exit.",
+    "trading_calendar": "Sorted unique dates present in the normalized J-Quants bar archive; the 20th holding session includes the entry session."
+  },
+  "expected_output_dir": "/home/hiroyuki/workspaces/roboinvest/out/liquidity-improvement-v0-development-2026-08-08",
+  "first_attempt": {
+    "outcome_artifact_created": false,
+    "result_metrics_observed": false,
+    "status": "OPERATIONAL_FAIL_CLOSED_BEFORE_SERIALIZATION",
+    "superseded_registration": "research/liquidity/liqimp1m-logdiff-v0-development-run.json"
+  },
+  "locked_oos_outcomes_authorized": false,
+  "registered_at": "2026-08-08",
+  "registration_status": "REGISTERED_BEFORE_DEVELOPMENT_OUTCOME_COMPUTATION",
+  "research_only": true,
+  "run_status_at_registration": "NOT_EXECUTED",
+  "sha256": {
+    "config": "c803bcbd6405b24cad1c754b0e32e26632e0483fa91116ba1e41590c29cf24bd",
+    "feature_cohort": "8d16d1eefa3657a5c9a3704c5c97c088681545bfb6d1a38c2c41a2176c86f5e1",
+    "feature_manifest": "478ea180f2d8e4a9bc80f9b7d5d1fa4f52181974767776d94858e119eb669066",
+    "normalized_manifest": "fb41af1ef19585dcaa2a962e7c8fca1b429ce01ac55d391949637e96a60a61d6",
+    "simulator": "60939f5791d16a8da6248ad465c18004444beca3672e4839ec47341475a8044e"
+  },
+  "source_git_commit": "9b14f94206d38df020b4e36ab727e5b452c72d2c",
+  "validation_outcomes_authorized": false
+}

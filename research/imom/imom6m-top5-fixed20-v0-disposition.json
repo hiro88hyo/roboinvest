@@ -1,0 +1,75 @@
+{
+  "candidate_id": "imom6m_top5_fixed20_v0_research",
+  "disposition_at": "2026-08-08",
+  "status": "FROZEN_REJECTED_DEVELOPMENT_GATE_A",
+  "research_cycle": {
+    "cycle_id": "cross_sectional_adaptation_v0",
+    "candidate_number": 2,
+    "maximum_candidates": 2,
+    "cycle_candidate_limit_reached": true,
+    "additional_immediate_variant_authorized": false
+  },
+  "authorization": {
+    "path": "research/imom/imom6m-top5-fixed20-v0-gate-a-authorization.json",
+    "sha256": "06fd36c0cb55b9ffc8b7844763cd05e26b59add9660068a3d6b7548cc54d4aef",
+    "compute_gate_a_once_consumed": true
+  },
+  "implementation": {
+    "evaluator_path": "scripts/evaluate-imom6m-gate-a-development.py",
+    "evaluator_sha256": "6134b04dee9b5f6f68574d322661192f15b8c3ddbbf9f6c23f3af724aec862d3",
+    "test_path": "scripts/tests/test_evaluate_imom6m_gate_a_development.py",
+    "test_sha256": "73e64e5988fb565acccaa21a7822b3c798e588ac78fb165ec4419ab3791be3c7",
+    "synthetic_test_result": "14 passed"
+  },
+  "result_artifact": {
+    "directory": "out/imom6m-gate-a-development-v0",
+    "result_path": "out/imom6m-gate-a-development-v0/gate-a-result.json",
+    "result_sha256": "ac09dd99f972b706b7ac0eb565046830743c5bc29ba4e36421a988d91483d045",
+    "run_manifest_path": "out/imom6m-gate-a-development-v0/run-manifest.json",
+    "run_manifest_sha256": "942df7281d364b27e51d2db51dd28fbeb07eff0c356f82d99ed07ccb4fd0ac87",
+    "independent_consistency_audit": "PASS"
+  },
+  "gate_a_result": {
+    "attempted_formation_month_count": 28,
+    "complete_month_count": 5,
+    "minimum_required_complete_month_count": 24,
+    "incomplete_month_count": 23,
+    "total_missing_symbol_outcomes_in_incomplete_months": 57,
+    "mean_decile_10_return": 0.035350089422273065,
+    "mean_decile_10_minus_decile_1_return": -0.010582993788619714,
+    "mean_monthly_rank_ic": -0.03249139991948056,
+    "mean_spread_first_half": 0.0017505547483591425,
+    "mean_spread_second_half": -0.018805359479938947,
+    "mean_spread_after_largest_month_removed": -0.020844301910296112,
+    "all_passed": false,
+    "failed_checks": [
+      "minimum_boundary_complete_months",
+      "mean_decile_10_minus_decile_1_return",
+      "mean_monthly_rank_ic",
+      "mean_spread_second_half",
+      "mean_spread_after_largest_month_removed"
+    ]
+  },
+  "decision_contract_applied": {
+    "gate_b_authorized": false,
+    "validation_outcomes_authorized": false,
+    "locked_oos_outcomes_authorized": false,
+    "paper_or_live_authorized": false,
+    "prohibited_actions": [
+      "Recompute Gate A after dropping only symbols with missing outcomes.",
+      "Run Gate B, trades, profit factor, or drawdown for this candidate.",
+      "Inspect validation or locked-OOS outcomes for this candidate.",
+      "Immediately test IMOM12M, skip-month, sign reversal, another quantile, regime, HTP, quality, or value variants inside this research cycle."
+    ]
+  },
+  "repository_verification": {
+    "lint_all": "PASS: ruff format/check, mypy, dashboard lint/typecheck",
+    "python_tests": "PASS: 1637 passed, 29 skipped, 86% coverage",
+    "dashboard_tests": "PASS: 47 passed"
+  },
+  "project_boundary": {
+    "counts_as_2026_09_30_kill_switch_evidence": false,
+    "project_kill_switch_changed": false,
+    "paper_live_modified": false
+  }
+}

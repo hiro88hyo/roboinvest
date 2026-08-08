@@ -1,0 +1,36 @@
+{
+  "authorization_id": "imom6m_top5_fixed20_v0_phase1_outcome_blind_feature",
+  "authorized_at": "2026-08-08",
+  "authorization_basis": "Explicit user instruction to continue after review of the preregistration and implementation plan.",
+  "candidate_id": "imom6m_top5_fixed20_v0_research",
+  "scope": {
+    "implement_outcome_blind_feature_builder": true,
+    "run_synthetic_feature_tests": true,
+    "build_feature_artifact_once": true,
+    "expected_output_dir": "/home/hiroyuki/workspaces/roboinvest/data/imom6m-features-v0",
+    "compute_next_month_returns": false,
+    "compute_gate_a": false,
+    "implement_or_compute_gate_b": false,
+    "inspect_development_outcomes": false,
+    "inspect_validation_outcomes": false,
+    "inspect_locked_oos_outcomes": false,
+    "modify_paper_or_live": false
+  },
+  "bound_inputs": {
+    "config": {
+      "path": "research/imom/imom6m-top5-fixed20-v0.json",
+      "sha256": "0ee3efb5a3a4629f70e17accb92663a7d14ece581939848612c63149f7c59d01"
+    },
+    "normalized_manifest": {
+      "path": "data/liquidity-research-normalized-v0/normalized-manifest.json",
+      "sha256": "fb41af1ef19585dcaa2a962e7c8fca1b429ce01ac55d391949637e96a60a61d6"
+    },
+    "trial_registry": {
+      "path": "research/cross-sectional-adaptation-v0/trial-registry.json",
+      "sha256": "81218b7e8d22d7d84c59ff592e0004772bc49e35d1865ae83ece30ce6094f0da"
+    }
+  },
+  "research_only": true,
+  "paper_live_enabled": false,
+  "counts_as_2026_09_30_kill_switch_evidence": false
+}

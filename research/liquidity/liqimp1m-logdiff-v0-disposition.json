@@ -1,0 +1,87 @@
+{
+  "candidate_id": "liqimp1m_logdiff_v0_research",
+  "decision": "FROZEN_REJECTED_DEVELOPMENT",
+  "decided_at": "2026-08-08",
+  "development_gate": {
+    "all_passed": false,
+    "checks": {
+      "maximum_drawdown_fraction_exclusive": false,
+      "minimum_opened_trades": true,
+      "minimum_positive_calendar_year_fraction": false,
+      "minimum_profit_factor_exclusive": false,
+      "minimum_stress_profit_factor_exclusive": false
+    },
+    "observed": {
+      "maximum_drawdown_fraction": "0.5854755273",
+      "opened_trades": 141,
+      "positive_calendar_year_fraction": "0.25",
+      "profit_factor": "0.3676891060998342981984788261",
+      "stress_profit_factor": "0.3674406013060040391767545786"
+    }
+  },
+  "immutable_inputs": {
+    "development_result": {
+      "path": "out/liquidity-improvement-v0-development-2026-08-08/development-result.json",
+      "sha256": "63386c7c442ced2b478cf682434e3d3e66811154e108c176e8ecfd76b0066bc1"
+    },
+    "development_result_report": {
+      "path": "docs/reports/liquidity-improvement-v0-development-result-2026-08-08.md",
+      "sha256": "ea8ce0b0427a27eb54a6886120c6bf13c72487c5b1aea8a1b4e9d66b02d688ee"
+    },
+    "feature_cohort": {
+      "path": "data/liquidity-research-features-v0/feature-cohort.parquet",
+      "sha256": "8d16d1eefa3657a5c9a3704c5c97c088681545bfb6d1a38c2c41a2176c86f5e1"
+    },
+    "research_config": {
+      "path": "research/liquidity/liqimp1m-logdiff-v0.json",
+      "sha256": "c803bcbd6405b24cad1c754b0e32e26632e0483fa91116ba1e41590c29cf24bd"
+    },
+    "result_manifest": {
+      "path": "out/liquidity-improvement-v0-development-2026-08-08/run-manifest.json",
+      "sha256": "6f4996d2aba5557325a66c997f42ae9c31b919f63ef50310319208cc24438cb8"
+    },
+    "run_registration": {
+      "path": "research/liquidity/liqimp1m-logdiff-v0-development-run-v2.json",
+      "sha256": "751ff4d913c9f296ee9047762ddd81b0a579a17b666f42fd547e2baead18f0b0"
+    }
+  },
+  "implementation_audit": {
+    "audited_development_trade_count": 141,
+    "audited_equity_row_count": 709,
+    "corrective_rerun_required": false,
+    "result": "PASS",
+    "scope": [
+      "preregistered artifact hashes",
+      "development-only boundary",
+      "rank and candidate membership",
+      "month-end signal and next-session entry timing",
+      "raw entry and exit prices",
+      "gap and intraday stop fills",
+      "corporate-action share handling",
+      "100-share entry lots",
+      "20-session scheduled exits",
+      "position and turnover caps",
+      "same-symbol non-overlap",
+      "cost and PnL arithmetic",
+      "daily mark-to-market equity",
+      "maximum five positions"
+    ]
+  },
+  "original_preregistration_mutated": false,
+  "prohibitions": {
+    "inspect_locked_oos_outcomes": true,
+    "inspect_validation_outcomes": true,
+    "retune_same_candidate": true,
+    "rerun_development_for_performance": true,
+    "use_for_2026_09_30_project_kill_switch": true,
+    "use_for_paper_or_live": true
+  },
+  "research_only": true,
+  "validation_outcomes_inspected": false,
+  "locked_oos_outcomes_inspected": false,
+  "notes": [
+    "The first process attempt stopped before result serialization on Float64 representation noise in AdjFactor.",
+    "The separately hash-bound V2 run corrected only near-integer share conversion tolerance and completed once.",
+    "No strategy, feature, universe, execution-price, stop, cost, split, or gate parameter changed."
+  ]
+}

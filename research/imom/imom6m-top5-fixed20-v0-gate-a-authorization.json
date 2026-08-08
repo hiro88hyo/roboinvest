@@ -1,0 +1,59 @@
+{
+  "authorization_id": "imom6m_top5_fixed20_v0_gate_a_development_once",
+  "authorized_at": "2026-08-08",
+  "authorization_basis": "Explicit user instruction to continue after Phase 1 stopped and stated that separate Gate A authorization was required.",
+  "candidate_id": "imom6m_top5_fixed20_v0_research",
+  "scope": {
+    "implement_gate_a_evaluator": true,
+    "run_synthetic_gate_a_tests": true,
+    "compute_development_next_month_returns_for_gate_a_once": true,
+    "compute_gate_a_once": true,
+    "inspect_development_gate_a_outcomes": true,
+    "expected_output_dir": "/home/hiroyuki/workspaces/roboinvest/out/imom6m-gate-a-development-v0",
+    "implement_or_compute_gate_b": false,
+    "compute_trades_profit_factor_or_drawdown": false,
+    "inspect_validation_outcomes": false,
+    "inspect_locked_oos_outcomes": false,
+    "modify_paper_or_live": false
+  },
+  "bound_inputs": {
+    "config": {
+      "path": "research/imom/imom6m-top5-fixed20-v0.json",
+      "sha256": "0ee3efb5a3a4629f70e17accb92663a7d14ece581939848612c63149f7c59d01"
+    },
+    "phase1_completion": {
+      "path": "research/imom/imom6m-top5-fixed20-v0-phase1-completion.json",
+      "sha256": "a335efdc152619ee23ac4781e9e0aa5649f2cfcfe60da34c056382bc6e152cfd"
+    },
+    "feature_manifest": {
+      "path": "data/imom6m-features-v0/feature-manifest.json",
+      "sha256": "97c58071b5542c8ff8b3fdf55b232c5357cf213cf2f6bb83d3fee00eb4a0e6ee"
+    },
+    "normalized_manifest": {
+      "path": "data/liquidity-research-normalized-v0/normalized-manifest.json",
+      "sha256": "fb41af1ef19585dcaa2a962e7c8fca1b429ce01ac55d391949637e96a60a61d6"
+    },
+    "trial_registry": {
+      "path": "research/cross-sectional-adaptation-v0/trial-registry.json",
+      "sha256": "81218b7e8d22d7d84c59ff592e0004772bc49e35d1865ae83ece30ce6094f0da"
+    }
+  },
+  "preexecution_implementation_contract": {
+    "formation_scope": "Development signal dates with at least one available IMOM6M feature and whose exact next global TSE month-end is no later than the registered development split end. The six-month lookback burn-in dates are not attempted formations.",
+    "outcome_scope": "Only eligible formation rows are joined to exact formation and next-global-month-end adjusted closes.",
+    "next_month_return": "adjusted_close_next_global_month_end / adjusted_close_formation_global_month_end - 1",
+    "missing_or_nonpositive_endpoint": "The symbol outcome is missing. Do not substitute a prior or later close and do not remove only that symbol from an otherwise complete portfolio.",
+    "complete_month": "Eligible cross-section count is at least 100, every eligible symbol has both valid endpoints and a finite next-month return, and rank IC is finite.",
+    "incomplete_month": "Record counts and reason, exclude the entire month from Gate A metrics, and never backfill it.",
+    "minimum_complete_months": 24,
+    "decile_returns": "Arithmetic equal-weight means for the preregistered formation-time deciles, with no cost or winsorization.",
+    "rank_ic": "Pearson correlation of average ascending ranks of IMOM6M and next-month return across the complete eligible cross-section.",
+    "chronological_halves": "Sort complete months by formation date; first floor(n/2) months versus the remainder.",
+    "largest_month_removal": "Remove exactly the complete month with the highest D10-minus-D1 spread, breaking ties by earliest formation date.",
+    "pass_rule": "All preregistered Gate A conditions must be strictly greater than zero and the complete-month count must be at least 24.",
+    "individual_symbol_outcomes_persisted": false
+  },
+  "research_only": true,
+  "paper_live_enabled": false,
+  "counts_as_2026_09_30_kill_switch_evidence": false
+}

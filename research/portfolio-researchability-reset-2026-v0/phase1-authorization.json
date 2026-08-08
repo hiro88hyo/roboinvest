@@ -1,0 +1,119 @@
+{
+  "authorization_id": "portfolio_researchability_reset_2026_v0_phase1_existing_archive_missingness_once",
+  "authorized_at": "2026-08-08",
+  "authorization_basis": "The user explicitly instructed Codex to continue after Phase 0 stated that Phase 1 required separate authorization.",
+  "reset_id": "portfolio_researchability_reset_2026_v0",
+  "phase": 1,
+  "identity": "NON_ALPHA_NON_STRATEGY_CANDIDATE_DATA_RESEARCHABILITY_AUDIT",
+  "scope": {
+    "implement_deterministic_missingness_classifier": true,
+    "run_synthetic_classifier_tests": true,
+    "reconstruct_registered_57_missing_symbol_outcomes_once": true,
+    "inspect_existing_archive_row_and_value_existence": true,
+    "inspect_existing_historical_master_membership_and_descriptors": true,
+    "inspect_existing_archive_receipt_and_partition_provenance": true,
+    "write_phase1_audit_once": true,
+    "expected_output_dir": "/home/hiroyuki/workspaces/roboinvest/out/portfolio-researchability-reset-2026-v0/phase1-missingness-existing-archive-v0",
+    "fetch_external_or_additional_data": false,
+    "compute_or_persist_symbol_returns": false,
+    "compute_or_persist_portfolio_returns": false,
+    "recompute_gate_a_or_complete_case_metrics": false,
+    "compute_rank_ic_pnl_profit_factor_or_drawdown": false,
+    "create_or_compare_strategy_candidates": false,
+    "inspect_validation_or_locked_oos_outcomes": false,
+    "modify_paper_live_watchlist_gateway_oms_supabase_or_pubsub": false,
+    "start_phase2_or_later": false
+  },
+  "bound_inputs": {
+    "reset_plan": {
+      "path": "docs/features/portfolio-researchability-reset-2026-v0.md",
+      "sha256": "40561c9be0945526262f6c0d08fd164c931900ccf15c08e49d692c33cd2341d8"
+    },
+    "cycle_closure": {
+      "path": "research/cross-sectional-adaptation-v0/cycle-closure.json",
+      "sha256": "be601453948aa14b13851b4d322a1a08a49db7a42fbfa700e8714894c2c71a78"
+    },
+    "imom_disposition": {
+      "path": "research/imom/imom6m-top5-fixed20-v0-disposition.json",
+      "sha256": "02543c2dfefc0f40957e36c158b2443b202774346677804f816329d5045f7fb9"
+    },
+    "gate_a_result": {
+      "path": "out/imom6m-gate-a-development-v0/gate-a-result.json",
+      "sha256": "ac09dd99f972b706b7ac0eb565046830743c5bc29ba4e36421a988d91483d045"
+    },
+    "gate_a_run_manifest": {
+      "path": "out/imom6m-gate-a-development-v0/run-manifest.json",
+      "sha256": "942df7281d364b27e51d2db51dd28fbeb07eff0c356f82d99ed07ccb4fd0ac87"
+    },
+    "imom_config": {
+      "path": "research/imom/imom6m-top5-fixed20-v0.json",
+      "sha256": "0ee3efb5a3a4629f70e17accb92663a7d14ece581939848612c63149f7c59d01"
+    },
+    "feature_manifest": {
+      "path": "data/imom6m-features-v0/feature-manifest.json",
+      "sha256": "97c58071b5542c8ff8b3fdf55b232c5357cf213cf2f6bb83d3fee00eb4a0e6ee"
+    },
+    "raw_archive_manifest": {
+      "path": "data/liquidity-research-v0/manifest.json",
+      "sha256": "6572cdf3a0c1d5cad6f0f0acb4f4dd31109d27ed13e0543e9664fbcbab5b047a"
+    },
+    "normalized_manifest": {
+      "path": "data/liquidity-research-normalized-v0/normalized-manifest.json",
+      "sha256": "fb41af1ef19585dcaa2a962e7c8fca1b429ce01ac55d391949637e96a60a61d6"
+    },
+    "normalization_validation_report": {
+      "path": "data/liquidity-research-normalized-v0/validation-report.json",
+      "sha256": "38603d71817939d7d049c601b325193e3965161d062d8a1e56a52db7dd5360c8"
+    }
+  },
+  "preexecution_contract": {
+    "classifier_version": "portfolio_researchability_missingness_existing_archive_v0_1",
+    "reconstruction": "Use only development feature-cohort rows already marked eligible. Pair each attempted formation with the exact next global feature-calendar month-end. A case is missing only when the exact formation or outcome adjusted-close row is absent, null, non-positive, or non-finite. Never substitute another date and never calculate a price ratio.",
+    "expected_attempted_formation_month_count": 28,
+    "expected_incomplete_formation_month_count": 23,
+    "expected_missing_case_count": 57,
+    "integrity_behavior": "Verify every bound hash, normalized partition hash and row count, feature artifact hash, one-row-per-date-code invariants, and source-fetch provenance uniqueness before classification. Abort rather than classify if integrity fails.",
+    "classification_precedence": [
+      {
+        "reason": "ARCHIVE_FETCH_OR_INGEST_FAILURE",
+        "when": "The exact outcome date has no completed source fetch represented by a unique fetch id and receipt, or the required normalized outcome partition is absent. Integrity/hash mismatches abort instead of being classified."
+      },
+      {
+        "reason": "TRADING_SUSPENSION_OR_NO_MONTH_END_TRADE",
+        "when": "The exact outcome source row exists and its complete raw and adjusted OHLCV groups are null. The archive cannot distinguish suspension from another no-trade reason."
+      },
+      {
+        "reason": "HISTORICAL_MASTER_PRODUCT_CATEGORY_MISMATCH",
+        "when": "The exact outcome source row is absent, the same code exists in the exact outcome historical master, and its product category differs from the formation-time product category."
+      },
+      {
+        "reason": "UNEXPLAINED_SOURCE_DATA_ABSENCE",
+        "when": "The exact outcome source row is absent while the same code remains in the exact outcome historical master with the same product category."
+      },
+      {
+        "reason": "UNKNOWN",
+        "when": "The exact outcome source row and same-code outcome master row are both absent, or no earlier rule applies. Disappearance alone is not evidence of delisting, merger, lineage change, or another terminal event."
+      }
+    ],
+    "explicit_metadata_rule": "DELISTING_OR_TERMINAL_EVENT, ISSUE_CODE_OR_SECURITY_LINEAGE_CHANGE, CORPORATE_ACTION, and SOURCE_API_OR_PLAN_COVERAGE_LIMITATION may be assigned only from an explicit bound source field or dataset that states that reason and its effective date. No such event or limitation dataset is present in the bound archive, so company-name changes, adjustment factors, disappearance, later master membership, and current-master backfill must not be used as substitutes.",
+    "archive_ingest_rule": "The raw and normalized manifests report equal source-row counts and the normalization validation report is PASS. A missing per-symbol normalized row therefore denotes source-row absence unless the date-level fetch or required partition is absent.",
+    "allowed_per_case_outputs": [
+      "security code and exact formation/outcome dates",
+      "row existence and null/positive-value state without prices",
+      "historical master membership and product-category continuity",
+      "nearest prior and later valid-bar dates without prices",
+      "source fetch id and receipt timestamp",
+      "archive partition path and SHA-256",
+      "classification reason and evidence limitations"
+    ],
+    "prohibited_per_case_outputs": [
+      "any price value or ratio",
+      "symbol or portfolio return",
+      "rank, decile performance, rank IC, signal, trade, PnL, PF, or drawdown"
+    ],
+    "decision": "NO_GO_CURRENT_ARCHIVE_FOR_ALL_UNIVERSE_CROSS_SECTIONAL_RESEARCH if UNKNOWN or UNEXPLAINED_SOURCE_DATA_ABSENCE count is at least one, or if the archive lacks an explicit point-in-time reproducible terminal total-return contract. GO would authorize no strategy work and no later phase."
+  },
+  "research_only": true,
+  "paper_live_enabled": false,
+  "counts_as_2026_09_30_kill_switch_evidence": false
+}

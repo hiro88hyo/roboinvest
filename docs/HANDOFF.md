@@ -21,6 +21,52 @@
 
 2026-08-08 時点の要点:
 
+- cross-sectional adaptation research cycle は、事前登録した最大 2 候補を
+  development で使い切って終了した。LIQIMP は PF 0.368 / 最大 daily MTM DD
+  58.55% で棄却。IMOM6M は Gate A の exact month-end 完全月が 28 中 5
+  （最低 24）で棄却し、完全月でも D10-D1 平均 -1.0583%、rank IC -0.03249。
+  欠損銘柄だけを落とす再計算、Gate B、validation、locked OOS、IMOM 派生variantは
+  禁止する。この結果は Project Kill Switch 証拠ではなく、現行戦略も変更しない。
+  正本は `research/cross-sectional-adaptation-v0/cycle-closure.json` と
+  `docs/reports/imom6m-top5-fixed20-v0-gate-a-result-2026-08-08.md`。
+
+- 非 alpha の `portfolio_researchability_reset_2026_v0` Phase 1 を既存 archive
+  だけで実施した。Gate A の 57 missing outcomes は全件、exact outcome bar と
+  同日付 historical master の同一 code がともに不在だった。取得日 batch と
+  raw/normalized hash は整合したが、delisting / merger / cash consideration /
+  code lineage を明示する dataset がないため、推測せず全件 `UNKNOWN`。
+  判定は `NO_GO_CURRENT_ARCHIVE_FOR_ALL_UNIVERSE_CROSS_SECTIONAL_RESEARCH`。
+  この結果を受けて Phase 2 は別認可で実施したが、新candidate、性能計算は
+  引き続き未承認。Phase 1 の正本は
+  `docs/reports/portfolio-researchability-missingness-audit-2026-08-08.md` と
+  `out/portfolio-researchability-reset-2026-v0/phase1-missingness-existing-archive-v0/`。
+
+- `portfolio_researchability_reset_2026_v0` Phase 2 の investable-instrument
+  inventory を完了した。2026-06-30 historical master の ETF 412 件を公式 JPX
+  category と交差し、Japanese Equity (Market) category 34、sector/industry 18
+  （1615 + TOPIX-17 17 件）、短期日本国債 ETF 1（570A）の計 53 件を収録。Market
+  category 34件は broad-market とみなさず全件 `CLASSIFICATION_PENDING`。TOPIX-17の
+  17件は `INDUSTRY_SECTOR / TOPIX_17 / SECTOR_EXPOSURE`。1615は経済分類を
+  `INDUSTRY_SECTOR / TOPIX_33_SECTOR / BANKS / CONFIRMED`、portfolio roleを
+  `CLASSIFICATION_PENDING` と分離し、現行文書取得済みでもPIT methodology versionと
+  benchmark lineageは未完備とする。570A は
+  `CASH_PROXY_CANDIDATE / UNVALIDATED` で、settlement cash / strict cash-equivalent
+  ではない。普通株 3,899 件は aggregate baseline のみ。全 class で PIT
+  termination/lineage、cash distribution を含む outcome、過去板/auction、商品別
+  kabu K1〜K4 が未完備で、判定は
+  `NO_GO_PHASE3_CURRENT_INSTRUMENT_DATA_FOUNDATION`。Phase 3、商品選択、strategy、
+  paper/live は未承認。Phase 2 status は `COMPLETE_NO_PERFORMANCE_USED`。初回の
+  sector 1615欠落と、その後2回のsemantic classification訂正は収益を見ずに実施し、
+  旧成果物を監査隔離した。公式上限はPUSH専用ではなくREST/PUSH共通のAPI登録銘柄上限50。
+  static inventoryやsequential verificationは妨げないが、53件同時runtime monitoringと
+  寄り・引けauction observationには制約となる。K5はK5A submit/cancel（意図的fillなし）と
+  K5B minimum-lot execution/exitに分け、paper後・live前かつ別認可まで行わない。Phase 3を
+  再認可する場合はscope、benchmark lineage、methodology version coverage、条件付きPIT
+  look-through、K4 expiry、execution-data mode、venue/SOR policy、provenance、superseded
+  active-path exclusionをfail-closedで固定する。正本は
+  `docs/reports/portfolio-researchability-instrument-inventory-2026-08-08.md` と
+  `out/portfolio-researchability-reset-2026-v0/phase2-instrument-inventory-v0/`。
+
 - 9/30 project kill switch判定を自動化した。
   `scripts/report-project-kill-switch-readiness.py`は、fixed20で期限内決済可能な
   clean cohortをsignal date 2026-07-21〜08-27の27営業日に固定し、source/outcome

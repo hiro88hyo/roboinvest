@@ -1,0 +1,80 @@
+{
+  "completion_id": "imom6m_top5_fixed20_v0_phase1_outcome_blind_feature_completion",
+  "candidate_id": "imom6m_top5_fixed20_v0_research",
+  "completed_at": "2026-08-08",
+  "status": "OUTCOME_BLIND_FEATURE_BUILT_AUDITED_STOPPED_BEFORE_GATE_A",
+  "authorization": {
+    "path": "research/imom/imom6m-top5-fixed20-v0-phase1-authorization.json",
+    "sha256": "cd51b81482f76b5f2fd135cddad2fd2460251e38ceae7d54795172c03246b72d",
+    "build_feature_artifact_once_consumed": true
+  },
+  "bound_inputs": {
+    "config": {
+      "path": "research/imom/imom6m-top5-fixed20-v0.json",
+      "sha256": "0ee3efb5a3a4629f70e17accb92663a7d14ece581939848612c63149f7c59d01"
+    },
+    "normalized_manifest": {
+      "path": "data/liquidity-research-normalized-v0/normalized-manifest.json",
+      "sha256": "fb41af1ef19585dcaa2a962e7c8fca1b429ce01ac55d391949637e96a60a61d6"
+    },
+    "trial_registry": {
+      "path": "research/cross-sectional-adaptation-v0/trial-registry.json",
+      "sha256": "81218b7e8d22d7d84c59ff592e0004772bc49e35d1865ae83ece30ce6094f0da"
+    }
+  },
+  "implementation": {
+    "builder_path": "scripts/build-imom6m-features.py",
+    "builder_sha256": "3d1d8b9931e4474cc6873735979a186e0bba802056638131e7f163b4050a5c76",
+    "test_path": "scripts/tests/test_build_imom6m_features.py",
+    "test_sha256": "a181d3d14430e73abf6b5f53baf8c1462d79f680a4eb09ef397efb0f917e34b6",
+    "synthetic_test_result": "16 passed"
+  },
+  "artifact": {
+    "directory": "data/imom6m-features-v0",
+    "manifest": {
+      "path": "data/imom6m-features-v0/feature-manifest.json",
+      "sha256": "97c58071b5542c8ff8b3fdf55b232c5357cf213cf2f6bb83d3fee00eb4a0e6ee"
+    },
+    "cohort": {
+      "path": "data/imom6m-features-v0/feature-cohort.parquet",
+      "sha256": "7b6c691237eac160bccaa953074927130d7a8ce5b6c2f27ef14c6b641a4892b9",
+      "row_count": 254567,
+      "global_signal_date_count": 59,
+      "feature_signal_date_count": 53,
+      "feature_available_row_count": 209747,
+      "eligible_row_count": 95561,
+      "decile_10_candidate_row_count": 9581
+    },
+    "audit": {
+      "path": "data/imom6m-features-v0/cohort-audit.json",
+      "sha256": "702f8fe9ad84bea3cc0a9bfe4d130459f105d35f22597a44a04c65fe02efa091",
+      "status": "PASS"
+    }
+  },
+  "audit_checks_passed": [
+    "Every normalized input partition matched its registered SHA-256 and row count.",
+    "The config, normalized manifest, and trial registry matched the Phase 1 authorization bindings.",
+    "The cohort contained no duplicate signal-date/code keys.",
+    "The cohort contained no prohibited outcome, execution, PnL, drawdown, or rank-IC columns.",
+    "Eligible ranks, deciles, deterministic issue-code tie breaking, and decile-10 counts satisfied the preregistered invariants.",
+    "IMOM6M equaled MOM6M minus SUM6M for every available feature row.",
+    "All artifact hashes matched the feature manifest."
+  ],
+  "repository_verification": {
+    "lint_all": "PASS: ruff format/check, mypy, dashboard lint/typecheck",
+    "python_tests": "PASS: 1623 passed, 29 skipped, 86% coverage",
+    "dashboard_tests": "PASS: 47 passed"
+  },
+  "authority_boundary": {
+    "feature_computation_completed": true,
+    "next_month_returns_computed": false,
+    "gate_a_implemented_or_computed": false,
+    "gate_b_implemented_or_computed": false,
+    "development_outcomes_inspected": false,
+    "validation_outcomes_inspected": false,
+    "locked_oos_outcomes_inspected": false,
+    "paper_or_live_modified": false,
+    "counts_as_2026_09_30_kill_switch_evidence": false,
+    "next_required_action": "A separate explicit authorization is required before implementing or computing Gate A."
+  }
+}

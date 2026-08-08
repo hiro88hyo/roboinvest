@@ -1,0 +1,113 @@
+{
+  "authorization_id": "portfolio_researchability_reset_2026_v0_phase2_investable_instrument_inventory_once",
+  "authorized_at": "2026-08-08",
+  "authorization_basis": "The user explicitly instructed Codex to continue immediately after Phase 1 reported that Phase 2 required separate explicit authorization.",
+  "reset_id": "portfolio_researchability_reset_2026_v0",
+  "phase": 2,
+  "identity": "NON_ALPHA_NON_STRATEGY_CANDIDATE_INSTRUMENT_AND_DATA_INVENTORY",
+  "scope": {
+    "discover_and_read_primary_public_sources": true,
+    "allowed_primary_source_domains": [
+      "jpx.co.jp",
+      "www.jpx.co.jp",
+      "jpx-jquants.com",
+      "www.jpx-jquants.com",
+      "kabu.com",
+      "www.kabu.com",
+      "kabucom.github.io"
+    ],
+    "capture_downloadable_primary_source_artifacts_once": true,
+    "implement_deterministic_inventory_builder": true,
+    "run_synthetic_inventory_tests": true,
+    "build_instrument_inventory_once": true,
+    "inspect_bound_local_master_and_ohlcv_nonperformance_fields": true,
+    "compute_descriptive_data_coverage_and_tradability_fields": true,
+    "expected_source_dir": "/home/hiroyuki/workspaces/roboinvest/data/portfolio-researchability-reset-2026-v0/phase2-primary-sources-v0",
+    "expected_output_dir": "/home/hiroyuki/workspaces/roboinvest/out/portfolio-researchability-reset-2026-v0/phase2-instrument-inventory-v0",
+    "use_secondary_sources_or_advisory_articles_as_evidence": false,
+    "call_live_or_test_broker_quote_board_or_order_endpoints": false,
+    "compute_or_persist_returns_signals_or_portfolio_performance": false,
+    "rank_or_recommend_instruments": false,
+    "select_instruments_by_fee_liquidity_or_historical_outcome": false,
+    "create_or_compare_strategy_candidates": false,
+    "modify_project_kill_switch": false,
+    "modify_paper_live_watchlist_gateway_oms_supabase_or_pubsub": false,
+    "start_phase3_or_later": false
+  },
+  "bound_inputs": {
+    "reset_plan": {
+      "path": "docs/features/portfolio-researchability-reset-2026-v0.md",
+      "sha256": "40561c9be0945526262f6c0d08fd164c931900ccf15c08e49d692c33cd2341d8"
+    },
+    "phase1_completion": {
+      "path": "research/portfolio-researchability-reset-2026-v0/phase1-completion.json",
+      "sha256": "6226268f4a12e4103d207f37c9418591c8ddfdc07e785ae022ac6989822d9dab"
+    },
+    "phase1_audit": {
+      "path": "out/portfolio-researchability-reset-2026-v0/phase1-missingness-existing-archive-v0/missingness-audit.json",
+      "sha256": "6a6ef8bd793f8de12720f187cbb9a23adadad479d6e67587d102e51cf38f7b18"
+    },
+    "phase1_run_manifest": {
+      "path": "out/portfolio-researchability-reset-2026-v0/phase1-missingness-existing-archive-v0/run-manifest.json",
+      "sha256": "6a462ea6344f368f660b318dd57e16a7855abdad385e74bb579118065b1aa002"
+    },
+    "phase1_report": {
+      "path": "docs/reports/portfolio-researchability-missingness-audit-2026-08-08.md",
+      "sha256": "fc0ef30d593b29c0f10ebea437ba82b84699baafea6a6b10c1861b0ac6f13310"
+    },
+    "raw_archive_manifest": {
+      "path": "data/liquidity-research-v0/manifest.json",
+      "sha256": "6572cdf3a0c1d5cad6f0f0acb4f4dd31109d27ed13e0543e9664fbcbab5b047a"
+    },
+    "normalized_manifest": {
+      "path": "data/liquidity-research-normalized-v0/normalized-manifest.json",
+      "sha256": "fb41af1ef19585dcaa2a962e7c8fca1b429ce01ac55d391949637e96a60a61d6"
+    }
+  },
+  "preexecution_contract": {
+    "inventory_version": "portfolio_researchability_instrument_inventory_v0_1",
+    "local_snapshot": "Use the latest exact historical-master snapshot in the bound normalized archive, expected 2026-06-30. Never backfill that snapshot with current membership.",
+    "instrument_population": "Start with every same-snapshot JPX row whose bound historical product_category is ETF. Use official JPX product/index classifications and methodology identities to assign the three inventory classes. Do not select a preferred product inside a class.",
+    "classes": {
+      "BROAD_JAPAN_EQUITY_INDEX": "Every unlevered, non-inverse listed ETF in the snapshot whose primary-source tracked index is a broad Japanese equity market index. Include all mechanical matches; exclude active, thematic, style, dividend, minimum-variance, covered-call, currency, commodity, bond, leveraged, and inverse products.",
+      "JAPAN_EQUITY_SECTOR_OR_INDUSTRY_INDEX": "Every unlevered, non-inverse listed ETF in the snapshot whose primary-source tracked index is explicitly a Japanese equity sector or industry index. Include all mechanical matches; exclude broad, thematic, style, leveraged, and inverse products.",
+      "JPY_CASH_OR_CASH_EQUIVALENT": "Every listed instrument in the snapshot whose primary-source methodology explicitly tracks JPY cash, an overnight JPY rate, or JPY government discount bills with maximum remaining maturity of one year. Do not relabel a longer-duration bond ETF as cash-equivalent. A zero-member class is allowed and is not rescued by relaxing this definition."
+    },
+    "individual_stock_baseline": "Assess all exact-snapshot ordinary-equity master rows only as an aggregate lot/data-coverage baseline. Do not enrich, rank, or enumerate them as Phase 2 allocation candidates.",
+    "leverage_exclusions": "Exclude any product explicitly classified as leveraged, inverse, double-inverse, bear, or synthetic geared exposure before descriptive fields are compared.",
+    "descriptive_window": "For each inventoried instrument, use at most the last 60 completed TSE sessions ending on 2026-06-30 to report source-row count, non-null turnover count, and median turnover_jpy. Do not read or persist price values and do not use the statistic to select or rank products.",
+    "point_in_time_coverage": "Report historical master snapshot count, first/last snapshot, daily OHLCV date range, explicit distribution adjustment availability, explicit corporate-action/termination/lineage availability, and source provenance. Absence remains false or unknown; do not infer it from survival.",
+    "kabu_compatibility": "Documentation may establish generic support for exchange/product/order lifecycle. Product-specific quote, board-registration, and order-route compatibility remains NOT_VERIFIED because broker endpoints may not be called in Phase 2.",
+    "required_instrument_fields": [
+      "security_code",
+      "legal_product_type",
+      "listing_date",
+      "termination_date_or_active_status",
+      "tracked_index_name",
+      "index_methodology_identifier",
+      "trading_unit",
+      "tick_size_rule",
+      "daily_price_limit_treatment",
+      "management_fee_and_known_holding_costs",
+      "distribution_and_total_outcome_adjustment_availability",
+      "split_consolidation_redemption_delisting_and_code_change_history_availability",
+      "historical_ohlcv_and_point_in_time_master_coverage",
+      "median_traded_value_60_session_descriptor",
+      "quoted_spread_depth_and_auction_observability",
+      "kabu_quote_board_and_order_route_compatibility",
+      "primary_source_url_effective_date_receipt_date_and_sha256"
+    ],
+    "source_capture": "Prefer official machine-readable JPX lists, product pages, index methodologies, J-Quants specifications, and official kabu station API specifications. Save only the exact primary artifacts used, with URL, retrieval timestamp, content type, byte size, and SHA-256. If robots, access controls, or changing pages prevent capture, record NOT_CAPTURED rather than substituting a secondary source.",
+    "decision": "An instrument class is NO_GO if any included instrument lacks a consistent point-in-time entry/exit/distribution/corporate-action/termination contract, if product-level primary-source provenance is incomplete, or if required kabu quote/board/order compatibility is not verified. GO is only data-foundation eligibility and authorizes no selection, Phase 3, strategy, paper, or live work.",
+    "prohibited_outputs": [
+      "price values or price ratios",
+      "historical or future return",
+      "risk-adjusted performance, volatility, drawdown, rank IC, PnL, or profit factor",
+      "winner, preferred instrument, score, ranking, or recommendation",
+      "portfolio weights, lot rounding, or 2M geometry"
+    ]
+  },
+  "research_only": true,
+  "paper_live_enabled": false,
+  "counts_as_2026_09_30_kill_switch_evidence": false
+}

@@ -1,0 +1,236 @@
+{
+  "candidate_id": "imom6m_top5_fixed20_v0_research",
+  "config_version": 1,
+  "status": "PREREGISTERED_DESIGN_NO_COMPUTE_AUTHORITY",
+  "registered_at": "2026-08-08",
+  "evidence_class": "PAPER_INSPIRED_IMPLEMENTABLE_ADAPTATION",
+  "purpose": "Test one fixed six-month illusion-momentum hypothesis while separating source-structure evidence from the constrained 2M JPY top-five implementation.",
+  "source_boundary": {
+    "peer_reviewed_article": {
+      "authors": "Yasuhiro Iwanaga and Takehide Hirose",
+      "doi": "10.1016/j.pacfin.2026.103063",
+      "journal": "Pacific-Basin Finance Journal",
+      "title": "Illusion momentum and cross-sectional returns",
+      "volume": 96,
+      "year": 2026,
+      "url": "https://www.sciencedirect.com/science/article/abs/pii/S0927538X26000090"
+    },
+    "public_author_report": {
+      "formula_pages": "journal pages 251-252, equations (1)-(3)",
+      "title": "モメンタム戦略の開発とその有効性の検証",
+      "url": "https://www.yu-cho-f.jp/wp-content/uploads/2-4iwanaga-2024.pdf",
+      "year": 2024
+    },
+    "verified_source_structure": [
+      "IMOM is cumulative return minus the arithmetic sum of returns over the same window.",
+      "The baseline study evaluates six- and twelve-month windows without skipping the most recent month.",
+      "The source universe is TSE-listed stocks excluding the foreign section and ETF/ETN.",
+      "Source portfolios are formed monthly into ten groups, held for the next month, and equally weighted."
+    ],
+    "adaptation_differences": [
+      "Only IMOM6M is tested.",
+      "The available J-Quants archive begins in August 2021 rather than the source study's 1990-2022 period.",
+      "The fixed universe includes the pre-existing 50M JPY median-turnover tradability guard.",
+      "The source-structure diagnostic uses archived adjusted price returns; equivalence to the source provider's return series, including distributions, is not established.",
+      "The implementable portfolio is long-only, maximum five names, next-open entry, fixed-20 close exit, 100-share lots, and cost/stop constrained rather than a broad next-month equal-weight decile portfolio."
+    ],
+    "replication_claim_authorized": false
+  },
+  "research_cycle": {
+    "cycle_id": "cross_sectional_adaptation_v0",
+    "candidate_number": 2,
+    "maximum_candidates": 2,
+    "preexisting_fallback": true,
+    "prior_candidate": {
+      "candidate_id": "liqimp1m_logdiff_v0_research",
+      "disposition": "FROZEN_REJECTED_DEVELOPMENT",
+      "disposition_path": "research/liquidity/liqimp1m-logdiff-v0-disposition.json",
+      "disposition_sha256": "d7e6b51c3f4a40c4d01e835ee488760fe9c19558557983c16a5c97b76935e28a"
+    },
+    "stop_after_this_candidate": true
+  },
+  "inputs": {
+    "normalized_archive_manifest": "data/liquidity-research-normalized-v0/normalized-manifest.json",
+    "normalized_archive_manifest_sha256": "fb41af1ef19585dcaa2a962e7c8fca1b429ce01ac55d391949637e96a60a61d6",
+    "bars_dataset": "equities_bars_daily",
+    "master_dataset": "equities_master_month_end",
+    "feature_or_outcome_artifact_created": false
+  },
+  "information_timing": {
+    "signal_frequency": "MONTH_END",
+    "signal_timestamp": "AFTER_GLOBAL_TSE_MONTH_END_CLOSE",
+    "master_join": "LATEST_HISTORICAL_MASTER_MONTH_END_AT_OR_BEFORE_SIGNAL_DATE",
+    "entry_timestamp": "NEXT_GLOBAL_TSE_SESSION_OPEN",
+    "no_future_backfill": true,
+    "actual_month_end_required": "A symbol must have a valid adjusted close on each required global TSE month-end; a prior symbol close is never substituted."
+  },
+  "universe": {
+    "product_category_allowlist": [
+      "011"
+    ],
+    "market_code_allowlist": [
+      "0101",
+      "0102",
+      "0104",
+      "0106",
+      "0107",
+      "0111",
+      "0112",
+      "0113"
+    ],
+    "exclude_foreign_section_etf_etn_and_other_products": true,
+    "minimum_current_20_valid_session_median_turnover_jpy": 50000000,
+    "turnover_window_ends_on_signal_date": true,
+    "required_consecutive_month_end_adjusted_closes": 7,
+    "required_monthly_returns": 6,
+    "missing_month_end_price": "EXCLUDE_SYMBOL_FOR_THAT_FORMATION_WITHOUT_STALE_PRICE_SUBSTITUTION",
+    "nonpositive_adjusted_close": "EXCLUDE_SYMBOL_FOR_THAT_FORMATION",
+    "winsorization": "NONE",
+    "survivorship_rule": "Use the historical master snapshot available at formation, never current membership."
+  },
+  "feature": {
+    "feature_id": "IMOM6M_NO_SKIP_V0",
+    "monthly_return": "r_i,m = adjusted_close_i,m / adjusted_close_i,m-1 - 1 using consecutive global TSE month-ends",
+    "mom6m": "100 * (product_{j=1..6}(1 + r_i,t-j+1) - 1)",
+    "sum6m": "100 * sum_{j=1..6}(r_i,t-j+1)",
+    "imom6m": "MOM6M - SUM6M",
+    "lookback_months": 6,
+    "skip_most_recent_month": false,
+    "direction": "HIGHER_IS_BETTER",
+    "cross_sectional_tie_breaker": "ISSUE_CODE_ASCENDING",
+    "alternatives_prohibited": [
+      "IMOM12M",
+      "skip_most_recent_month",
+      "sign_reversal",
+      "absolute_IMOM",
+      "winsorization",
+      "market_regime_filter",
+      "HTP_or_PTH_combination",
+      "momentum_combination",
+      "quality_combination",
+      "value_combination"
+    ]
+  },
+  "gate_a_source_structure_diagnostic": {
+    "gate_id": "IMOM6M_SOURCE_STRUCTURE_DEVELOPMENT_V0",
+    "evidence_boundary": "ADAPTED_TRADABLE_UNIVERSE_NOT_PAPER_REPLICATION",
+    "split": "development",
+    "portfolio": {
+      "formation": "Each boundary-complete global TSE month-end",
+      "eligible_cross_section_minimum": 100,
+      "sort": "IMOM6M descending, issue code ascending",
+      "decile_assignment": "For descending one-based rank r among n symbols, decile = 10 - floor((r - 1) * 10 / n). Decile 10 is highest IMOM.",
+      "weighting": "EQUAL_WEIGHT_WITHIN_DECILE",
+      "outcome": "adjusted close-to-close price return from formation month-end to the next global TSE month-end",
+      "cost": "NONE",
+      "minimum_boundary_complete_months": 24
+    },
+    "rank_ic": {
+      "definition": "Within each formation month, Pearson correlation of average ranks of IMOM6M and next-month returns, equivalent to Spearman rank correlation with average ranks for ties.",
+      "undefined_month": "FAIL_CLOSED_GATE_A_INCOMPLETE"
+    },
+    "chronological_halves": "Sort monthly spreads by formation date; first floor(n/2) months are the first half and all remaining months are the second half.",
+    "largest_month_removal": "Remove exactly the month with the highest decile-10-minus-decile-1 return; break a tie by earliest formation date.",
+    "pass_requires_all": {
+      "minimum_boundary_complete_months": 24,
+      "mean_decile_10_return_exclusive": 0.0,
+      "mean_decile_10_minus_decile_1_exclusive": 0.0,
+      "mean_monthly_rank_ic_exclusive": 0.0,
+      "mean_spread_first_half_exclusive": 0.0,
+      "mean_spread_second_half_exclusive": 0.0,
+      "mean_spread_after_largest_month_removed_exclusive": 0.0
+    },
+    "failure_contract": "Freeze the candidate immediately. Do not execute Gate B, validation, or locked OOS."
+  },
+  "gate_b_implementable_portfolio": {
+    "execution_requires_gate_a_pass": true,
+    "selection": {
+      "candidate_bucket": "DECILE_10_FROM_FROZEN_GATE_A_SORT",
+      "maximum_new_positions_per_signal_date": 5,
+      "backfill_after_non_executable_candidate": true,
+      "same_symbol_overlap": false,
+      "sector_constraint": "NONE",
+      "correlation_constraint": "NONE",
+      "beta_constraint": "NONE"
+    },
+    "execution": {
+      "capital_jpy": 2000000,
+      "long_only": true,
+      "lot_size": 100,
+      "maximum_positions": 5,
+      "maximum_position_fraction_of_starting_capital": 0.2,
+      "maximum_median_turnover_participation": 0.01,
+      "entry_price": "NEXT_SESSION_UNADJUSTED_OPEN",
+      "holding_sessions_including_entry": 20,
+      "scheduled_exit_price": "SESSION_20_UNADJUSTED_CLOSE",
+      "catastrophic_stop_fraction": 0.1,
+      "stop_fill": "After applying the session's split factor: raw open when open is at or below stop, otherwise stop when raw low reaches stop.",
+      "corporate_action_handling": "Apply the archived session AdjFactor to carried raw-price references and divide shares by AdjFactor before evaluating that session.",
+      "entry_missing_open": "SKIP_WITHOUT_FALLBACK_PRICE",
+      "exit_missing_close": "INCOMPLETE_OBSERVATION_FAIL_CLOSED",
+      "same_day_exit_cash_reuse": false,
+      "round_trip_cost_fraction": 0.00298,
+      "cost_allocation": "0.00149 per side on traded notional",
+      "stress_round_trip_cost_fraction": 0.005,
+      "maximum_drawdown": "Peak-to-trough daily mark-to-market portfolio equity decline divided by starting capital."
+    },
+    "development_pass_requires_all": {
+      "minimum_opened_trades": 100,
+      "minimum_profit_factor_exclusive": 1.2,
+      "maximum_drawdown_fraction_exclusive": 0.1,
+      "minimum_stress_profit_factor_exclusive": 1.0,
+      "minimum_positive_calendar_year_fraction": 0.75
+    }
+  },
+  "splits": {
+    "development": {
+      "signal_date_start": "2021-08-10",
+      "signal_date_end": "2024-06-28"
+    },
+    "validation": {
+      "signal_date_start": "2024-07-01",
+      "signal_date_end": "2025-06-30"
+    },
+    "locked_oos": {
+      "signal_date_start": "2025-07-01",
+      "signal_date_end": "2026-06-30"
+    },
+    "boundary_rule": "A diagnostic month or trade belongs to a split only when its formation, entry if applicable, and next-month or stop/scheduled outcome all finish no later than the split end.",
+    "locked_oos_access": "PROHIBITED_UNTIL_DEVELOPMENT_AND_VALIDATION_GATES_PASS"
+  },
+  "later_stage_gates_if_separately_authorized": {
+    "validation": {
+      "minimum_opened_trades": 40,
+      "minimum_profit_factor_exclusive": 1.2,
+      "maximum_drawdown_fraction_exclusive": 0.1,
+      "minimum_same_date_random_percentile": 0.75,
+      "random_seed_count": 300,
+      "minimum_stress_profit_factor_exclusive": 1.0,
+      "required_random_unmatched_candidates": 0,
+      "required_random_fallback_candidates": 0
+    },
+    "locked_oos": {
+      "minimum_opened_trades": 40,
+      "minimum_profit_factor_exclusive": 1.2,
+      "maximum_drawdown_fraction_exclusive": 0.1
+    }
+  },
+  "decision_contract": {
+    "gate_a_fail_or_incomplete": "FROZEN_REJECTED_DEVELOPMENT; Gate B and later splits prohibited.",
+    "gate_b_fail_or_incomplete": "FROZEN_REJECTED_DEVELOPMENT; validation prohibited.",
+    "validation_fail_or_incomplete": "FROZEN_REJECTED_VALIDATION; locked OOS prohibited.",
+    "locked_oos_pass": "Permits only a separately approved prospective shadow-forward design; it does not authorize paper/live routing.",
+    "candidate_failure": "End cross_sectional_adaptation_v0 after candidate 2 of 2. Do not immediately test IMOM12M, skip-month, sign reversal, another quantile, regime, HTP, quality, or value variants.",
+    "current_project_kill_switch": "UNCHANGED_AND_SEPARATE",
+    "counts_as_2026_09_30_kill_switch_evidence": false,
+    "paper_or_live_activation_authorized": false
+  },
+  "authority_boundary": {
+    "implementation_authorized": false,
+    "feature_computation_authorized": false,
+    "development_outcome_computation_authorized": false,
+    "validation_outcome_computation_authorized": false,
+    "locked_oos_outcome_computation_authorized": false,
+    "next_required_action": "Explicit review and authorization of this preregistered design before any implementation or computation."
+  }
+}

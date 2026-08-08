@@ -1,0 +1,35 @@
+{
+  "record_id": "portfolio_researchability_reset_2026_v0_phase2_sector_page_coverage_correction",
+  "recorded_at": "2026-08-08T08:54:00Z",
+  "phase": 2,
+  "authorization_id": "portfolio_researchability_reset_2026_v0_phase2_investable_instrument_inventory_once",
+  "defect": "The first successful artifact classified only the 17 TOPIX-17 rows from the official JPX sector/industry page and incorrectly omitted the unlevered TOPIX Banks row for source code 1615.",
+  "contract_conflict": "The frozen Phase 2 contract requires every unlevered, non-inverse official Japanese equity sector or industry index ETF in the exact snapshot, not only TOPIX-17 products.",
+  "detection_basis": {
+    "official_sector_page_row_count": 18,
+    "first_artifact_sector_class_count": 17,
+    "omitted_source_code": "1615",
+    "omitted_tracked_index_name": "TOPIX Banks Total Return Index"
+  },
+  "invalid_artifact": {
+    "directory_before_quarantine": "out/portfolio-researchability-reset-2026-v0/phase2-instrument-inventory-v0",
+    "inventory_sha256": "81203c276fe3388aad25c3d23fe685195a9efb3ee9d9c6afcc3d7eceeff1b86a",
+    "run_manifest_sha256": "9c4695169e99c5a50bd08a819cac945a1e69239c3b2552e54590d47c3051e799",
+    "builder_sha256": "7ad5202dfa099fe288d2ef3b7aed5d9bf24a37a8c0fa094c8f9f72ee04e39664",
+    "status": "INVALID_NOT_PHASE2_EVIDENCE"
+  },
+  "correction_boundary": {
+    "classification_change_only": true,
+    "source_or_snapshot_membership_changed": false,
+    "price_or_outcome_value_inspected": false,
+    "turnover_descriptor_used_to_identify_or_define_correction": false,
+    "performance_value_computed": false,
+    "instrument_ranked_or_recommended": false,
+    "phase3_or_later_started": false,
+    "paper_or_live_modified": false,
+    "remedy": "Preserve the invalid artifact in a quarantine directory, include every non-geared row on the frozen official sector page, bind the non-TOPIX-17 row to an incomplete methodology status, extend synthetic tests, and generate one corrected final artifact at the authorization-bound path."
+  },
+  "research_only": true,
+  "paper_live_enabled": false,
+  "counts_as_2026_09_30_kill_switch_evidence": false
+}

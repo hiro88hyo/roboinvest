@@ -1,0 +1,79 @@
+{
+  "cycle_id": "cross_sectional_adaptation_v0",
+  "created_at": "2026-08-08",
+  "maximum_candidate_count": 2,
+  "candidate_count": 2,
+  "cycle_status": "CANDIDATE_2_PREREGISTERED_NO_COMPUTE_AUTHORITY",
+  "candidates": [
+    {
+      "candidate_number": 1,
+      "candidate_id": "liqimp1m_logdiff_v0_research",
+      "hypothesis_family": "monthly_liquidity_improvement",
+      "status": "FROZEN_REJECTED_DEVELOPMENT",
+      "config": {
+        "path": "research/liquidity/liqimp1m-logdiff-v0.json",
+        "sha256": "c803bcbd6405b24cad1c754b0e32e26632e0483fa91116ba1e41590c29cf24bd"
+      },
+      "disposition": {
+        "path": "research/liquidity/liqimp1m-logdiff-v0-disposition.json",
+        "sha256": "d7e6b51c3f4a40c4d01e835ee488760fe9c19558557983c16a5c97b76935e28a"
+      },
+      "development_result": {
+        "path": "out/liquidity-improvement-v0-development-2026-08-08/development-result.json",
+        "sha256": "63386c7c442ced2b478cf682434e3d3e66811154e108c176e8ecfd76b0066bc1"
+      },
+      "validation_outcomes_inspected": false,
+      "locked_oos_outcomes_inspected": false
+    },
+    {
+      "candidate_number": 2,
+      "candidate_id": "imom6m_top5_fixed20_v0_research",
+      "hypothesis_family": "six_month_illusion_momentum",
+      "preexisting_fallback_before_candidate_1_result": true,
+      "status": "PREREGISTERED_DESIGN_NO_COMPUTE_AUTHORITY",
+      "config": {
+        "path": "research/imom/imom6m-top5-fixed20-v0.json",
+        "sha256": "0ee3efb5a3a4629f70e17accb92663a7d14ece581939848612c63149f7c59d01"
+      },
+      "preregistration_report": {
+        "path": "docs/reports/imom6m-top5-fixed20-v0-prereg-2026-08-08.md",
+        "sha256": "68cc87b0fadbddc5ebe80175c94a35aa3b22211b10e5122a36c293d9defd7eb8"
+      },
+      "implementation_plan": {
+        "path": "docs/reports/imom6m-top5-fixed20-v0-implementation-plan-2026-08-08.md",
+        "sha256": "e24e5505ab74f9b6ecd0df5a1b46cc9c2285aff5b7ef18850c755b5c392f8f38"
+      },
+      "feature_computed": false,
+      "development_outcomes_inspected": false,
+      "validation_outcomes_inspected": false,
+      "locked_oos_outcomes_inspected": false
+    }
+  ],
+  "trial_limit_contract": {
+    "candidate_2_failure": "END_CROSS_SECTIONAL_ADAPTATION_V0",
+    "prohibited_immediate_followups": [
+      "IMOM12M",
+      "skip-month IMOM",
+      "sign-reversed IMOM",
+      "absolute IMOM",
+      "alternative IMOM quantiles",
+      "regime-conditioned IMOM",
+      "IMOM plus HTP or PTH",
+      "IMOM plus quality",
+      "IMOM plus value"
+    ],
+    "post_failure_research_direction": "Study capital requirements, minimum diversification, top-five sampling variance, and lot-constrained factor exposure without promoting another alpha candidate in this cycle."
+  },
+  "authority_boundary": {
+    "implementation_authorized": false,
+    "feature_computation_authorized": false,
+    "development_outcome_computation_authorized": false,
+    "validation_outcome_computation_authorized": false,
+    "locked_oos_outcome_computation_authorized": false,
+    "paper_or_live_authorized": false
+  },
+  "project_kill_switch": {
+    "changed": false,
+    "counts_as_2026_09_30_evidence": false
+  }
+}

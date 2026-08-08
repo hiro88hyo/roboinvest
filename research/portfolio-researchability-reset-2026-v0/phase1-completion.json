@@ -1,0 +1,74 @@
+{
+  "completion_id": "portfolio_researchability_reset_2026_v0_phase1_existing_archive_missingness_completion",
+  "reset_id": "portfolio_researchability_reset_2026_v0",
+  "phase": 1,
+  "completed_at": "2026-08-08",
+  "status": "PHASE1_COMPLETE_NO_GO_CURRENT_ARCHIVE_PHASE2_NOT_AUTHORIZED",
+  "identity": "NON_ALPHA_NON_STRATEGY_CANDIDATE_DATA_RESEARCHABILITY_AUDIT",
+  "authorization": {
+    "path": "research/portfolio-researchability-reset-2026-v0/phase1-authorization.json",
+    "sha256": "88ea378f5080194586420f9842be0700b5c89a46458a2ca152e624d28ca7fc6a",
+    "artifact_write_once_consumed": true
+  },
+  "implementation": {
+    "auditor_path": "scripts/audit-portfolio-researchability-missingness.py",
+    "auditor_sha256": "7644dc00b12b9a6e1597f459960778b9dc0d9aea49dcaf4289848fd9b173ab20",
+    "test_path": "scripts/tests/test_audit_portfolio_researchability_missingness.py",
+    "test_sha256": "817eb92bfa45c4bfb6f4b9d4ff4820364deb601117d3e9e36d12ec54145787ff",
+    "synthetic_test_result": "16 passed"
+  },
+  "execution_disclosure": {
+    "command_attempt_count": 2,
+    "artifact_write_count": 1,
+    "first_attempt": "Stopped before artifact creation because the prohibited-output-key guard treated the frozen classification label TRADING_SUSPENSION_OR_NO_MONTH_END_TRADE as a performance field.",
+    "correction": "Narrowed the guard from the generic word trade to concrete performance-like keys such as trade_pnl. No classifier precedence, bound input, missing-set rule, or decision rule changed.",
+    "second_attempt": "Re-read the same hash-bound nonperformance inputs and created the only Phase 1 artifact directory.",
+    "performance_outcomes_recomputed_or_retuned": false
+  },
+  "artifact": {
+    "directory": "out/portfolio-researchability-reset-2026-v0/phase1-missingness-existing-archive-v0",
+    "audit": {
+      "path": "out/portfolio-researchability-reset-2026-v0/phase1-missingness-existing-archive-v0/missingness-audit.json",
+      "sha256": "6a6ef8bd793f8de12720f187cbb9a23adadad479d6e67587d102e51cf38f7b18"
+    },
+    "run_manifest": {
+      "path": "out/portfolio-researchability-reset-2026-v0/phase1-missingness-existing-archive-v0/run-manifest.json",
+      "sha256": "6a462ea6344f368f660b318dd57e16a7855abdad385e74bb579118065b1aa002"
+    },
+    "report": {
+      "path": "docs/reports/portfolio-researchability-missingness-audit-2026-08-08.md",
+      "sha256": "fc0ef30d593b29c0f10ebea437ba82b84699baafea6a6b10c1861b0ac6f13310"
+    }
+  },
+  "result": {
+    "attempted_formation_month_count": 28,
+    "incomplete_formation_month_count": 23,
+    "missing_case_count": 57,
+    "unique_security_code_count": 57,
+    "valid_exact_formation_endpoint_count": 57,
+    "absent_exact_outcome_source_row_count": 57,
+    "absent_same_code_outcome_master_row_count": 57,
+    "unknown_count": 57,
+    "unexplained_source_data_absence_count": 0,
+    "later_same_code_valid_bar_observed_count": 1,
+    "terminal_outcome_contract_point_in_time_reproducible": false,
+    "decision": "NO_GO_CURRENT_ARCHIVE_FOR_ALL_UNIVERSE_CROSS_SECTIONAL_RESEARCH"
+  },
+  "verification": {
+    "independent_json_consistency": "PASS: case/month/reason reaggregation and all formation endpoints",
+    "lint_all": "PASS: ruff format/check, mypy, dashboard lint/typecheck",
+    "python_tests": "PASS: 1653 passed, 29 skipped, 86% coverage",
+    "dashboard_tests": "PASS: 47 passed"
+  },
+  "authority_boundary": {
+    "external_or_additional_data_fetched": false,
+    "symbol_or_portfolio_performance_computed": false,
+    "gate_a_recomputed": false,
+    "validation_or_locked_oos_inspected": false,
+    "strategy_candidate_created": false,
+    "phase2_or_later_authorized": false,
+    "paper_or_live_modified": false,
+    "counts_as_2026_09_30_kill_switch_evidence": false,
+    "next_required_action": "Stop. External source acquisition or Phase 2 requires a new explicit authorization; the 2026-09-30 Project Kill Switch remains unchanged."
+  }
+}
