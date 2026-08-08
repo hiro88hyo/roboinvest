@@ -118,6 +118,20 @@ alpha.
 Primary tracked source:
 [Event AI Earnings Smoke Result](../../reports/event-ai-earnings-smoke-result-2026-06-27.md).
 
+### High-Frequency Event Deadline Screen
+
+The preregistered 2026-07-18 development screen tested whether a broader
+fixed-2 event cohort could supply enough closed trades before 2026-09-30. Broad
+variants reached the historical deadline-window frequency target but produced
+PF at most `1.109`, drawdown at least `26.4%`, and stressed PF at most `0.937`.
+The quality-filtered variant produced PF `1.353`, but drawdown was `13.2%`,
+stressed PF was `1.154`, and historical deadline-window median opened trades
+fell to `9`. The decision is `NO_CANDIDATE`; frequency does not compensate for
+the missing executable edge.
+
+Primary tracked source:
+[High-Frequency Event Development Screen Result](../../reports/event-prospective-high-frequency-development-screen-result-2026-07-18.md).
+
 ## Recent Operational Observations
 
 These rows demonstrate end-to-end behavior only. They do not override the OOS

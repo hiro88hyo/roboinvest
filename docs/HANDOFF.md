@@ -1,6 +1,6 @@
 # Handoff Memo (for coding AIs)
 
-最終更新: 2026-07-12
+最終更新: 2026-08-08
 
 このファイルは、次の coding AI が最初に読むための短い索引です。日次の長い運用ログはここに積まず、必要な詳細だけリンク先で確認してください。
 
@@ -19,7 +19,59 @@
 
 ## 2. Current State
 
-2026-07-12 時点の要点:
+2026-08-08 時点の要点:
+
+- 9/30 project kill switch判定を自動化した。
+  `scripts/report-project-kill-switch-readiness.py`は、fixed20で期限内決済可能な
+  clean cohortをsignal date 2026-07-21〜08-27の27営業日に固定し、source/outcome
+  hash chain、artifact binding、欠測日、feature欠損、未確定outcomeをfail-closedで
+  検査してから2M portfolioのPF/DDを再現する。期限前は`PENDING_UNTIL_DEADLINE`、
+  期限時にcoverage/outcome/PF>1.2/DD<200,000のいずれか未達なら
+  `KILL_SWITCH_TRIGGERED`。経済条件通過でもactivationはfalse。forward runnerは
+  ledger追記後にfinalizerとreadiness reportを自動実行する。signal date
+  2026-08-07までに期待14/27日を全て記録し、欠測0、完全候補0、不完全候補0、
+  対象eventは合計2,209件。引き続き
+  `NOT_DEMONSTRATED / PENDING_UNTIL_DEADLINE`、activationはfalse。正本は
+  `docs/features/project-kill-switch-readiness.md`。
+
+- 9/30までの手数不足に対し、7/21以降をuntouched prospective OOSとして、既存全
+  92,185観測をcontaminated development扱いにした高頻度event fixed2 screenを
+  事前登録して3案だけ実行した。結果は`NO_CANDIDATE`。広い2案はhistorical
+  Jul-Sep median opened 30を満たすが、最良でもPF 1.109、DD 26.4%、stress PF
+  0.937。quality tier 0-2はPF 1.353まで改善したがDD 13.2%、stress PF 1.154、
+  Jul-Sep median opened 9で頻度不足。4案目やgate緩和は行わず、causal/paper/live
+  routeも追加しない。正本は
+  `docs/reports/event-prospective-high-frequency-development-screen-result-2026-07-18.md`。
+
+- prospective event candidate用のappend-only outcome finalizerを追加した。
+  `scripts/finalize-event-forward-outcomes.py`はsource ledger/artifact/hashを
+  再検証し、official next-openから20営業日closeまたは-10% stopまでを、凍結済み
+  0.298%往復cost込みで別hash-chain ledgerへ冪等追記する。欠損済みbarは
+  fail-closed、未成熟はpending、候補0ならOHLCVを読まずno-op。これは
+  `registered_backtest_shadow`であり、`paper_execution_observed=false`、
+  `execution_evidence_eligible=false`。paper/live evidenceや2M portfolio集計ではない。
+  2026-08-07 signal dateまでのledger 16行は全て候補0のため、finalized 0で
+  outcome fileは未作成。
+
+- 2026-07-17 signal dateのcausal forward evidenceを2026-07-18 JSTに記録した。
+  financial summary 10件から候補0・除外0・publish 0の完全artifactとなり、ledger
+  2行目をhash `5998bac0...c88c`で追記、chain検証済み。初回の23:03 JST fetchは
+  next-calendar-day coverage開始より57分早くfail-closedしたため監査保存した。
+  runnerが`--resume`で早すぎるcomplete fetchを再利用する問題を修正し、explicit
+  signal dateのfinancial summaryは常にfresh responseをappendする。さらに翌暦日
+  00:00 JST以上・次TSE営業日09:00 JST未満をpreflightで強制し、窓外実行はAPIや
+  artifact write前に拒否する。7/13の遡及artifactは全49件`late_data_receipt`で
+  ledgerへ入れていない。正本は
+  `docs/reports/event-forward-evidence-2026-07-17.md`。
+
+- 2026-07-18 に train-only screen から新規候補
+  `event_multi_event_fundamental_technical_fixed5_v0_research` を1件だけ
+  事前登録し、validationを1回実行した。主評価2Mは純益`+141,337円`、PF
+  `2.037`、最大DD `41,059円`、matched-random percentile `0.797`で数値条件を
+  通過したが、opened `29`が事前登録minimum `30`に1件不足したため判定は
+  `INCONCLUSIVE`。minimumを緩めず、別exitをvalidationで見ず、現データcycleでは
+  freezeする。paper/live/locked-OOSは引き続き禁止。正本は
+  `docs/reports/event-multi-event-fixed5-validation-result-2026-07-18.md`。
 
 - 日々の運用を「day戦略のpaper収益検証」から「tick/板/featureの継続収集 +
   2M event/swing shadow forward」へ変更し、ユーザー承認済みの固定ルールを
@@ -51,10 +103,11 @@
   2026-07-10はfinancial summary 93件、OHLCV 4,196件からcausal artifactを生成し、
   完全な候補0件を`no_candidate_complete_artifact`として初回記録した。正本は
   `docs/reports/event-forward-evidence-2026-07-10.md`。
-- 次回以降は`op run ... uv run python scripts/run-event-forward-evidence.py
-  --signal-date YYYY-MM-DD`で、取得→detector→ledger追記を一括実行する。明示した
-  signal dateの市場・開示終了後かつ次営業日09:00 JST前に行う。次の予定日は
-  2026-07-13だが、完了前に実行しない。
+- 日次timerは`op run ... uv run python scripts/run-event-forward-evidence.py
+  --signal-date YYYY-MM-DD`で、取得→detector→ledger追記→outcome finalizer→
+  readiness reportを一括実行する。明示したsignal dateの市場・開示終了後、
+  翌暦日00:00 JST以上かつ次TSE営業日09:00 JST未満のcausal window以外は
+  preflightがAPI取得前に拒否する。直近の成功対象は2026-08-07 signal date。
 
 - 全 9 サービス + Dashboard は実装済み。
 - 現在の最優先は event candidate の因果性修正。運用候補と研究用

@@ -15,7 +15,7 @@ sys.modules[SPEC.name] = module
 SPEC.loader.exec_module(module)
 
 
-def write_config(tmp_path: Path, metrics: list[dict[str, str]]) -> Path:
+def write_config(tmp_path: Path, metrics: list[dict[str, object]]) -> Path:
     path = tmp_path / "metrics.json"
     path.write_text(json.dumps({"schema_version": 1, "metrics": metrics}), encoding="utf-8")
     return path
@@ -89,3 +89,76 @@ def test_gcloud_command_uses_create_or_update() -> None:
     assert update[3] == "update"
     assert "--project=project" in create
     assert "--log-filter=severity>=ERROR" in create
+
+
+def test_load_distribution_metric_and_render_gcloud_config(tmp_path: Path) -> None:
+    bucket_options = {"exponentialBuckets": {"numFiniteBuckets": 20, "growthFactor": 2, "scale": 1}}
+    path = write_config(
+        tmp_path,
+        [
+            {
+                "name": "roboinvest_received_per_window",
+                "description": "Received messages",
+                "filter": (
+                    'logName="projects/${PROJECT_ID}/logs/roboinvest" AND jsonPayload.received:*'
+                ),
+                "metric_type": "distribution",
+                "value_extractor": "EXTRACT(jsonPayload.received)",
+                "unit": "1",
+                "bucket_options": bucket_options,
+            }
+        ],
+    )
+
+    metric = module.load_metrics(path, "trade-ai-prod")[0]
+    config = module.metric_config(metric)
+    command = module.gcloud_command(
+        metric,
+        "trade-ai-prod",
+        exists=False,
+        config_path=Path("metric.json"),
+    )
+
+    assert metric.is_distribution
+    assert config["valueExtractor"] == "EXTRACT(jsonPayload.received)"
+    assert config["metricDescriptor"] == {
+        "metricKind": "DELTA",
+        "valueType": "DISTRIBUTION",
+        "unit": "1",
+    }
+    assert config["bucketOptions"] == bucket_options
+    assert "--config-from-file=metric.json" in command
+    assert not any(part.startswith("--log-filter=") for part in command)
+
+
+@pytest.mark.parametrize(
+    "extra, message",
+    [
+        ({"metric_type": "gauge"}, "metric_type must be counter or distribution"),
+        ({"metric_type": "distribution"}, "value_extractor is required"),
+        (
+            {
+                "metric_type": "distribution",
+                "value_extractor": "EXTRACT(jsonPayload.received)",
+            },
+            "bucket_options is required",
+        ),
+        (
+            {"value_extractor": "EXTRACT(jsonPayload.received)"},
+            "counter must not define value_extractor",
+        ),
+    ],
+)
+def test_load_metrics_rejects_invalid_metric_type_options(
+    tmp_path: Path, extra: dict[str, object], message: str
+) -> None:
+    metric: dict[str, object] = {
+        "name": "roboinvest_metric",
+        "description": "Metric",
+        "filter": 'logName="projects/${PROJECT_ID}/logs/roboinvest"',
+        **extra,
+    }
+    path = write_config(tmp_path, [metric])
+
+    with pytest.raises(ValueError, match=message):
+        module.load_metrics(path, "trade-ai-prod")

@@ -1,0 +1,11 @@
+[Unit]
+Description=Run RoboInvest pre-open check every weekday at 08:10 JST
+
+[Timer]
+OnCalendar=Mon..Fri 08:10:00 Asia/Tokyo
+Persistent=false
+AccuracySec=1min
+Unit=roboinvest-preopen-check.service
+
+[Install]
+WantedBy=timers.target

@@ -165,23 +165,43 @@ def write_jsonl(path: Path, rows: list[Any]) -> None:
                 f.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
 
 
-def read_ohlcv_csv(path: Path) -> list[OhlcvRow]:
+def read_ohlcv_csv(
+    path: Path,
+    *,
+    symbols: set[str] | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> list[OhlcvRow]:
+    """Read OHLCV rows without retaining the raw CSV dictionaries.
+
+    Optional filters are applied while streaming so callers working on a
+    research split need not materialize unrelated symbols or future sessions.
+    """
+    out: list[OhlcvRow] = []
     with path.open("r", encoding="utf-8", newline="") as f:
-        rows = list(csv.DictReader(f))
-    out = [
-        OhlcvRow(
-            symbol=str(row["symbol"]),
-            date=date.fromisoformat(str(row["date"])),
-            open=_decimal(row["open"]) or Decimal("0"),
-            high=_decimal(row["high"]) or Decimal("0"),
-            low=_decimal(row["low"]) or Decimal("0"),
-            close=_decimal(row["close"]) or Decimal("0"),
-            volume=int(float(row.get("volume") or 0)),
-            turnover=_decimal(row.get("turnover")) or Decimal("0"),
-        )
-        for row in rows
-        if row.get("close") not in (None, "")
-    ]
+        for row in csv.DictReader(f):
+            if row.get("close") in (None, ""):
+                continue
+            symbol = str(row["symbol"])
+            if symbols is not None and symbol not in symbols:
+                continue
+            row_date = date.fromisoformat(str(row["date"]))
+            if start_date is not None and row_date < start_date:
+                continue
+            if end_date is not None and row_date > end_date:
+                continue
+            out.append(
+                OhlcvRow(
+                    symbol=symbol,
+                    date=row_date,
+                    open=_decimal(row["open"]) or Decimal("0"),
+                    high=_decimal(row["high"]) or Decimal("0"),
+                    low=_decimal(row["low"]) or Decimal("0"),
+                    close=_decimal(row["close"]) or Decimal("0"),
+                    volume=int(float(row.get("volume") or 0)),
+                    turnover=_decimal(row.get("turnover")) or Decimal("0"),
+                )
+            )
     return sorted(out, key=lambda item: (item.symbol, item.date))
 
 

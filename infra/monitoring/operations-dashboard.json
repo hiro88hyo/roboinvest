@@ -59,7 +59,110 @@
       {
         "xPos": 0,
         "yPos": 5,
-        "width": 4,
+        "width": 3,
+        "height": 3,
+        "widget": {
+          "title": "Feature received (latest window)",
+          "scorecard": {
+            "timeSeriesQuery": {"timeSeriesFilter": {"filter": "metric.type=\"logging.googleapis.com/user/roboinvest_feature_received_per_window\" AND resource.type=\"global\"", "aggregation": {"alignmentPeriod": "60s", "perSeriesAligner": "ALIGN_MEAN", "crossSeriesReducer": "REDUCE_MEAN"}}},
+            "blankView": {}
+          }
+        }
+      },
+      {
+        "xPos": 3,
+        "yPos": 5,
+        "width": 3,
+        "height": 3,
+        "widget": {
+          "title": "Feature ticks (latest window)",
+          "scorecard": {
+            "timeSeriesQuery": {"timeSeriesFilter": {"filter": "metric.type=\"logging.googleapis.com/user/roboinvest_feature_ticks_processed_per_window\" AND resource.type=\"global\"", "aggregation": {"alignmentPeriod": "60s", "perSeriesAligner": "ALIGN_MEAN", "crossSeriesReducer": "REDUCE_MEAN"}}},
+            "blankView": {}
+          }
+        }
+      },
+      {
+        "xPos": 6,
+        "yPos": 5,
+        "width": 3,
+        "height": 3,
+        "widget": {
+          "title": "Latest tick age",
+          "scorecard": {
+            "timeSeriesQuery": {"timeSeriesFilter": {"filter": "metric.type=\"logging.googleapis.com/user/roboinvest_feature_latest_tick_age_seconds\" AND resource.type=\"global\"", "aggregation": {"alignmentPeriod": "60s", "perSeriesAligner": "ALIGN_MEAN", "crossSeriesReducer": "REDUCE_MEAN"}}},
+            "blankView": {}
+          }
+        }
+      },
+      {
+        "xPos": 9,
+        "yPos": 5,
+        "width": 3,
+        "height": 3,
+        "widget": {
+          "title": "Latest OMS Paper book age",
+          "scorecard": {
+            "timeSeriesQuery": {"timeSeriesFilter": {"filter": "metric.type=\"logging.googleapis.com/user/roboinvest_oms_paper_latest_book_age_seconds\" AND resource.type=\"global\"", "aggregation": {"alignmentPeriod": "60s", "perSeriesAligner": "ALIGN_MEAN", "crossSeriesReducer": "REDUCE_MEAN"}}},
+            "blankView": {}
+          }
+        }
+      },
+      {
+        "xPos": 0,
+        "yPos": 8,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Feature Engine market-data volume",
+          "xyChart": {
+            "dataSets": [
+              {"legendTemplate": "received", "timeSeriesQuery": {"timeSeriesFilter": {"filter": "metric.type=\"logging.googleapis.com/user/roboinvest_feature_received_per_window\" AND resource.type=\"global\"", "aggregation": {"alignmentPeriod": "60s", "perSeriesAligner": "ALIGN_MEAN", "crossSeriesReducer": "REDUCE_MEAN"}}}},
+              {"legendTemplate": "ticks processed", "timeSeriesQuery": {"timeSeriesFilter": {"filter": "metric.type=\"logging.googleapis.com/user/roboinvest_feature_ticks_processed_per_window\" AND resource.type=\"global\"", "aggregation": {"alignmentPeriod": "60s", "perSeriesAligner": "ALIGN_MEAN", "crossSeriesReducer": "REDUCE_MEAN"}}}},
+              {"legendTemplate": "books processed", "timeSeriesQuery": {"timeSeriesFilter": {"filter": "metric.type=\"logging.googleapis.com/user/roboinvest_feature_books_processed_per_window\" AND resource.type=\"global\"", "aggregation": {"alignmentPeriod": "60s", "perSeriesAligner": "ALIGN_MEAN", "crossSeriesReducer": "REDUCE_MEAN"}}}}
+            ],
+            "yAxis": {"label": "events / summary window", "scale": "LINEAR"}
+          }
+        }
+      },
+      {
+        "xPos": 0,
+        "yPos": 12,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Market-data processing errors",
+          "xyChart": {
+            "dataSets": [
+              {"legendTemplate": "feature parse", "timeSeriesQuery": {"timeSeriesFilter": {"filter": "metric.type=\"logging.googleapis.com/user/roboinvest_feature_parse_errors_per_window\" AND resource.type=\"global\"", "aggregation": {"alignmentPeriod": "60s", "perSeriesAligner": "ALIGN_MEAN", "crossSeriesReducer": "REDUCE_MEAN"}}}},
+              {"legendTemplate": "feature process", "timeSeriesQuery": {"timeSeriesFilter": {"filter": "metric.type=\"logging.googleapis.com/user/roboinvest_feature_process_errors_per_window\" AND resource.type=\"global\"", "aggregation": {"alignmentPeriod": "60s", "perSeriesAligner": "ALIGN_MEAN", "crossSeriesReducer": "REDUCE_MEAN"}}}},
+              {"legendTemplate": "oms-paper parse", "timeSeriesQuery": {"timeSeriesFilter": {"filter": "metric.type=\"logging.googleapis.com/user/roboinvest_oms_paper_parse_errors_per_window\" AND resource.type=\"global\"", "aggregation": {"alignmentPeriod": "60s", "perSeriesAligner": "ALIGN_MEAN", "crossSeriesReducer": "REDUCE_MEAN"}}}},
+              {"legendTemplate": "oms-paper write", "timeSeriesQuery": {"timeSeriesFilter": {"filter": "metric.type=\"logging.googleapis.com/user/roboinvest_oms_paper_write_errors_per_window\" AND resource.type=\"global\"", "aggregation": {"alignmentPeriod": "60s", "perSeriesAligner": "ALIGN_MEAN", "crossSeriesReducer": "REDUCE_MEAN"}}}}
+            ],
+            "yAxis": {"label": "errors / summary window", "scale": "LINEAR"}
+          }
+        }
+      },
+      {
+        "xPos": 6,
+        "yPos": 8,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "OMS Paper book flow",
+          "xyChart": {
+            "dataSets": [
+              {"legendTemplate": "pulled", "timeSeriesQuery": {"timeSeriesFilter": {"filter": "metric.type=\"logging.googleapis.com/user/roboinvest_oms_paper_books_pulled_per_window\" AND resource.type=\"global\"", "aggregation": {"alignmentPeriod": "60s", "perSeriesAligner": "ALIGN_MEAN", "crossSeriesReducer": "REDUCE_MEAN"}}}},
+              {"legendTemplate": "applied", "timeSeriesQuery": {"timeSeriesFilter": {"filter": "metric.type=\"logging.googleapis.com/user/roboinvest_oms_paper_books_applied_per_window\" AND resource.type=\"global\"", "aggregation": {"alignmentPeriod": "60s", "perSeriesAligner": "ALIGN_MEAN", "crossSeriesReducer": "REDUCE_MEAN"}}}}
+            ],
+            "yAxis": {"label": "books / summary window", "scale": "LINEAR"}
+          }
+        }
+      },
+      {
+        "xPos": 6,
+        "yPos": 12,
+        "width": 6,
         "height": 4,
         "widget": {
           "title": "Market-data summaries (10m sum)",
@@ -72,9 +175,9 @@
         }
       },
       {
-        "xPos": 4,
-        "yPos": 5,
-        "width": 4,
+        "xPos": 0,
+        "yPos": 16,
+        "width": 6,
         "height": 4,
         "widget": {
           "title": "Pub/Sub oldest unacked message",
@@ -87,9 +190,9 @@
         }
       },
       {
-        "xPos": 8,
-        "yPos": 5,
-        "width": 4,
+        "xPos": 6,
+        "yPos": 16,
+        "width": 6,
         "height": 4,
         "widget": {
           "title": "Pub/Sub undelivered messages",
@@ -103,7 +206,7 @@
       },
       {
         "xPos": 0,
-        "yPos": 9,
+        "yPos": 20,
         "width": 12,
         "height": 4,
         "widget": {

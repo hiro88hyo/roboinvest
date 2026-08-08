@@ -1045,6 +1045,31 @@ Allowed next action:
   including rule, exit horizon, cost, random baseline, and portfolio simulation
   assumptions.
 
+On 2026-07-18,
+`event_multi_event_fundamental_technical_fixed5_v0_research` was selected as
+that one hypothesis and frozen before validation in
+[the fixed-5 validation preregistration](../reports/event-multi-event-fixed5-validation-prereg-2026-07-18.md).
+No other exit variant from the train screen may be inspected on validation in
+this cycle.
+
+The one registered validation run then produced strong economic metrics at 2M
+(`+141,337` JPY, PF `2.037`, max DD `41,059`, random percentile `0.797`) but
+opened `29` trades against the frozen minimum of `30`. The recorded decision is
+`INCONCLUSIVE`; the candidate is frozen for the current data cycle and no
+alternate exit may be inspected. See the
+[validation result](../reports/event-multi-event-fixed5-validation-result-2026-07-18.md).
+
+After the fixed5 result, the deadline-frequency risk was tested in one bounded
+prospective-cycle development screen registered before execution. All existing
+observations were explicitly contaminated development data; 2026-07-21 onward
+was reserved as untouched prospective OOS. Two broad fixed-2 variants reached a
+median 30 opened trades in historical July-through-September windows but failed
+absolute PF, drawdown, execution stress, and period stability. A quality-tier
+filter reached PF 1.353 but retained 13.2% drawdown, failed stressed PF at
+1.154, and reduced the deadline-window median to nine trades. The frozen result
+is `NO_CANDIDATE`; do not add a fourth variant or weaken the gates. See the
+[development screen result](../reports/event-prospective-high-frequency-development-screen-result-2026-07-18.md).
+
 Disallowed action:
 
 - inspect several validation variants and pick the best one

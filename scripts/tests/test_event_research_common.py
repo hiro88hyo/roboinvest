@@ -45,6 +45,29 @@ def _bars(symbol: str = "7203", *, start_close: int = 1000):
     return rows
 
 
+def test_read_ohlcv_csv_stream_filters_symbols_and_dates(tmp_path: Path) -> None:
+    path = tmp_path / "ohlcv.csv"
+    path.write_text(
+        "symbol,date,open,high,low,close,volume,turnover\n"
+        "7203,2026-01-01,100,110,90,105,1000,105000\n"
+        "7203,2026-01-02,101,111,91,106,1000,106000\n"
+        "6758,2026-01-02,200,210,190,205,1000,205000\n"
+        "7203,2026-01-03,102,112,92,,1000,0\n",
+        encoding="utf-8",
+    )
+
+    rows = event_research.read_ohlcv_csv(
+        path,
+        symbols={"7203"},
+        start_date=date(2026, 1, 2),
+        end_date=date(2026, 1, 2),
+    )
+
+    assert [(row.symbol, row.date, row.close) for row in rows] == [
+        ("7203", date(2026, 1, 2), Decimal("106"))
+    ]
+
+
 def _raw(**overrides):
     raw = {
         "Code": "72030",

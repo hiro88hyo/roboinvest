@@ -1,0 +1,12 @@
+[Unit]
+Description=Run RoboInvest production pre-open readiness check
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+Environment=PATH=/home/hiroyuki/.local/bin:/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=/home/hiroyuki/workspaces/roboinvest
+ExecStart=/usr/bin/env bash /home/hiroyuki/workspaces/roboinvest/scripts/run-production-preopen-check.sh
+TimeoutStartSec=10min
+UMask=0077

@@ -87,7 +87,8 @@ CORE_SERVICES = (
 
 EXPECTED_ENV = {
     "AI_MAX_OUTPUT_TOKENS": "2048",
-    "STRATEGIES_ENABLED": "relative_momentum",
+    # Approved data-capture / shadow-forward mode keeps day BUY strategies disabled.
+    "STRATEGIES_ENABLED": "",
     "LIVE_DAY_NEW_BUY_START_TIME": "09:15",
     "MAX_HOLD_MINUTES": "15",
     "MIN_CONFIDENCE_RULE_ONLY": "0.45",
@@ -203,6 +204,14 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Treat feeder/kabu connectivity failures as WARN because "
             "kabu station is intentionally stopped."
+        ),
+    )
+    parser.add_argument(
+        "--skip-non-business-day",
+        action="store_true",
+        help=(
+            "Exit successfully without running checks when the JST target date "
+            "is not a TSE business day. Intended for scheduled execution."
         ),
     )
     parser.add_argument(
@@ -1299,6 +1308,17 @@ def check_feeder_logs(reporter: Reporter, args: argparse.Namespace) -> None:
 def main() -> int:
     args = parse_args()
     reporter = Reporter(quiet=args.quiet)
+
+    target_date = args.target_date or datetime.now(ZoneInfo("Asia/Tokyo")).date()
+    if args.skip_non_business_day and not is_tse_business_day(target_date):
+        reporter.section("trading calendar")
+        reporter.emit(
+            "SKIP",
+            "pre-open checks",
+            f"non-business-day target_date={target_date.isoformat()}",
+        )
+        reporter.summary()
+        return 0
 
     check_expected_env(reporter, args)
     if args.refresh_kabu_token:

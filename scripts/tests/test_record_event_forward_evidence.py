@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
@@ -13,6 +14,7 @@ SCRIPT = Path(__file__).parents[1] / "record-event-forward-evidence.py"
 
 
 def _load_script() -> ModuleType:
+    sys.path.insert(0, str(SCRIPT.parent))
     spec = importlib.util.spec_from_file_location("record_event_forward_evidence", SCRIPT)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)

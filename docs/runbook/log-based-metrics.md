@@ -2,8 +2,8 @@
 
 作成日: 2026-07-11
 
-Cloud Logging に集約済みの構造化ログから、運用介入候補を数える counter metric を
-再現可能に作成する手順。定義の正本は
+Cloud Logging に集約済みの構造化ログから、運用介入候補を数える counter metric と
+market-data summary の具体値を抽出する distribution metric を再現可能に作成する手順。定義の正本は
 `infra/monitoring/log-based-metrics.json` とする。
 
 ## 対象
@@ -12,6 +12,13 @@ Cloud Logging に集約済みの構造化ログから、運用介入候補を数
 - OMS Live の `closeout_invariant`
 - `market_data_stale`
 - OMS Live の `broker_order_rejected`
+- Feature Engine の `received` / `ticks_processed` / `books_processed`
+- OMS Paper の `books_pulled` / `books_applied`
+- Feature Engine / OMS Paper の最新データ age と処理エラー数
+
+distribution metric は `market_data_summary` が出す約1分間の summary window ごとの値を
+保持する。件数を1秒当たりのrateへ変換せず、Dashboardでは `ALIGN_MEAN` で最新window値と
+時系列を表示する。ageは秒単位。metric作成前のログは遡及して指標化されない。
 
 Alert policy の初期定義は `infra/monitoring/alert-policies.json` に置く。Google推奨に
 合わせて10分窓で集計するが、実ログで誤通知率を確認するまでは全policyを
@@ -53,8 +60,9 @@ uv run python scripts/sync-monitoring-dashboard.py --project PROJECT_ID
 uv run python scripts/sync-monitoring-dashboard.py --project PROJECT_ID --apply
 ```
 
-Dashboardは異常件数、注文フロー、market-data summary、Pub/Sub backlog、ERRORログを
-同じ画面に表示する。アプリ由来counterは作成後のログだけを集計し、過去ログを遡及しない。
+Dashboardは異常件数、注文フロー、market-data summary、具体的なmarket-data流量・遅延、
+処理エラー、Pub/Sub backlog、ERRORログを同じ画面に表示する。アプリ由来metricは作成後の
+ログだけを集計し、過去ログを遡及しない。
 
 作成後は Cloud Monitoring の Metrics Explorer で
 `logging.googleapis.com/user/<metric name>` を選び、実ログから増分が入ることを確認する。

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import gc
 import hashlib
 import importlib.util
 import json
@@ -126,12 +127,13 @@ def main() -> int:
     manifest = split_manifest_from_raw(args.observations)
     observations = load_train_observations(args.observations, manifest)
     clusters = clusters_by_key(observations)
-    ohlcv_rows = _portfolio_module().read_ohlcv_csv(args.ohlcv) if args.ohlcv else None
     rows = scan_rows(
         observations,
         clusters,
         portfolio_capitals=portfolio_capitals,
-        ohlcv_rows=ohlcv_rows,
+        ohlcv_path=args.ohlcv,
+        random_date_start=date.fromisoformat(manifest["train_start"]),
+        random_date_end=date.fromisoformat(manifest["train_end"]),
         portfolio_random_seeds=args.portfolio_random_seeds,
     )
     result = {
@@ -146,10 +148,10 @@ def main() -> int:
             "min_trades": args.min_trades,
             "portfolio_capitals": [float(value) for value in portfolio_capitals],
             "portfolio_random_baseline": "same_symbol_random_date"
-            if ohlcv_rows is not None
+            if args.ohlcv is not None
             else None,
             "portfolio_random_seeds": args.portfolio_random_seeds
-            if ohlcv_rows is not None
+            if args.ohlcv is not None
             else None,
             "warning": (
                 "Use this only to choose one pre-registered validation hypothesis. "
@@ -264,12 +266,24 @@ def scan_rows(
     clusters: dict[str, list[ObservationRecord]],
     *,
     portfolio_capitals: list[Decimal],
-    ohlcv_rows: list[object] | None = None,
+    ohlcv_path: Path | None = None,
+    random_date_start: date | None = None,
+    random_date_end: date | None = None,
     portfolio_random_seeds: int = 300,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for spec in rule_specs():
         selected = select_for_rule(spec, observations, clusters)
+        ohlcv_rows = (
+            _portfolio_module().read_ohlcv_csv(
+                ohlcv_path,
+                symbols={obs.symbol for obs in selected},
+                start_date=random_date_start,
+                end_date=random_date_end,
+            )
+            if ohlcv_path is not None and selected
+            else None
+        )
         for exit_arm in EXIT_ARMS_FOR_REPORT:
             inspected = inspected_family_marker(spec.name)
             rows.append(
@@ -293,6 +307,8 @@ def scan_rows(
                     ),
                 }
             )
+        del ohlcv_rows
+        gc.collect()
     return rows
 
 

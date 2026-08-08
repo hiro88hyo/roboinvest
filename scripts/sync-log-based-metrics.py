@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate and synchronize Cloud Logging counter metrics.
+"""Validate and synchronize Cloud Logging counter and distribution metrics.
 
 Dry-run is the default. Applying changes requires an explicit ``--apply``.
 """
@@ -11,6 +11,7 @@ import json
 import re
 import shutil
 import subprocess
+import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,6 +26,14 @@ class LogMetric:
     name: str
     description: str
     filter: str
+    metric_type: str = "counter"
+    value_extractor: str | None = None
+    unit: str = "1"
+    bucket_options: dict[str, Any] | None = None
+
+    @property
+    def is_distribution(self) -> bool:
+        return self.metric_type == "distribution"
 
 
 def load_metrics(path: Path, project_id: str) -> list[LogMetric]:
@@ -43,6 +52,10 @@ def load_metrics(path: Path, project_id: str) -> list[LogMetric]:
         name = row.get("name")
         description = row.get("description")
         filter_template = row.get("filter")
+        metric_type = row.get("metric_type", "counter")
+        value_extractor = row.get("value_extractor")
+        unit = row.get("unit", "1")
+        bucket_options = row.get("bucket_options")
         if not isinstance(name, str) or not METRIC_NAME_RE.fullmatch(name):
             raise ValueError(f"metrics[{index}].name is invalid: {name!r}")
         if name in seen:
@@ -56,13 +69,75 @@ def load_metrics(path: Path, project_id: str) -> list[LogMetric]:
         filter_value = filter_template.replace("${PROJECT_ID}", project_id)
         if "${" in filter_value:
             raise ValueError(f"metrics[{index}].filter contains an unknown placeholder")
+        if metric_type not in {"counter", "distribution"}:
+            raise ValueError(f"metrics[{index}].metric_type must be counter or distribution")
+        if not isinstance(unit, str) or not unit.strip():
+            raise ValueError(f"metrics[{index}].unit must be non-empty")
+        if metric_type == "counter":
+            if value_extractor is not None or bucket_options is not None:
+                raise ValueError(
+                    f"metrics[{index}] counter must not define value_extractor or bucket_options"
+                )
+        else:
+            if not isinstance(value_extractor, str) or not value_extractor.strip():
+                raise ValueError(f"metrics[{index}].value_extractor is required for distribution")
+            if not isinstance(bucket_options, dict) or not bucket_options:
+                raise ValueError(f"metrics[{index}].bucket_options is required for distribution")
         seen.add(name)
-        metrics.append(LogMetric(name, description, filter_value))
+        metrics.append(
+            LogMetric(
+                name=name,
+                description=description,
+                filter=filter_value,
+                metric_type=metric_type,
+                value_extractor=value_extractor,
+                unit=unit,
+                bucket_options=bucket_options,
+            )
+        )
     return metrics
 
 
-def gcloud_command(metric: LogMetric, project_id: str, *, exists: bool) -> list[str]:
+def metric_config(metric: LogMetric) -> dict[str, Any]:
+    config: dict[str, Any] = {
+        "name": metric.name,
+        "description": metric.description,
+        "filter": metric.filter,
+    }
+    if metric.is_distribution:
+        config.update(
+            {
+                "valueExtractor": metric.value_extractor,
+                "bucketOptions": metric.bucket_options,
+                "metricDescriptor": {
+                    "metricKind": "DELTA",
+                    "valueType": "DISTRIBUTION",
+                    "unit": metric.unit,
+                },
+            }
+        )
+    return config
+
+
+def gcloud_command(
+    metric: LogMetric,
+    project_id: str,
+    *,
+    exists: bool,
+    config_path: Path | None = None,
+) -> list[str]:
     action = "update" if exists else "create"
+    if metric.is_distribution:
+        path = config_path or Path(f"<generated:{metric.name}.json>")
+        return [
+            "gcloud",
+            "logging",
+            "metrics",
+            action,
+            metric.name,
+            f"--project={project_id}",
+            f"--config-from-file={path}",
+        ]
     return [
         "gcloud",
         "logging",
@@ -123,11 +198,24 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if shutil.which("gcloud") is None:
         raise SystemExit("gcloud is required with --apply")
-    for metric in metrics:
-        exists = metric_exists(metric.name, args.project)
-        command = gcloud_command(metric, args.project, exists=exists)
-        subprocess.run(command, check=True)
-        print(f"{'updated' if exists else 'created'}: {metric.name}")
+    with tempfile.TemporaryDirectory(prefix="roboinvest-log-metrics-") as directory:
+        for metric in metrics:
+            exists = metric_exists(metric.name, args.project)
+            config_path = None
+            if metric.is_distribution:
+                config_path = Path(directory) / f"{metric.name}.json"
+                config_path.write_text(
+                    json.dumps(metric_config(metric), ensure_ascii=False),
+                    encoding="utf-8",
+                )
+            command = gcloud_command(
+                metric,
+                args.project,
+                exists=exists,
+                config_path=config_path,
+            )
+            subprocess.run(command, check=True)
+            print(f"{'updated' if exists else 'created'}: {metric.name}")
     return 0
 
 

@@ -24,6 +24,11 @@ def test_render_dashboard_substitutes_project_and_has_operational_widgets() -> N
     assert "${PROJECT_ID}" not in serialized
     assert "oldest_unacked_message_age" in serialized
     assert "logsPanel" in serialized
+    assert "roboinvest_feature_received_per_window" in serialized
+    assert "roboinvest_feature_latest_tick_age_seconds" in serialized
+    assert "roboinvest_oms_paper_books_applied_per_window" in serialized
+    assert "roboinvest_oms_paper_latest_book_age_seconds" in serialized
+    assert serialized.count('"scorecard"') == 4
 
 
 def test_sync_command_selects_create_or_update(tmp_path: Path) -> None:
@@ -34,3 +39,14 @@ def test_sync_command_selects_create_or_update(tmp_path: Path) -> None:
 
     assert create[3] == "create"
     assert update[3:5] == ["update", "roboinvest-operations"]
+
+
+def test_prepare_dashboard_update_sets_etag_only_for_existing_dashboard() -> None:
+    dashboard = {"name": "projects/project/dashboards/roboinvest-operations"}
+
+    create = module.prepare_dashboard_update(dashboard, None)
+    update = module.prepare_dashboard_update(dashboard, "existing-etag")
+
+    assert "etag" not in create
+    assert update["etag"] == "existing-etag"
+    assert "etag" not in dashboard

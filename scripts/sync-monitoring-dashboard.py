@@ -34,7 +34,7 @@ def render_dashboard(path: Path, project_id: str) -> dict[str, Any]:
     return dashboard
 
 
-def dashboard_exists(project_id: str) -> bool:
+def dashboard_etag(project_id: str) -> str | None:
     result = subprocess.run(
         [
             "gcloud",
@@ -43,14 +43,30 @@ def dashboard_exists(project_id: str) -> bool:
             "describe",
             DASHBOARD_ID,
             f"--project={project_id}",
+            "--format=value(etag)",
         ],
         check=False,
-        stdout=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        text=True,
         stderr=subprocess.DEVNULL,
     )
     if result.returncode not in (0, 1):
         raise RuntimeError(f"dashboard describe failed (exit {result.returncode})")
-    return result.returncode == 0
+    if result.returncode == 1:
+        return None
+    etag = result.stdout.strip()
+    if not etag:
+        raise RuntimeError("existing dashboard describe returned an empty etag")
+    return etag
+
+
+def prepare_dashboard_update(dashboard: dict[str, Any], etag: str | None) -> dict[str, Any]:
+    prepared = dict(dashboard)
+    if etag is None:
+        prepared.pop("etag", None)
+    else:
+        prepared["etag"] = etag
+    return prepared
 
 
 def sync_command(path: Path, project_id: str, *, exists: bool) -> list[str]:
@@ -80,7 +96,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if shutil.which("gcloud") is None:
         raise SystemExit("gcloud is required with --apply")
-    exists = dashboard_exists(args.project)
+    etag = dashboard_etag(args.project)
+    dashboard = prepare_dashboard_update(dashboard, etag)
+    exists = etag is not None
     with tempfile.TemporaryDirectory(prefix="roboinvest-dashboard-") as directory:
         path = Path(directory) / "dashboard.json"
         path.write_text(json.dumps(dashboard), encoding="utf-8")

@@ -3,65 +3,21 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
+from event_forward_evidence import (
+    canonical_sha256 as _canonical_sha256,
+)
+from event_forward_evidence import (
+    read_source_ledger as read_ledger,
+)
 from strategy_rule.event_paper.artifact import EVENT_STRATEGY_KEY, load_event_paper_artifact
 
 SCHEMA_VERSION = 1
 FORWARD_START = date(2026, 7, 1)
-
-
-def _canonical_sha256(payload: dict[str, Any]) -> str:
-    encoded = json.dumps(
-        payload,
-        ensure_ascii=True,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
-
-
-def read_ledger(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    rows: list[dict[str, Any]] = []
-    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        if not line.strip():
-            continue
-        payload = json.loads(line)
-        if not isinstance(payload, dict):
-            raise ValueError(f"ledger line {line_number} is not an object")
-        rows.append(payload)
-    validate_chain(rows)
-    return rows
-
-
-def validate_chain(rows: list[dict[str, Any]]) -> None:
-    previous_sha256: str | None = None
-    previous_date: date | None = None
-    seen_dates: set[date] = set()
-    for index, row in enumerate(rows, 1):
-        record_sha256 = row.get("record_sha256")
-        if not isinstance(record_sha256, str):
-            raise ValueError(f"ledger row {index} has no record_sha256")
-        unhashed = {key: value for key, value in row.items() if key != "record_sha256"}
-        if _canonical_sha256(unhashed) != record_sha256:
-            raise ValueError(f"ledger row {index} hash mismatch")
-        if row.get("previous_record_sha256") != previous_sha256:
-            raise ValueError(f"ledger row {index} chain mismatch")
-        signal_date = date.fromisoformat(str(row.get("signal_date")))
-        if signal_date in seen_dates:
-            raise ValueError(f"duplicate signal_date in ledger: {signal_date}")
-        if previous_date is not None and signal_date <= previous_date:
-            raise ValueError("ledger signal dates must be strictly increasing")
-        seen_dates.add(signal_date)
-        previous_date = signal_date
-        previous_sha256 = record_sha256
 
 
 def build_record(

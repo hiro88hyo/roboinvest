@@ -113,14 +113,46 @@ For an explicitly authorized manual fallback, run through 1Password:
         --signal-date YYYY-MM-DD
 
 This appends financial summaries and OHLCV, runs the causal detector, and
-records the result in the hash-chain ledger. A complete zero-candidate artifact
-is a valid observation, not a zero-PnL trade.
+records the result in the hash-chain ledger. It then finalizes any causally due
+outcomes and refreshes `out/event-forward-evidence/kill-switch-readiness.json`.
+A complete zero-candidate artifact is a valid observation, not a zero-PnL
+trade.
+
+The runner accepts the signal date only from 00:00 JST on the following
+calendar day until immediately before 09:00 JST on the next TSE business day.
+Outside that window it fails before API access or artifact creation. Do not
+catch up missed dates retrospectively.
+
+### After official daily OHLCV is updated
+
+Run the idempotent offline outcome finalizer:
+
+    uv run python scripts/finalize-event-forward-outcomes.py
+
+It appends a separate hash-chain outcome only when a candidate has reached its
+registered 20th-session close or an earlier 10% stop is observable. Missing
+completed-session bars fail closed. Immature candidates remain pending, while
+zero-candidate days are a no-op. The output is registered-backtest shadow data;
+it is explicitly ineligible as paper/live execution evidence and does not by
+itself calculate the frozen 2M portfolio result.
+
+Refresh the frozen 2M portfolio and deadline status independently when needed:
+
+    uv run python scripts/report-project-kill-switch-readiness.py \
+      --output-json out/event-forward-evidence/kill-switch-readiness.json
+
+For the 2026-09-30 decision, every TSE signal date from 2026-07-21 through
+2026-08-27 must have a causal source row. This is 27 dates. A missing date is
+not a zero-candidate observation and makes the deadline decision fail closed.
 
 ## Evidence Interpretation
 
 - Shadow-forward candidates use the frozen 2M portfolio assumptions.
 - Outcomes remain pending until the registered 20th-session exit or 10% stop is
   causally observable.
+- Finalized outcome rows compare the frozen per-candidate price model with
+  official OHLCV; `paper_execution_observed=false` and
+  `execution_evidence_eligible=false` must remain unchanged.
 - Accidental paper-day trades are operational anomalies and must not be mixed
   into swing profitability evidence.
 - 1M remains a small-capital/lot diagnostic.

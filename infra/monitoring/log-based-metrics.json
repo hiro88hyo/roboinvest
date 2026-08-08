@@ -40,6 +40,105 @@
       "name": "roboinvest_closeout_completed_count",
       "description": "Closeout orders completed by OMS Live.",
       "filter": "logName=\"projects/${PROJECT_ID}/logs/roboinvest\" AND jsonPayload.service=\"oms-live\" AND jsonPayload.event=\"closeout_completed\""
+    },
+    {
+      "name": "roboinvest_feature_received_per_window",
+      "description": "Raw market-data messages received by Feature Engine in each summary window.",
+      "filter": "logName=\"projects/${PROJECT_ID}/logs/roboinvest\" AND jsonPayload.service=\"feature-engine\" AND jsonPayload.event=\"market_data_summary\" AND jsonPayload.received:*",
+      "metric_type": "distribution",
+      "value_extractor": "EXTRACT(jsonPayload.received)",
+      "unit": "1",
+      "bucket_options": {"exponentialBuckets": {"numFiniteBuckets": 25, "growthFactor": 2, "scale": 1}}
+    },
+    {
+      "name": "roboinvest_feature_ticks_processed_per_window",
+      "description": "Ticks processed by Feature Engine in each summary window.",
+      "filter": "logName=\"projects/${PROJECT_ID}/logs/roboinvest\" AND jsonPayload.service=\"feature-engine\" AND jsonPayload.event=\"market_data_summary\" AND jsonPayload.ticks_processed:*",
+      "metric_type": "distribution",
+      "value_extractor": "EXTRACT(jsonPayload.ticks_processed)",
+      "unit": "1",
+      "bucket_options": {"exponentialBuckets": {"numFiniteBuckets": 25, "growthFactor": 2, "scale": 1}}
+    },
+    {
+      "name": "roboinvest_feature_books_processed_per_window",
+      "description": "Order books processed by Feature Engine in each summary window.",
+      "filter": "logName=\"projects/${PROJECT_ID}/logs/roboinvest\" AND jsonPayload.service=\"feature-engine\" AND jsonPayload.event=\"market_data_summary\" AND jsonPayload.books_processed:*",
+      "metric_type": "distribution",
+      "value_extractor": "EXTRACT(jsonPayload.books_processed)",
+      "unit": "1",
+      "bucket_options": {"exponentialBuckets": {"numFiniteBuckets": 25, "growthFactor": 2, "scale": 1}}
+    },
+    {
+      "name": "roboinvest_feature_latest_tick_age_seconds",
+      "description": "Age of the latest tick observed by Feature Engine at summary time.",
+      "filter": "logName=\"projects/${PROJECT_ID}/logs/roboinvest\" AND jsonPayload.service=\"feature-engine\" AND jsonPayload.event=\"market_data_summary\" AND jsonPayload.latest_tick_age_seconds:*",
+      "metric_type": "distribution",
+      "value_extractor": "EXTRACT(jsonPayload.latest_tick_age_seconds)",
+      "unit": "s",
+      "bucket_options": {"exponentialBuckets": {"numFiniteBuckets": 24, "growthFactor": 2, "scale": 0.125}}
+    },
+    {
+      "name": "roboinvest_feature_parse_errors_per_window",
+      "description": "Feature Engine market-data parse errors in each summary window.",
+      "filter": "logName=\"projects/${PROJECT_ID}/logs/roboinvest\" AND jsonPayload.service=\"feature-engine\" AND jsonPayload.event=\"market_data_summary\" AND jsonPayload.parse_errors:*",
+      "metric_type": "distribution",
+      "value_extractor": "EXTRACT(jsonPayload.parse_errors)",
+      "unit": "1",
+      "bucket_options": {"exponentialBuckets": {"numFiniteBuckets": 20, "growthFactor": 2, "scale": 1}}
+    },
+    {
+      "name": "roboinvest_feature_process_errors_per_window",
+      "description": "Feature Engine market-data processing errors in each summary window.",
+      "filter": "logName=\"projects/${PROJECT_ID}/logs/roboinvest\" AND jsonPayload.service=\"feature-engine\" AND jsonPayload.event=\"market_data_summary\" AND jsonPayload.process_errors:*",
+      "metric_type": "distribution",
+      "value_extractor": "EXTRACT(jsonPayload.process_errors)",
+      "unit": "1",
+      "bucket_options": {"exponentialBuckets": {"numFiniteBuckets": 20, "growthFactor": 2, "scale": 1}}
+    },
+    {
+      "name": "roboinvest_oms_paper_books_pulled_per_window",
+      "description": "Order books pulled by OMS Paper in each summary window.",
+      "filter": "logName=\"projects/${PROJECT_ID}/logs/roboinvest\" AND jsonPayload.service=\"oms-paper\" AND jsonPayload.event=\"market_data_summary\" AND jsonPayload.books_pulled:*",
+      "metric_type": "distribution",
+      "value_extractor": "EXTRACT(jsonPayload.books_pulled)",
+      "unit": "1",
+      "bucket_options": {"exponentialBuckets": {"numFiniteBuckets": 25, "growthFactor": 2, "scale": 1}}
+    },
+    {
+      "name": "roboinvest_oms_paper_books_applied_per_window",
+      "description": "Order books applied by OMS Paper in each summary window.",
+      "filter": "logName=\"projects/${PROJECT_ID}/logs/roboinvest\" AND jsonPayload.service=\"oms-paper\" AND jsonPayload.event=\"market_data_summary\" AND jsonPayload.books_applied:*",
+      "metric_type": "distribution",
+      "value_extractor": "EXTRACT(jsonPayload.books_applied)",
+      "unit": "1",
+      "bucket_options": {"exponentialBuckets": {"numFiniteBuckets": 25, "growthFactor": 2, "scale": 1}}
+    },
+    {
+      "name": "roboinvest_oms_paper_latest_book_age_seconds",
+      "description": "Age of the latest order book observed by OMS Paper at summary time.",
+      "filter": "logName=\"projects/${PROJECT_ID}/logs/roboinvest\" AND jsonPayload.service=\"oms-paper\" AND jsonPayload.event=\"market_data_summary\" AND jsonPayload.latest_book_age_seconds:*",
+      "metric_type": "distribution",
+      "value_extractor": "EXTRACT(jsonPayload.latest_book_age_seconds)",
+      "unit": "s",
+      "bucket_options": {"exponentialBuckets": {"numFiniteBuckets": 24, "growthFactor": 2, "scale": 0.125}}
+    },
+    {
+      "name": "roboinvest_oms_paper_parse_errors_per_window",
+      "description": "OMS Paper market-data parse errors in each summary window.",
+      "filter": "logName=\"projects/${PROJECT_ID}/logs/roboinvest\" AND jsonPayload.service=\"oms-paper\" AND jsonPayload.event=\"market_data_summary\" AND jsonPayload.parse_errors:*",
+      "metric_type": "distribution",
+      "value_extractor": "EXTRACT(jsonPayload.parse_errors)",
+      "unit": "1",
+      "bucket_options": {"exponentialBuckets": {"numFiniteBuckets": 20, "growthFactor": 2, "scale": 1}}
+    },
+    {
+      "name": "roboinvest_oms_paper_write_errors_per_window",
+      "description": "OMS Paper database write errors in each summary window.",
+      "filter": "logName=\"projects/${PROJECT_ID}/logs/roboinvest\" AND jsonPayload.service=\"oms-paper\" AND jsonPayload.event=\"market_data_summary\" AND jsonPayload.write_errors:*",
+      "metric_type": "distribution",
+      "value_extractor": "EXTRACT(jsonPayload.write_errors)",
+      "unit": "1",
+      "bucket_options": {"exponentialBuckets": {"numFiniteBuckets": 20, "growthFactor": 2, "scale": 1}}
     }
   ]
 }

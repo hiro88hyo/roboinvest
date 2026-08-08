@@ -6,7 +6,7 @@ import csv
 import json
 import random
 from collections import defaultdict
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import date
 from decimal import ROUND_FLOOR, Decimal, InvalidOperation
 from pathlib import Path
@@ -34,16 +34,21 @@ CLUSTER_EARNINGS_DIVIDEND_FIXED20_STOP_CANDIDATE_ID = (
 CLUSTER_EARNINGS_DIVIDEND_VALUE_GUARD_FIXED20_STOP_CANDIDATE_ID = (
     "event_cluster_earnings_dividend_value_guard_fixed20_stop_v1_research"
 )
+MULTI_EVENT_FUNDAMENTAL_TECHNICAL_FIXED5_CANDIDATE_ID = (
+    "event_multi_event_fundamental_technical_fixed5_v0_research"
+)
 CANDIDATE_ID = FORECAST_FIXED5_CANDIDATE_ID
 CANDIDATE_IDS = (
     FORECAST_FIXED5_CANDIDATE_ID,
     DIVIDEND_FIXED2_CANDIDATE_ID,
     CLUSTER_EARNINGS_DIVIDEND_FIXED20_STOP_CANDIDATE_ID,
     CLUSTER_EARNINGS_DIVIDEND_VALUE_GUARD_FIXED20_STOP_CANDIDATE_ID,
+    MULTI_EVENT_FUNDAMENTAL_TECHNICAL_FIXED5_CANDIDATE_ID,
 )
 COST_PER_SIDE_RATE = ROUND_TRIP_COST_RATE / Decimal("2")
 SELECTION_ORDERS = (
     "feature_time_symbol",
+    "priority_feature_time_symbol",
     "feature_time_symbol_reverse",
     "symbol_asc",
     "symbol_desc",
@@ -340,6 +345,8 @@ def candidate_spec(candidate_id: str) -> CandidateSpec:
         return CandidateSpec(candidate_id=candidate_id, exit_horizon=20, catastrophic_stop=True)
     if candidate_id == CLUSTER_EARNINGS_DIVIDEND_VALUE_GUARD_FIXED20_STOP_CANDIDATE_ID:
         return CandidateSpec(candidate_id=candidate_id, exit_horizon=20, catastrophic_stop=True)
+    if candidate_id == MULTI_EVENT_FUNDAMENTAL_TECHNICAL_FIXED5_CANDIDATE_ID:
+        return CandidateSpec(candidate_id=candidate_id, exit_horizon=5)
     raise ValueError(f"unsupported candidate_id: {candidate_id}")
 
 
@@ -350,6 +357,7 @@ def selected_observations_for_candidate(
     if spec.candidate_id in {
         CLUSTER_EARNINGS_DIVIDEND_FIXED20_STOP_CANDIDATE_ID,
         CLUSTER_EARNINGS_DIVIDEND_VALUE_GUARD_FIXED20_STOP_CANDIDATE_ID,
+        MULTI_EVENT_FUNDAMENTAL_TECHNICAL_FIXED5_CANDIDATE_ID,
     }:
         selected: list[ObservationRecord] = []
         clusters: dict[str, list[ObservationRecord]] = defaultdict(list)
@@ -384,12 +392,19 @@ def candidate_allows(obs: ObservationRecord, spec: CandidateSpec) -> bool:
     if spec.candidate_id in {
         CLUSTER_EARNINGS_DIVIDEND_FIXED20_STOP_CANDIDATE_ID,
         CLUSTER_EARNINGS_DIVIDEND_VALUE_GUARD_FIXED20_STOP_CANDIDATE_ID,
+        MULTI_EVENT_FUNDAMENTAL_TECHNICAL_FIXED5_CANDIDATE_ID,
     }:
         return False
     raise ValueError(f"unsupported candidate_id: {spec.candidate_id}")
 
 
 def cluster_rule_allows(items: list[ObservationRecord], *, spec: CandidateSpec) -> bool:
+    if spec.candidate_id == MULTI_EVENT_FUNDAMENTAL_TECHNICAL_FIXED5_CANDIDATE_ID:
+        return (
+            len(items) > 1
+            and any(fundamental_rule_allows(obs) for obs in items)
+            and any(technical_veto_allows(obs) for obs in items)
+        )
     if not cluster_earnings_dividend_increase_allows(items):
         return False
     if spec.candidate_id == CLUSTER_EARNINGS_DIVIDEND_FIXED20_STOP_CANDIDATE_ID:
@@ -734,6 +749,8 @@ def sort_candidates(
 ) -> list[PortfolioCandidate]:
     if order == "feature_time_symbol":
         return sorted(candidates, key=lambda item: (item.sort_key, item.symbol, item.event_id))
+    if order == "priority_feature_time_symbol":
+        return sorted(candidates, key=lambda item: (item.sort_key, item.symbol, item.event_id))
     if order == "feature_time_symbol_reverse":
         return sorted(
             candidates,
@@ -769,7 +786,7 @@ def portfolio_random_baselines(
     selection_order: str,
     spec: CandidateSpec,
 ) -> dict[str, Any]:
-    pools, coverage = random_candidate_pools(
+    pools, bars_by_symbol, coverage = random_candidate_pools(
         selected,
         event_observations=event_observations,
         ohlcv_rows=ohlcv_rows,
@@ -778,10 +795,23 @@ def portfolio_random_baselines(
     by_capital: dict[str, list[Decimal]] = {str(params.capital): [] for params in params_by_capital}
     for seed in range(1, seed_count + 1):
         rng = random.Random(seed)
-        sampled = [
-            rng.choice(pool) if pool else candidate
-            for candidate, pool in zip(selected, pools, strict=True)
-        ]
+        sampled = []
+        for candidate, pool in zip(selected, pools, strict=True):
+            if not pool:
+                sampled.append(candidate)
+                continue
+            random_candidate = random_portfolio_candidate_from_bars(
+                symbol=candidate.symbol,
+                signal_idx=rng.choice(pool),
+                bars=bars_by_symbol[candidate.symbol],
+                spec=spec,
+            )
+            if random_candidate is None:  # Defensive: pool construction guarantees this.
+                sampled.append(candidate)
+            else:
+                if selection_order == "priority_feature_time_symbol":
+                    random_candidate = replace(random_candidate, sort_key=candidate.sort_key)
+                sampled.append(random_candidate)
         for params in params_by_capital:
             result = simulate_portfolio(
                 sampled,
@@ -822,7 +852,7 @@ def random_candidate_pools(
     event_observations: list[ObservationRecord],
     ohlcv_rows: list[OhlcvRow],
     spec: CandidateSpec,
-) -> tuple[list[list[PortfolioCandidate]], dict[str, Any]]:
+) -> tuple[list[list[int]], dict[str, list[OhlcvRow]], dict[str, Any]]:
     by_symbol: dict[str, list[OhlcvRow]] = defaultdict(list)
     for row in sorted(ohlcv_rows, key=lambda item: (item.symbol, item.date)):
         by_symbol[row.symbol].append(row)
@@ -830,39 +860,45 @@ def random_candidate_pools(
     for obs in event_observations:
         event_dates_by_symbol[obs.symbol].add(date.fromisoformat(obs.signal_date))
 
-    pools: list[list[PortfolioCandidate]] = []
-    for candidate in selected:
-        bars = by_symbol.get(candidate.symbol, [])
-        pool = [
-            random_candidate
+    # Keep only eligible bar indexes. Materializing a PortfolioCandidate for every
+    # symbol/date/candidate combination can consume multiple gigabytes for a
+    # full train scan. The selected random candidate is rebuilt only for each
+    # seed, from the same frozen OHLCV and stop logic.
+    indexes_by_symbol: dict[str, list[int]] = {}
+    for symbol in {candidate.symbol for candidate in selected}:
+        bars = by_symbol.get(symbol, [])
+        indexes_by_symbol[symbol] = [
+            idx
             for idx, bar in enumerate(bars)
-            if bar.date not in event_dates_by_symbol[candidate.symbol]
-            if (
-                random_candidate := random_portfolio_candidate_from_bars(
-                    symbol=candidate.symbol,
-                    signal_idx=idx,
-                    bars=bars,
-                    spec=spec,
-                )
+            if bar.date not in event_dates_by_symbol[symbol]
+            and random_portfolio_candidate_from_bars(
+                symbol=symbol,
+                signal_idx=idx,
+                bars=bars,
+                spec=spec,
             )
             is not None
         ]
-        pools.append(pool)
+    pools = [indexes_by_symbol[candidate.symbol] for candidate in selected]
 
     pool_sizes = [len(pool) for pool in pools]
     matched = sum(1 for pool in pools if pool)
     fallback = len(pools) - matched
-    return pools, {
-        "matched": matched,
-        "unmatched": 0,
-        "fallback": fallback,
-        "candidate_pool_size_min": min(pool_sizes) if pool_sizes else 0,
-        "candidate_pool_size_median": float(_median([Decimal(size) for size in pool_sizes]))
-        if pool_sizes
-        else 0,
-        "candidate_pool_size_max": max(pool_sizes) if pool_sizes else 0,
-        "fallback_rate": None if not pools else fallback / len(pools),
-    }
+    return (
+        pools,
+        by_symbol,
+        {
+            "matched": matched,
+            "unmatched": 0,
+            "fallback": fallback,
+            "candidate_pool_size_min": min(pool_sizes) if pool_sizes else 0,
+            "candidate_pool_size_median": float(_median([Decimal(size) for size in pool_sizes]))
+            if pool_sizes
+            else 0,
+            "candidate_pool_size_max": max(pool_sizes) if pool_sizes else 0,
+            "fallback_rate": None if not pools else fallback / len(pools),
+        },
+    )
 
 
 def random_summary(values: list[Decimal], selected: Decimal) -> dict[str, Any]:

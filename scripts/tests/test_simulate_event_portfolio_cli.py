@@ -56,6 +56,84 @@ def test_random_candidate_uses_same_frozen_catastrophic_stop() -> None:
     assert exit_price == Decimal("90")
 
 
+def test_random_candidate_pools_share_lightweight_symbol_indexes() -> None:
+    bars = [
+        simulate_event_portfolio.OhlcvRow(
+            symbol="7201",
+            date=date(2026, 1, 1) + timedelta(days=idx),
+            open=Decimal("100") + idx,
+            high=Decimal("110") + idx,
+            low=Decimal("90") + idx,
+            close=Decimal("105") + idx,
+            volume=1000,
+            turnover=Decimal("105000"),
+        )
+        for idx in range(10)
+    ]
+    spec = simulate_event_portfolio.CandidateSpec(
+        candidate_id="fixture",
+        exit_horizon=2,
+    )
+    candidates = [
+        simulate_event_portfolio.PortfolioCandidate(
+            observation_id=f"obs-{idx}",
+            event_id=f"event-{idx}",
+            symbol="7201",
+            signal_date=date(2026, 1, 1),
+            entry_date=date(2026, 1, 2),
+            exit_date=date(2026, 1, 4),
+            entry_price=Decimal("101"),
+            exit_price=Decimal("104"),
+            sort_key="2026-01-01T15:30:00+00:00",
+        )
+        for idx in range(2)
+    ]
+
+    pools, bars_by_symbol, coverage = simulate_event_portfolio.random_candidate_pools(
+        candidates,
+        event_observations=[],
+        ohlcv_rows=bars,
+        spec=spec,
+    )
+
+    assert pools[0] is pools[1]
+    assert all(isinstance(index, int) for index in pools[0])
+    assert bars_by_symbol["7201"] == bars
+    assert coverage["matched"] == 2
+
+
+def test_priority_selection_order_uses_encoded_quality_before_symbol() -> None:
+    lower_quality = simulate_event_portfolio.PortfolioCandidate(
+        observation_id="obs-low",
+        event_id="event-low",
+        symbol="1111",
+        signal_date=date(2026, 1, 1),
+        entry_date=date(2026, 1, 2),
+        exit_date=date(2026, 1, 5),
+        entry_price=Decimal("100"),
+        exit_price=Decimal("101"),
+        sort_key="03:2026-01-01T06:30:00+00:00",
+    )
+    higher_quality = simulate_event_portfolio.PortfolioCandidate(
+        observation_id="obs-high",
+        event_id="event-high",
+        symbol="9999",
+        signal_date=date(2026, 1, 1),
+        entry_date=date(2026, 1, 2),
+        exit_date=date(2026, 1, 5),
+        entry_price=Decimal("100"),
+        exit_price=Decimal("101"),
+        sort_key="00:2026-01-01T06:30:01+00:00",
+    )
+
+    ordered = simulate_event_portfolio.sort_candidates(
+        [lower_quality, higher_quality],
+        order="priority_feature_time_symbol",
+    )
+
+    assert ordered == [higher_quality, lower_quality]
+
+
 def _observation(
     idx: int,
     *,
@@ -212,6 +290,49 @@ def test_cluster_value_guard_allows_missing_or_low_forecast_per() -> None:
     assert not simulate_event_portfolio.cluster_forecast_per_missing_or_lte(
         [expensive],
         Decimal("15"),
+    )
+
+
+def test_multi_event_fundamental_technical_fixed5_can_split_passes_across_members() -> None:
+    spec = simulate_event_portfolio.candidate_spec(
+        simulate_event_portfolio.MULTI_EVENT_FUNDAMENTAL_TECHNICAL_FIXED5_CANDIDATE_ID
+    )
+    fundamental_only = _observation(
+        1,
+        entry_date="2026-01-02",
+        exit_date="2026-01-07",
+    ).model_copy(
+        update={
+            "technical_context_v0": TechnicalContextV0(
+                avg_turnover_20d=FeatureValue(value=100_000_000, valid=True),
+                atr_pct_14d=FeatureValue(value=Decimal("0.02"), valid=True),
+                return_20d=FeatureValue(value=Decimal("0.05"), valid=True),
+                market_regime=FeatureValue(value="broad_uptrend", valid=True),
+            )
+        }
+    )
+    technical_only = _observation(
+        2,
+        entry_date="2026-01-02",
+        exit_date="2026-01-07",
+    ).model_copy(
+        update={
+            "fundamental_features_v0": FundamentalFeaturesV0(
+                profit_revision_pct=FeatureValue(value=Decimal("0"), valid=True),
+                operating_profit_revision_pct=FeatureValue(value=Decimal("0"), valid=True),
+                forecast_eps_revision_absolute=FeatureValue(value=Decimal("0"), valid=True),
+            )
+        }
+    )
+
+    assert spec.exit_horizon == 5
+    assert simulate_event_portfolio.cluster_rule_allows(
+        [fundamental_only, technical_only],
+        spec=spec,
+    )
+    assert not simulate_event_portfolio.cluster_rule_allows(
+        [fundamental_only],
+        spec=spec,
     )
 
 

@@ -27,6 +27,21 @@ def _load_module():
 preopen = _load_module()
 
 
+def test_preopen_accepts_noop_strategy_for_data_capture(monkeypatch) -> None:
+    for key, value in preopen.EXPECTED_ENV.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("TRADE_MODE", "paper")
+    reporter = preopen.Reporter(quiet=True)
+
+    preopen.check_expected_env(
+        reporter,
+        argparse.Namespace(expected_trade_mode="paper"),
+    )
+
+    assert preopen.EXPECTED_ENV["STRATEGIES_ENABLED"] == ""
+    assert reporter.counts["NG"] == 0
+
+
 def _args(path: Path) -> argparse.Namespace:
     return argparse.Namespace(
         swing_candidates_json=path,
