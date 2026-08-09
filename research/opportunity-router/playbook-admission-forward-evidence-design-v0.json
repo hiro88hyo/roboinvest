@@ -1,0 +1,357 @@
+{
+  "design_id": "opportunity_router_playbook_admission_forward_evidence_design_v0",
+  "created_at": "2026-08-09T07:52:36Z",
+  "status": "DRAFT_COMPLETE_AWAITING_EXPLICIT_FREEZE_AUTHORIZATION",
+  "identity": "CANDIDATE_INDEPENDENT_DESIGN_NOT_ALPHA_NOT_EVIDENCE",
+  "design_start_authorization": {
+    "path": "research/opportunity-router/phase2-design-start-authorization.json",
+    "sha256": "050ad0dc3e60e7b80c957fd798079c153673a401d4b93941cb4f9a1b769c8b92",
+    "statement": "続けて",
+    "interpreted_authority": "START_PLAYBOOK_ADMISSION_AND_FORWARD_EVIDENCE_DESIGN_ONLY"
+  },
+  "bound_design_document": {
+    "path": "docs/features/opportunity-router-phase2-admission-forward-evidence-design-v0.md",
+    "sha256": "08025510c9c9c36cbca7a67cfce1d729a2e240a761d8f470729ca31d5ae3ece2"
+  },
+  "temporal_boundary": {
+    "design_may_be_frozen_before_project_adjudication": true,
+    "candidate_selection_before_2026_09_30_adjudication": false,
+    "candidate_selection_requires_separate_authorization": true,
+    "runtime_requires_separate_authorization": true,
+    "prospective_collection_requires_separate_authorization": true
+  },
+  "search_boundary": {
+    "market": "JAPAN_DOMESTIC_CASH_COMMON_EQUITY",
+    "direction": "LONG_ONLY",
+    "board_lot_shares": 100,
+    "broker_execution_assumption": "AU_KABUCOM_CASH_BUY_WITH_SOR",
+    "candidate_evidence_cutoff": "ENTRY_DATE_08_30_00_JST_OR_EARLIER",
+    "decision_window": {
+      "timezone": "Asia/Tokyo",
+      "start_inclusive": "09:00:00",
+      "end_exclusive": "09:01:00",
+      "reference": "FIRST_VALID_ORDER_BOOK_BEST_ASK"
+    },
+    "minimum_holding_sessions": 1,
+    "maximum_holding_sessions": 20,
+    "llm_in_candidate_generation_or_decision": false,
+    "excluded": [
+      "ETF_OR_FUND",
+      "INDEX",
+      "FUTURE_OR_OPTION",
+      "MARGIN_OR_SHORT",
+      "LEVERAGE",
+      "FX_OR_CRYPTO",
+      "INTRADAY_ROUND_TRIP",
+      "MANUAL_DISCRETIONARY_ENTRY"
+    ]
+  },
+  "trial_budget": {
+    "cycle_id": "opportunity_router_v0_prospective_playbook_cycle",
+    "maximum_proposal_slots": 3,
+    "maximum_admitted_playbooks": 3,
+    "one_mechanism_and_one_parameter_version_per_slot": true,
+    "incomplete_withdrawn_failed_or_frozen_consumes_slot": true,
+    "post_outcome_change_consumes_new_slot": true,
+    "fallback_must_be_registered_before_prior_outcome": true,
+    "cycle_closes_after_all_slots_consumed": true,
+    "candidate_proposals": [],
+    "consumed_slots": 0,
+    "prohibited_candidates": [
+      "liqimp1m_logdiff_v0_research",
+      "imom6m_top5_fixed20_v0_research"
+    ],
+    "prohibited_rescue_families": [
+      "IMOM12M",
+      "SKIP_MONTH_IMOM",
+      "SIGN_REVERSED_IMOM",
+      "ALTERNATIVE_IMOM_QUANTILES",
+      "REGIME_CONDITIONED_IMOM",
+      "IMOM_QUALITY_OR_VALUE_COMBINATION"
+    ],
+    "existing_event_or_technical_implementation_auto_admitted": false
+  },
+  "candidate_intake_contract": {
+    "required_registration_fields": [
+      "source_id",
+      "source_version",
+      "session_definition",
+      "eligible_instrument_rule",
+      "detection_rule",
+      "required_source_ids",
+      "evidence_cutoff_rule",
+      "source_received_at_rule",
+      "deduplication_rule",
+      "candidate_id_rule",
+      "zero_candidate_rule",
+      "missing_or_late_data_rule"
+    ],
+    "snapshot_binding_fields": [
+      "intake_id",
+      "intake_version",
+      "intake_sha256",
+      "tse_session_date",
+      "calendar_version",
+      "eligible_instrument_ids_sorted",
+      "candidate_ids_sorted",
+      "input_artifact_hashes",
+      "candidate_count",
+      "zero_candidate",
+      "created_at",
+      "data_complete"
+    ],
+    "candidate_id_minimum_inputs": [
+      "source_id",
+      "source_version",
+      "instrument",
+      "detection_key",
+      "evidence_cutoff_at"
+    ],
+    "canonical_serialization": "UTF8_JSON_SORTED_KEYS_COMPACT",
+    "hash_algorithm": "SHA256",
+    "missing_or_late_data": "INVALID_SESSION_NO_ENTRY",
+    "population_mismatch": "POPULATION_HASH_MISMATCH_NO_ENTRY",
+    "zero_candidate_heartbeat_required": true,
+    "invalid_session_counts_as_performance_denominator": false,
+    "invalid_session_failure_heartbeat_required": true
+  },
+  "playbook_contract": {
+    "required_before_admission": [
+      "economic_mechanism",
+      "price_discovery_channel",
+      "falsifiable_claim",
+      "admissible_primary_facts",
+      "candidate_source",
+      "eligible_instrument_rule",
+      "evidence_cutoff",
+      "entry_conditions",
+      "dynamic_fit_clauses",
+      "context_conditions_and_numeric_thresholds",
+      "maximum_opening_gap_pct",
+      "stop_distance_pct",
+      "invalidation_contract",
+      "fixed_exit_contract",
+      "holding_sessions",
+      "no_fill_and_market_state_rules",
+      "source_schema_calendar_cost_assignment_capacity_versions"
+    ],
+    "maximum_opening_gap_pct_range": {
+      "exclusive_min": "0.00",
+      "inclusive_max": "0.10"
+    },
+    "stop_distance_pct_range": {
+      "inclusive_min": "0.02",
+      "inclusive_max": "0.10"
+    },
+    "holding_session_range": {
+      "inclusive_min": 1,
+      "inclusive_max": 20
+    },
+    "static_validity_uses_historical_performance": false,
+    "dynamic_fit_all_clauses_must_pass": true,
+    "unknown_is_no_trade": true
+  },
+  "decision_gates": {
+    "states": [
+      "PASS",
+      "FAIL",
+      "UNKNOWN"
+    ],
+    "weighted_average_score_allowed": false,
+    "all_gates_must_pass": true,
+    "evidence": {
+      "requires_complete_sources_receipts_effective_times_and_hashes": true,
+      "cutoff_violation": "UNKNOWN_NO_TRADE",
+      "late_data_backfill": false
+    },
+    "mechanism": {
+      "static_contract_hash_must_match": true,
+      "all_dynamic_fit_clauses_must_pass": true,
+      "contradictory_trigger": "FAIL"
+    },
+    "context": {
+      "all_registered_thresholds_must_pass": true,
+      "missing_or_multiple_context_match": "UNKNOWN"
+    },
+    "execution": {
+      "minimum_median_20_session_traded_value_jpy": 200000000,
+      "maximum_opening_snapshot_age_seconds": 5,
+      "maximum_spread_bps": "30",
+      "maximum_spread_ticks": 2,
+      "minimum_ask_depth": "PROPOSED_QUANTITY_WITHIN_FIRST_5_LEVELS",
+      "maximum_order_to_median_daily_traded_value_pct": "0.01",
+      "minimum_feasible_board_lots": 1,
+      "opening_gap_must_not_exceed_playbook_limit": true,
+      "crossed_locked_halted_special_quote_or_price_limit": "FAIL"
+    }
+  },
+  "shadow_risk_geometry": {
+    "capital_jpy": 2000000,
+    "risk_per_position_pct": "0.005",
+    "maximum_notional_per_position_pct": "0.20",
+    "maximum_concurrent_positions": 3,
+    "maximum_new_entries_per_tse_session": 1,
+    "same_instrument_concurrent_limit": 1,
+    "same_sector_concurrent_limit": 1,
+    "quantity_rule": "MIN_RISK_AND_NOTIONAL_QUANTITY_FLOORED_TO_100_SHARES",
+    "minimum_lot_failure": "NO_TRADE_KEEP_IN_POPULATION",
+    "gateway_remains_future_authoritative_risk_owner": true
+  },
+  "assignment_and_capacity": {
+    "zero_match": "NO_PLAYBOOK_MATCH",
+    "multiple_match": "AMBIGUOUS_PLAYBOOK",
+    "playbook_priority": "ASCENDING_PROPOSAL_SLOT_NUMBER",
+    "candidate_priority": "ASCENDING_SHA256_POLICY_HASH_SESSION_DATE_CANDIDATE_ID",
+    "final_tie_breaker": "CANDIDATE_ID_ASC",
+    "capacity_rejection_reason": "CAPACITY_REJECTED",
+    "arrival_order_or_human_or_llm_tie_breaker_allowed": false,
+    "missing_or_unreproducible_priority": "ALL_ELIGIBLE_NO_TRADE"
+  },
+  "outcome_contract": {
+    "entry": "FIRST_VALID_BEST_ASK_BETWEEN_09_00_00_AND_09_01_00_JST",
+    "late_entry_substitution": false,
+    "official_open_reconciliation_required": true,
+    "exit_precedence": [
+      "STOP_OR_INVALIDATION_WHEN_FIRST_TRIGGERED",
+      "FIXED_SESSION_CLOSE"
+    ],
+    "same_bar_adverse_first": true,
+    "unfillable_market_state_uses_fabricated_price": false,
+    "unfilled_position_daily_mtm_continues": true,
+    "drawdown_equity_curve": "DAILY_MARK_TO_MARKET_INCLUDING_OPEN_POSITIONS",
+    "promotion_review_all_positions_and_outcomes_finalized": true,
+    "deactivation_cancels_bound_exit": false,
+    "counterfactual_primary_comparison": "ENTER_SHADOW_VS_POLICY_EVALUABLE_NO_TRADE",
+    "same_execution_and_cost_rules_for_counterfactual": true,
+    "administrative_terminal_gets_outcome": false
+  },
+  "cost_contract": {
+    "currency": "JPY",
+    "tax_basis": "PRE_TAX",
+    "base_commission_bps_per_side": "9.9",
+    "base_additional_slippage_bps_per_side": "5",
+    "stress_additional_slippage_bps": {
+      "entry": "10",
+      "exit": "25"
+    },
+    "stress_replaces_base_additional_slippage": true,
+    "observed_spread_double_counted": false,
+    "base_and_stress_both_required": true
+  },
+  "blind_audit": {
+    "sequence": [
+      "IMMUTABLE_DECISION",
+      "AUTOMATED_CONTRACT_AUDIT",
+      "OUTCOME_BLINDED_PROCESS_AUDIT_LOCK",
+      "OUTCOME_DIAGNOSTIC_APPEND"
+    ],
+    "human_sample": {
+      "all_enter_shadow": true,
+      "policy_evaluable_no_trade_per_playbook_per_month": 5,
+      "no_trade_selection": "STABLE_HASH",
+      "all_hash_cutoff_schema_violations": true
+    },
+    "unreviewed_blocks_trading": false,
+    "unreviewed_blocks_promotion": true,
+    "correction_mode": "APPEND_ONLY_SUPERSEDES"
+  },
+  "sample_sufficiency": {
+    "minimum_eligible_tse_sessions": 120,
+    "minimum_completed_calendar_months": 6,
+    "minimum_finalized_economic_candidates_per_playbook": 30,
+    "minimum_executable_enter_shadow_per_playbook": 10,
+    "minimum_policy_evaluable_no_trade_per_playbook": 10,
+    "required_outcome_or_no_fill_completeness_pct": "1.00",
+    "required_blind_audit_sample_completeness_pct": "1.00",
+    "maximum_eligible_tse_sessions": 252,
+    "insufficient_at_maximum": "TERMINATED_INSUFFICIENT_SAMPLE",
+    "automatic_extension_or_threshold_relaxation": false
+  },
+  "promotion_request_gate": {
+    "effect_of_pass": "ELIGIBLE_TO_REQUEST_SEPARATE_PAPER_DESIGN_ONLY",
+    "aggregate": {
+      "base_net_pnl": ">0",
+      "base_profit_factor": ">1.2",
+      "max_drawdown_jpy": "<200000",
+      "stress_net_pnl": ">=0",
+      "stress_profit_factor": ">1.0",
+      "enter_expectancy_minus_policy_evaluable_no_trade_expectancy": ">0",
+      "major_process_violations_in_audited_enter": 0,
+      "single_instrument_gross_profit_contribution": "<0.40",
+      "single_sector_gross_profit_contribution": "<0.50"
+    },
+    "per_playbook": {
+      "base_net_pnl": ">0",
+      "base_profit_factor": ">1.0",
+      "max_drawdown_jpy": "<200000",
+      "sample_sufficiency": "PASS"
+    },
+    "minimum_passing_playbooks_for_router_adaptation_claim": 2,
+    "single_passing_playbook_is_router_evidence": false,
+    "undefined_profit_factor": "INSUFFICIENT_NOT_ARBITRARY_PASS",
+    "automatic_paper_or_live_promotion": false
+  },
+  "invalidation_and_termination": {
+    "immediate_cohort_invalidation": [
+      "FUTURE_DATA_OR_OUTCOME_LEAKAGE",
+      "POPULATION_OMISSION_OR_HASH_MISMATCH_COUNTED_AS_EVIDENCE",
+      "POST_DECISION_THRESHOLD_COST_PRIORITY_OR_EXIT_CHANGE",
+      "ACCEPTED_ONLY_OR_MISSING_ZERO_CANDIDATE_LEDGER",
+      "OUTCOME_DISCLOSED_BEFORE_PROCESS_AUDIT_LOCK"
+    ],
+    "performance_gate_fail": "FREEZE_POLICY_AND_PLAYBOOK_VERSION",
+    "new_version_after_failure_consumes_remaining_slot": true,
+    "cohort_reuse_for_new_version": false,
+    "continue_after_trial_budget": false
+  },
+  "position_lifecycle": {
+    "bind_at_entry": [
+      "policy_version",
+      "playbook_version",
+      "entry_contract_version",
+      "invalidation_contract_version",
+      "exit_contract_version",
+      "cost_contract_version"
+    ],
+    "deactivation_blocks_new_entry": true,
+    "deactivation_cancels_existing_exit_or_finalization": false,
+    "migrate_existing_position_to_new_version": false
+  },
+  "required_before_collection": [
+    "DESIGN_FREEZE_AUTHORIZATION",
+    "POST_2026_09_30_CANDIDATE_SEARCH_AUTHORIZATION",
+    "TRIAL_REGISTRY",
+    "CANDIDATE_INTAKE_REGISTRATION_AND_HASH",
+    "PLAYBOOK_STATIC_CONTRACT_AND_HASH",
+    "POLICY_ASSIGNMENT_CAPACITY_REGISTRATION_AND_HASH",
+    "OUTCOME_COST_AUDIT_SUFFICIENCY_REGISTRATION_AND_HASH",
+    "RUNTIME_IMPLEMENTATION_AUTHORIZATION",
+    "PROSPECTIVE_COLLECTION_AUTHORIZATION_WITH_EFFECTIVE_AND_EXPIRY"
+  ],
+  "authority_boundary": {
+    "design_drafting_authorized": true,
+    "design_frozen": false,
+    "candidate_search_authorized": false,
+    "candidate_ids_created": 0,
+    "trial_slots_consumed": 0,
+    "playbooks_admitted": 0,
+    "historical_or_forward_outcome_computation_authorized": false,
+    "runtime_or_external_integration_authorized": false,
+    "prospective_shadow_authorized": false,
+    "paper_or_live_authorized": false,
+    "project_kill_switch_changed": false,
+    "counts_as_2026_09_30_evidence": false
+  },
+  "project_kill_switch": {
+    "deadline": "2026-09-30",
+    "conditions_changed": false,
+    "router_design_or_future_evidence_counts_toward_current_adjudication": false,
+    "adjudication_may_be_deferred": false,
+    "if_triggered": "STOP_LIVE_STRATEGY_DEVELOPMENT_AND_REQUIRE_CAPITAL_SCALE_PLAN_AND_NEW_PROJECT_CHARTER_BEFORE_ROUTER_RESEARCH_RESUMES"
+  },
+  "next_authorization_required": {
+    "name": "FREEZE_OPPORTUNITY_ROUTER_PHASE2_DESIGN_V0",
+    "effect": "FREEZE_DESIGN_ONLY_NO_CANDIDATE_SEARCH_OR_COLLECTION",
+    "must_be_explicit": true
+  }
+}

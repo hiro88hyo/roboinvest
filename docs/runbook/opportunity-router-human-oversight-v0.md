@@ -157,12 +157,16 @@ Kill Switch条件を変更する場合は理由の文書化、明示確認、最
 - human operation activated: false
 - phase1 library implementation authorized: true
 - phase1 library implementation status: `IMPLEMENTED_NOT_ACTIVATED`
+- phase2 candidate-independent design drafting authorized: true
+- phase2 design status: `DRAFT_COMPLETE_AWAITING_EXPLICIT_FREEZE_AUTHORIZATION`
+- phase2 design frozen: false
 - policy or playbook admission authorized: false
 - runtime/external integration authorized: false
 - outcome computation authorized: false
 - shadow/paper/live authorized: false
 - Project Kill Switch changed: false
 
-次の人間の判断点は、個別取引ではなく`PLAYBOOK_ADMISSION_AND_FORWARD_EVIDENCE_DESIGN`を
-開始するかどうかである。開始しても、このrunbookとは別に候補探索budgetと全contractを
-固定し、明示認可を得るまでplaybookを採用しない。
+candidate非依存の`PLAYBOOK_ADMISSION_AND_FORWARD_EVIDENCE_DESIGN` draftは
+`docs/features/opportunity-router-phase2-admission-forward-evidence-design-v0.md`へ作成済みである。
+次の人間の判断点は同draftをfreezeするかどうかであり、freezeしてもcandidate選定、admission、
+runtime、prospective collectionを認可しない。

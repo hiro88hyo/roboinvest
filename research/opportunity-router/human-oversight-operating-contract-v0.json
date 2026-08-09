@@ -6,7 +6,7 @@
   "parent_router_charter": "policy_authorized_opportunity_router_v0",
   "bound_runbook": {
     "path": "docs/runbook/opportunity-router-human-oversight-v0.md",
-    "sha256": "e9d70005e112fd7d51908b560f02e22364d448ee809ae4f7e747124570313a78"
+    "sha256": "dbff56b8fbd8a6cdb5ff9a21ffe8d44fc72d85f4e4f0204ceb19092fb84afc02"
   },
   "operational_assumption": {
     "per_trade_human_response_is_timely": false,
@@ -120,11 +120,23 @@
     "gateway_may_force_earlier_risk_reduction": true,
     "reactivation_requires_new_authorization": true
   },
+  "phase2_design": {
+    "drafting_authorized": true,
+    "design_frozen": false,
+    "document_path": "docs/features/opportunity-router-phase2-admission-forward-evidence-design-v0.md",
+    "document_sha256": "08025510c9c9c36cbca7a67cfce1d729a2e240a761d8f470729ca31d5ae3ece2",
+    "contract_path": "research/opportunity-router/playbook-admission-forward-evidence-design-v0.json",
+    "contract_sha256": "5518ed421e9a009cf3240bb1659a7136b139adab9443aee21a59c68a1654918f",
+    "candidate_search_authorized": false,
+    "candidate_selection_before_2026_09_30_adjudication": false
+  },
   "current_state": {
     "admitted_playbooks": 0,
     "human_operation_activated": false,
     "phase1_library_implementation_authorized": true,
     "phase1_library_implementation_completed": true,
+    "phase2_design_drafting_authorized": true,
+    "phase2_design_frozen": false,
     "runtime_or_external_integration_authorized": false,
     "outcome_computation_authorized": false,
     "shadow_authorized": false,
@@ -138,6 +150,6 @@
     "manual_discretionary_sandbox_counts_as_evidence": false,
     "change_requires_documented_reason_explicit_confirmation_and_one_week_cooling_off": true
   },
-  "next_human_authorization_point": "START_PLAYBOOK_ADMISSION_AND_FORWARD_EVIDENCE_DESIGN",
+  "next_human_authorization_point": "FREEZE_OPPORTUNITY_ROUTER_PHASE2_DESIGN_V0",
   "research_only": true
 }

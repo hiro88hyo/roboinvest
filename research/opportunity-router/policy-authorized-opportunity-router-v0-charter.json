@@ -1,12 +1,12 @@
 {
   "charter_id": "policy_authorized_opportunity_router_v0",
   "created_at": "2026-08-09T00:17:28Z",
-  "status": "PHASE1_IMPLEMENTED_NOT_ACTIVATED",
+  "status": "PHASE1_IMPLEMENTED_PHASE2_DESIGN_DRAFT_AWAITING_FREEZE",
   "identity": "META_DECISION_PROCESS_NOT_ALPHA_CANDIDATE",
   "repository_baseline_commit": "e66866f2ced76cdf4647a65c7fd74c0ac50e16f5",
   "bound_plan": {
     "path": "docs/features/policy-authorized-opportunity-router-v0.md",
-    "sha256": "edfc8c5cb59d682b2249be24728cc999b90b6f6b02898617430d65f297081058"
+    "sha256": "7e79b4298cb940a87f291e54587b0b3bcdcafab8d6992a9ccfa9c4d6c54a8ffc"
   },
   "advisory_context": {
     "chatgpt_pro_shared_response": "https://chatgpt.com/s/t_6a77c0b9d0348191987f57ab5af1f8a5",
@@ -27,9 +27,9 @@
   },
   "human_oversight_contract": {
     "runbook_path": "docs/runbook/opportunity-router-human-oversight-v0.md",
-    "runbook_sha256": "e9d70005e112fd7d51908b560f02e22364d448ee809ae4f7e747124570313a78",
+    "runbook_sha256": "dbff56b8fbd8a6cdb5ff9a21ffe8d44fc72d85f4e4f0204ceb19092fb84afc02",
     "contract_path": "research/opportunity-router/human-oversight-operating-contract-v0.json",
-    "contract_sha256": "56755f25e579c50d1414e53b702b6ec322d5409c01ef23cbbef6502d3396c3ee",
+    "contract_sha256": "c002381efb807cbddd1855bf9d0181d7d0084c7f1851cda6646e9a2967a97e7a",
     "status": "PLAN_ONLY_NO_OPERATION_AUTHORITY",
     "human_operation_activated": false,
     "per_trade_human_action_required": false
@@ -47,6 +47,21 @@
     "existing_runtime_health_check_changed": false,
     "admitted_playbooks": 0,
     "fixture_enter_shadow_is_forward_collection": false
+  },
+  "phase2_design": {
+    "drafting_authorized": true,
+    "design_frozen": false,
+    "authorization_path": "research/opportunity-router/phase2-design-start-authorization.json",
+    "authorization_sha256": "050ad0dc3e60e7b80c957fd798079c153673a401d4b93941cb4f9a1b769c8b92",
+    "document_path": "docs/features/opportunity-router-phase2-admission-forward-evidence-design-v0.md",
+    "document_sha256": "08025510c9c9c36cbca7a67cfce1d729a2e240a761d8f470729ca31d5ae3ece2",
+    "contract_path": "research/opportunity-router/playbook-admission-forward-evidence-design-v0.json",
+    "contract_sha256": "5518ed421e9a009cf3240bb1659a7136b139adab9443aee21a59c68a1654918f",
+    "candidate_search_authorized": false,
+    "candidate_ids_created": 0,
+    "trial_slots_consumed": 0,
+    "candidate_selection_before_2026_09_30_adjudication": false,
+    "runtime_or_collection_authorized": false
   },
   "playbook_admission": {
     "maximum_active_playbooks": 3,
@@ -72,6 +87,7 @@
   },
   "candidate_intake_contract": {
     "fixed": false,
+    "candidate_independent_design_drafted": true,
     "phase1_version_and_hash_binding_implemented": true,
     "must_be_fixed_before_playbook_admission": true,
     "required_fields": [
@@ -214,6 +230,7 @@
     "outcome_horizon_fixed": false,
     "cost_model_fixed": false,
     "promotion_and_freeze_thresholds_fixed": false,
+    "candidate_independent_design_drafted": true,
     "collection_started": false,
     "candidate_metrics_include_accepted_rejected_and_zero_candidate_days": true
   },
@@ -277,6 +294,9 @@
     "playbook_admission_authorized": false,
     "phase1_implementation_authorized": true,
     "phase1_implementation_completed": true,
+    "phase2_design_drafting_authorized": true,
+    "phase2_design_frozen": false,
+    "candidate_search_authorized": false,
     "runtime_or_external_integration_authorized": false,
     "historical_outcome_computation_authorized": false,
     "forward_outcome_computation_authorized": false,
@@ -309,9 +329,9 @@
     "paper_or_live_before_adjudication_authorized": false
   },
   "next_authorization_required": {
-    "name": "PLAYBOOK_ADMISSION_AND_FORWARD_EVIDENCE_DESIGN",
+    "name": "FREEZE_OPPORTUNITY_ROUTER_PHASE2_DESIGN_V0",
     "must_precede_candidate_selection": true,
-    "must_fix": [
+    "draft_contains": [
       "candidate playbook search boundary and maximum trial budget",
       "candidate intake and upstream population hash contract",
       "playbook static validity and candidate dynamic fit",
@@ -323,7 +343,9 @@
       "position version binding and deactivation lifecycle",
       "cost model and sample sufficiency",
       "promotion freeze and termination rules"
-    ]
+    ],
+    "effect": "FREEZE_DESIGN_ONLY_NO_CANDIDATE_SEARCH_RUNTIME_OR_COLLECTION",
+    "candidate_selection_earliest": "AFTER_2026_09_30_PROJECT_KILL_SWITCH_ADJUDICATION_AND_SEPARATE_AUTHORIZATION"
   },
   "research_only": true,
   "paper_live_enabled": false

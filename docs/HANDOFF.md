@@ -77,7 +77,10 @@
   取引時には規則を変えず、月次監査と四半期の別認可で将来versionだけを見直す。
   Phase 2前にcandidate intake/population hash、static mechanism対dynamic fit、複数playbook
   assignment、capacity resolution、counterfactual class、outcome-blind process review、
-  position version/exit lifecycleを固定する。未固定・競合・tieはfail-closed。
+  position version/exit lifecycleを固定する。candidate非依存のPhase 2 design v0 draftは
+  `docs/features/opportunity-router-phase2-admission-forward-evidence-design-v0.md`と
+  `research/opportunity-router/playbook-admission-forward-evidence-design-v0.json`へ作成済みだが、
+  freezeは未承認。未固定・競合・tieはfail-closed。
   人間は通常営業日・市場中の操作を要せず、事前認可、blind process audit、月次監査、
   四半期改版、リスク削減停止だけを担う。運用正本は
   `docs/runbook/opportunity-router-human-oversight-v0.md`と
@@ -86,6 +89,8 @@
   決定論的capacity、冪等なhash-chain local JSONL ledgerをlibrary-onlyで実装した。
   CLI/runtime/外部I/Oはなく、既存9 serviceのhealth-check対象にも追加しない。playbook選定、
   outcome計算、forward収集、shadow、paper/liveは未承認で、現行Kill Switchとは分離する。
+  新candidate IDと選定は9/30判定後かつ別認可まで禁止し、design freeze、candidate search、
+  runtime、収集を別々の認可点にする。
   正本は `docs/features/policy-authorized-opportunity-router-v0.md` と
   `research/opportunity-router/policy-authorized-opportunity-router-v0-charter.json`。
 

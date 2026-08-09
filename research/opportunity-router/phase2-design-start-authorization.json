@@ -1,0 +1,27 @@
+{
+  "authorization_id": "opportunity_router_phase2_design_start_20260809",
+  "recorded_at": "2026-08-09T07:52:36Z",
+  "actor": "user",
+  "authorization_statement": "続けて",
+  "interpreted_authority": "START_PLAYBOOK_ADMISSION_AND_FORWARD_EVIDENCE_DESIGN_ONLY",
+  "repository_baseline_commit": "cc7dcc73cf0865e08f6c39b80a12ec20dd10b70b",
+  "authorized_actions": [
+    "review existing repository evidence and frozen boundaries",
+    "draft a candidate-independent playbook search and trial-budget contract",
+    "draft candidate-intake, gate, capacity, cost, outcome, audit, sufficiency, and termination contracts",
+    "record the draft in documentation and machine-readable local JSON"
+  ],
+  "not_authorized": {
+    "create_strategy_candidate_id": false,
+    "select_or_rank_playbook_candidate": false,
+    "admit_playbook": false,
+    "run_phase1_router_on_non_fixture_data": false,
+    "historical_or_forward_outcome_computation": false,
+    "prospective_collection": false,
+    "runtime_or_external_io_implementation": false,
+    "shadow_paper_or_live": false,
+    "change_project_kill_switch": false
+  },
+  "required_followup": "The completed design draft requires a separate explicit freeze authorization. Candidate selection remains prohibited before the 2026-09-30 Project Kill Switch adjudication and requires another authorization.",
+  "authorization_status": "ACTIVE_FOR_DESIGN_DRAFT_ONLY"
+}
