@@ -73,6 +73,8 @@
   方式。`WAITING_HUMAN`やpositive per-trade overrideは作らず、欠測・曖昧・期限切れ・
   failureは`NO_TRADE`。初期admitted playbookは0、上限3で、棄却済みLIQIMP/IMOM6M、
   既存event/technicalを自動採用しない。Gatewayは引き続き唯一の最終risk執行者。
+  全candidateと候補ゼロを保存し、損益と判断品質を分けたappend-only reviewを行う。
+  取引時には規則を変えず、月次監査と四半期の別認可で将来versionだけを見直す。
   playbook選定、実装、outcome計算、shadow、paper/liveは未承認で、現行Kill Switchとは
   分離する。正本は `docs/features/policy-authorized-opportunity-router-v0.md` と
   `research/opportunity-router/policy-authorized-opportunity-router-v0-charter.json`。

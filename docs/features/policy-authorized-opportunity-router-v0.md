@@ -154,6 +154,38 @@ source_provenance: []
 ことを防ぐため、全candidateのdecisionと、将来認可された場合のcounterfactual outcomeを
 同じ母集団で追跡する。
 
+## Async Review And Learning Contract
+
+人間が案件時刻に立ち会えなくても、判断品質の改善は非同期に行える。損益と判断品質を
+混同せず、`ENTER_SHADOW`だけでなく`NO_TRADE / EXPIRED / DUPLICATE /
+POLICY_DISABLED`と候補ゼロも同じdecision cohortに残す。
+
+outcome確定後のreviewは元のdecisionを変更せず、別のappend-only recordとして紐づける。
+少なくとも次の軸を、観測事実、事前規則への適合、結果の三つに分けて評価する。
+
+- hypothesis: 想定した価格反映mechanismと反証条件は妥当だったか
+- information: 必須事実の欠落、推測の事実扱い、cutoff違反がなかったか
+- context: playbookを適用できる局面だったか
+- timing: 早過ぎ、遅過ぎ、許容gap超過がなかったか
+- execution: spread、depth、lot、流動性、sessionが結果へ与えた影響
+- size: 事前のfixed notional/riskと集中上限に適合したか
+- discipline: invalidation、exit、expiry、Gateway判断を守ったか
+
+利益になってもprocess違反なら良い判断としない。損失でも事前contractへ適合していれば、
+単独事例を理由にplaybookを変更しない。自信度はbucket別にcalibrationし、高confidenceが
+実際に高い費用控除後expectancyへ対応したかを見る。
+
+review cadenceは次を初期案とする。
+
+- decision/outcome確定時: システムが事実、reason code、逸脱だけを追記し、規則を変えない
+- monthly: 人間が採用対非採用、confidence calibration、gate別傾向、playbook別傾向を監査する
+- quarterly: 十分性contractを満たした版だけを継続、version更新、retire候補として審査する
+- new hypothesis: 現役playbookへ混ぜず、別research ledgerから新versionのprospective shadow候補へ進める
+
+月次・四半期reviewは売買を待たせない。policy/playbookの変更は常に将来有効な新versionと
+別認可を必要とし、単一の大勝ち・大負け、事後的なregime名、却下案件の見逃し利益だけで
+activationしない。`WATCH`相当の再観測も注文待ち状態にはせず、新cutoffの別decisionとする。
+
 ## Architecture Boundary
 
 現時点では既存Aggregatorをrouterとして改造しない。AggregatorはRule/AIの同一
@@ -193,6 +225,8 @@ source_provenance: []
 - confidence bucket別の費用控除後expectancy
 - acceptedとrejected candidateのcounterfactual outcome差
 - playbook別expectancy、MAE/MFE、hold期間乖離
+- hypothesis、information、context、timing、execution、size、discipline別の逸脱率
+- process-compliant win/lossとprocess-violating win/lossの分離
 - 最大drawdown、instrument/playbook/sectorへの依存
 - policy version別成績と停止理由
 

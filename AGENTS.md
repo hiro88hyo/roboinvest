@@ -166,6 +166,8 @@ kill switch の期限・条件や現行 live/paper 戦略を変更しない。
   entryを生成しない。
 - 人間の不応答は判断へ影響せず、`WAITING_HUMAN`を作らない。人間は将来policyの事前承認、
   非同期監査、リスク削減方向の停止だけを担い、`NO_TRADE`からのpositive overrideは禁止。
+- 全candidateと候補ゼロを保存し、損益と判断品質を分けたappend-only reviewを行う。
+  取引時には規則を変えず、月次監査と四半期の別認可で将来versionだけを見直す。
 - Gatewayが最終risk執行者である既存境界を維持する。Aggregator、contract、Pub/Sub、DB、
   Dashboardは未変更。実装、playbook選定、outcome計算、shadow、paper/liveは未承認。
 - このmeta-processは現行Kill Switchの救済・証拠ではない。正本は

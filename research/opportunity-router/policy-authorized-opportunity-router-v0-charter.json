@@ -6,10 +6,11 @@
   "repository_baseline_commit": "e66866f2ced76cdf4647a65c7fd74c0ac50e16f5",
   "bound_plan": {
     "path": "docs/features/policy-authorized-opportunity-router-v0.md",
-    "sha256": "0bbd2d5e1e451301134612c43e24518bc3235db98f06da2bd81f333a8c7bf0ef"
+    "sha256": "63786f0dc9b3674755c137be610f46cc66b67c711b7b837b7d388486bf9f381b"
   },
   "advisory_context": {
     "chatgpt_pro_shared_response": "https://chatgpt.com/s/t_6a77c0b9d0348191987f57ab5af1f8a5",
+    "chatgpt_pro_learning_loop_response": "https://chatgpt.com/s/t_6a77c8f87c208191bfcc11dd95408018",
     "advisory_is_evidence": false,
     "user_operational_constraint": "PER_TRADE_HUMAN_DECISIONS_CANNOT_BE_ASSUMED_TIMELY"
   },
@@ -122,6 +123,31 @@
     "promotion_and_freeze_thresholds_fixed": false,
     "collection_started": false,
     "candidate_metrics_include_accepted_rejected_and_zero_candidate_days": true
+  },
+  "review_and_learning": {
+    "review_is_asynchronous_and_non_blocking": true,
+    "original_decision_is_immutable": true,
+    "review_record_is_append_only": true,
+    "profit_loss_is_not_a_proxy_for_decision_quality": true,
+    "review_population_includes_all_terminal_decisions_and_zero_candidate_sessions": true,
+    "review_axes": [
+      "HYPOTHESIS",
+      "INFORMATION",
+      "CONTEXT",
+      "TIMING",
+      "EXECUTION",
+      "SIZE",
+      "DISCIPLINE"
+    ],
+    "review_cadence": {
+      "decision_or_outcome_finalization": "RECORD_FACTS_REASON_CODES_AND_DEVIATIONS_ONLY",
+      "monthly": "AUDIT_COHORTS_CALIBRATION_AND_CROSS_CASE_PATTERNS",
+      "quarterly": "REVIEW_CONTINUE_NEW_VERSION_OR_RETIRE_UNDER_SEPARATE_AUTHORIZATION",
+      "new_hypothesis": "SEPARATE_RESEARCH_LEDGER_THEN_NEW_VERSION_PROSPECTIVE_SHADOW_CANDIDATE"
+    },
+    "single_win_or_loss_can_change_active_policy": false,
+    "outcome_observation_can_relabel_original_playbook_or_decision": false,
+    "review_can_create_positive_per_trade_override": false
   },
   "phase_authority": {
     "plan_recording_authorized": true,
