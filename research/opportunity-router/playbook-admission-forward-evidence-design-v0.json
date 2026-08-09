@@ -1,7 +1,7 @@
 {
   "design_id": "opportunity_router_playbook_admission_forward_evidence_design_v0",
   "created_at": "2026-08-09T07:52:36Z",
-  "status": "DRAFT_COMPLETE_AWAITING_EXPLICIT_FREEZE_AUTHORIZATION",
+  "status": "FROZEN_DESIGN_ONLY_NOT_ACTIVATED",
   "identity": "CANDIDATE_INDEPENDENT_DESIGN_NOT_ALPHA_NOT_EVIDENCE",
   "design_start_authorization": {
     "path": "research/opportunity-router/phase2-design-start-authorization.json",
@@ -9,12 +9,20 @@
     "statement": "続けて",
     "interpreted_authority": "START_PLAYBOOK_ADMISSION_AND_FORWARD_EVIDENCE_DESIGN_ONLY"
   },
+  "design_freeze_authorization": {
+    "path": "research/opportunity-router/phase2-design-freeze-authorization.json",
+    "sha256": "76fc868d1e199f62818ff0d8d0f512f81a3814cac05461d0b7bbe7bb218acac4",
+    "statement": "Phase 2設計v0をfreezeする。candidate選定・runtime実装・収集は認可しない。",
+    "frozen_at": "2026-08-09T08:15:03Z",
+    "interpreted_authority": "FREEZE_CURRENT_DESIGN_V0_ONLY_NO_CANDIDATE_RUNTIME_OR_COLLECTION"
+  },
   "bound_design_document": {
     "path": "docs/features/opportunity-router-phase2-admission-forward-evidence-design-v0.md",
-    "sha256": "08025510c9c9c36cbca7a67cfce1d729a2e240a761d8f470729ca31d5ae3ece2"
+    "sha256": "b1e090a9aeaef0fc0c0d5a7fd56b0f6e7bb31b1a3cd14563a09768118d8be850"
   },
   "temporal_boundary": {
     "design_may_be_frozen_before_project_adjudication": true,
+    "design_frozen_at": "2026-08-09T08:15:03Z",
     "candidate_selection_before_2026_09_30_adjudication": false,
     "candidate_selection_requires_separate_authorization": true,
     "runtime_requires_separate_authorization": true,
@@ -330,7 +338,7 @@
   ],
   "authority_boundary": {
     "design_drafting_authorized": true,
-    "design_frozen": false,
+    "design_frozen": true,
     "candidate_search_authorized": false,
     "candidate_ids_created": 0,
     "trial_slots_consumed": 0,
@@ -350,8 +358,13 @@
     "if_triggered": "STOP_LIVE_STRATEGY_DEVELOPMENT_AND_REQUIRE_CAPITAL_SCALE_PLAN_AND_NEW_PROJECT_CHARTER_BEFORE_ROUTER_RESEARCH_RESUMES"
   },
   "next_authorization_required": {
-    "name": "FREEZE_OPPORTUNITY_ROUTER_PHASE2_DESIGN_V0",
-    "effect": "FREEZE_DESIGN_ONLY_NO_CANDIDATE_SEARCH_OR_COLLECTION",
-    "must_be_explicit": true
+    "name": "POST_2026_09_30_CANDIDATE_SEARCH_AUTHORIZATION",
+    "effect": "AUTHORIZE_CANDIDATE_SEARCH_ONLY_NO_RUNTIME_OUTCOME_OR_COLLECTION",
+    "must_be_explicit": true,
+    "not_before": "2026_09_30_PROJECT_KILL_SWITCH_ADJUDICATION_COMPLETED",
+    "if_project_kill_switch_triggered_prerequisites": [
+      "CAPITAL_SCALE_PLAN_AUTHORIZED",
+      "NEW_PROJECT_CHARTER_AUTHORIZED"
+    ]
   }
 }

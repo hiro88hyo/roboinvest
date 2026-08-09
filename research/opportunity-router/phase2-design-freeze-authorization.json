@@ -1,0 +1,33 @@
+{
+  "authorization_id": "opportunity_router_phase2_design_v0_freeze_20260809",
+  "recorded_at": "2026-08-09T08:15:03Z",
+  "effective_at": "2026-08-09T08:15:03Z",
+  "actor": "user",
+  "authorization_statement": "Phase 2設計v0をfreezeする。candidate選定・runtime実装・収集は認可しない。",
+  "repository_baseline_commit": "6edf74dd595b580dba73546b5da6dd251a231c9a",
+  "target": {
+    "design_id": "opportunity_router_playbook_admission_forward_evidence_design_v0",
+    "draft_document_path": "docs/features/opportunity-router-phase2-admission-forward-evidence-design-v0.md",
+    "draft_document_sha256": "08025510c9c9c36cbca7a67cfce1d729a2e240a761d8f470729ca31d5ae3ece2",
+    "draft_contract_path": "research/opportunity-router/playbook-admission-forward-evidence-design-v0.json",
+    "draft_contract_sha256": "5518ed421e9a009cf3240bb1659a7136b139adab9443aee21a59c68a1654918f"
+  },
+  "authorized_actions": [
+    "FREEZE_CURRENT_PHASE2_DESIGN_V0_VALUES_AND_BOUNDARIES",
+    "RECORD_FREEZE_STATE_AND_UPDATE_DOCUMENT_HASH_BINDINGS"
+  ],
+  "authority_boundary": {
+    "design_freeze_authorized": true,
+    "candidate_search_or_selection_authorized": false,
+    "candidate_id_creation_authorized": false,
+    "proposal_slot_consumption_authorized": false,
+    "playbook_admission_authorized": false,
+    "runtime_or_external_integration_implementation_authorized": false,
+    "historical_or_forward_outcome_computation_authorized": false,
+    "prospective_collection_or_shadow_authorized": false,
+    "paper_or_live_authorized": false,
+    "project_kill_switch_change_authorized": false
+  },
+  "effect": "DESIGN_FROZEN_ONLY_NOT_ACTIVATED",
+  "status": "ACTIVE_FOR_DESIGN_FREEZE_ONLY"
+}

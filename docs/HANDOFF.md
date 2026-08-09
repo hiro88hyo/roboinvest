@@ -1,6 +1,6 @@
 # Handoff Memo (for coding AIs)
 
-最終更新: 2026-08-08
+最終更新: 2026-08-09
 
 このファイルは、次の coding AI が最初に読むための短い索引です。日次の長い運用ログはここに積まず、必要な詳細だけリンク先で確認してください。
 
@@ -77,10 +77,11 @@
   取引時には規則を変えず、月次監査と四半期の別認可で将来versionだけを見直す。
   Phase 2前にcandidate intake/population hash、static mechanism対dynamic fit、複数playbook
   assignment、capacity resolution、counterfactual class、outcome-blind process review、
-  position version/exit lifecycleを固定する。candidate非依存のPhase 2 design v0 draftは
+  position version/exit lifecycleを固定する。candidate非依存のPhase 2 design v0は
   `docs/features/opportunity-router-phase2-admission-forward-evidence-design-v0.md`と
-  `research/opportunity-router/playbook-admission-forward-evidence-design-v0.json`へ作成済みだが、
-  freezeは未承認。未固定・競合・tieはfail-closed。
+  `research/opportunity-router/playbook-admission-forward-evidence-design-v0.json`でfreeze済み。
+  freezeはcandidate選定、admission、runtime、outcome計算、収集を認可しない。競合・tieは
+  fail-closed。
   人間は通常営業日・市場中の操作を要せず、事前認可、blind process audit、月次監査、
   四半期改版、リスク削減停止だけを担う。運用正本は
   `docs/runbook/opportunity-router-human-oversight-v0.md`と

@@ -2,7 +2,7 @@
 
 作成日: 2026-08-09
 
-Status: `DRAFT_COMPLETE_AWAITING_EXPLICIT_FREEZE_AUTHORIZATION`
+Status: `FROZEN_DESIGN_ONLY_NOT_ACTIVATED`
 
 Identity: `opportunity_router_playbook_admission_forward_evidence_design_v0`
 
@@ -12,8 +12,12 @@ Identity: `opportunity_router_playbook_admission_forward_evidence_design_v0`
 `PLAYBOOK_ADMISSION_AND_FORWARD_EVIDENCE_DESIGN`開始だけの認可として記録する。認可記録は
 `research/opportunity-router/phase2-design-start-authorization.json`である。
 
+ユーザーは2026-08-09に「Phase 2設計v0をfreezeする。candidate選定・runtime実装・収集は
+認可しない。」と明示した。freeze認可記録は
+`research/opportunity-router/phase2-design-freeze-authorization.json`である。
+
 この文書は、candidateを見る前に探索回数、入力母集団、gate、cost、outcome、監査、十分性、
-停止条件を固定するためのdraftである。次を認可しない。
+停止条件を固定した設計正本である。freezeは次を認可しない。
 
 - strategy candidate IDの作成、候補の選定・順位付け、playbook admission
 - Phase 1 routerをfixture以外のhistorical/forward inputへ実行すること
@@ -23,10 +27,10 @@ Identity: `opportunity_router_playbook_admission_forward_evidence_design_v0`
 - 2026-09-30 Project Kill Switchの条件、期限、証拠cohortの変更
 
 `portfolio_researchability_reset_2026_v0`は9月30日の判定前に新しいstrategy candidateを
-作らないと固定している。このため、本draftを将来freezeしてもcandidate選定は9月30日判定後かつ
+作らないと固定している。このため、本設計をfreezeしてもcandidate選定は9月30日判定後かつ
 別の明示認可後でなければ開始しない。
 
-## Proposed V0 Search Boundary
+## Frozen V0 Search Boundary
 
 最初のrouter cycleは、比較可能性と実行可能性を優先して次へ限定する。
 
@@ -332,7 +336,7 @@ AGENTS.mdに従ってlive strategy developmentを停止する。その後router�
 ## Approval State
 
 - design drafting authorized: true
-- design frozen: false
+- design frozen: true
 - candidate search authorized: false
 - candidate IDs created: 0
 - trial slots consumed: 0 of 3
@@ -343,5 +347,6 @@ AGENTS.mdに従ってlive strategy developmentを停止する。その後router�
 - paper/live authorized: false
 - Project Kill Switch changed: false
 
-このdraftをfreezeするには、数値と境界を確認した別の明示認可が必要である。freeze後も
-candidate search、runtime実装、prospective collectionはそれぞれ別認可とする。
+この設計の数値と境界はfreeze済みである。変更は新versionと別の明示認可を必要とし、v0を
+上書きしない。candidate searchは2026-09-30 Project Kill Switch判定後、かつ別の明示認可まで
+開始しない。runtime実装、outcome計算、prospective collectionもそれぞれ別認可とする。

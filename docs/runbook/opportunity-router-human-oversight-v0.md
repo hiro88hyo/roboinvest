@@ -158,15 +158,16 @@ Kill Switch条件を変更する場合は理由の文書化、明示確認、最
 - phase1 library implementation authorized: true
 - phase1 library implementation status: `IMPLEMENTED_NOT_ACTIVATED`
 - phase2 candidate-independent design drafting authorized: true
-- phase2 design status: `DRAFT_COMPLETE_AWAITING_EXPLICIT_FREEZE_AUTHORIZATION`
-- phase2 design frozen: false
+- phase2 design status: `FROZEN_DESIGN_ONLY_NOT_ACTIVATED`
+- phase2 design frozen: true
 - policy or playbook admission authorized: false
 - runtime/external integration authorized: false
 - outcome computation authorized: false
 - shadow/paper/live authorized: false
 - Project Kill Switch changed: false
 
-candidate非依存の`PLAYBOOK_ADMISSION_AND_FORWARD_EVIDENCE_DESIGN` draftは
-`docs/features/opportunity-router-phase2-admission-forward-evidence-design-v0.md`へ作成済みである。
-次の人間の判断点は同draftをfreezeするかどうかであり、freezeしてもcandidate選定、admission、
-runtime、prospective collectionを認可しない。
+candidate非依存の`PLAYBOOK_ADMISSION_AND_FORWARD_EVIDENCE_DESIGN` v0は
+`docs/features/opportunity-router-phase2-admission-forward-evidence-design-v0.md`でfreeze済みである。
+freezeはcandidate選定、admission、runtime、outcome計算、prospective collectionを認可しない。
+次の人間の判断点は2026-09-30 Project Kill Switch判定完了後のcandidate search認可であり、
+trigger時は資本スケール計画と新project charterの認可を先に必要とする。

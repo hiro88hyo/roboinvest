@@ -8,9 +8,10 @@ and a local append-only JSONL decision ledger.
 The package is library-only. Do not add a CLI, daemon, Pub/Sub, Supabase, Dashboard, Aggregator,
 Gateway, OMS, paper, or live connection without a separate authorization.
 
-The candidate-independent Phase 2 design draft does not expand this package's implementation
-authority. Candidate selection remains prohibited until after the 2026-09-30 adjudication and a
-separate authorization.
+The candidate-independent Phase 2 design v0 is frozen but not activated. Its freeze does not
+expand this package's implementation authority or authorize outcome computation or collection.
+Candidate selection remains prohibited until after the 2026-09-30 adjudication and a separate
+authorization.
 
 ## Boundaries
 

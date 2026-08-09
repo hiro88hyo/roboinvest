@@ -2,7 +2,7 @@
 
 作成日: 2026-08-09
 
-Status: `PHASE1_IMPLEMENTED_PHASE2_DESIGN_DRAFT_AWAITING_FREEZE`
+Status: `PHASE1_IMPLEMENTED_PHASE2_DESIGN_FROZEN_NOT_ACTIVATED`
 
 ## Purpose
 
@@ -20,10 +20,12 @@ unit testだけを含むPhase 1を明示認可した。認可記録は
 
 ユーザーの同日の「続けて」は、candidate非依存の
 `PLAYBOOK_ADMISSION_AND_FORWARD_EVIDENCE_DESIGN`をdraftする認可として限定解釈した。
-設計開始記録は`research/opportunity-router/phase2-design-start-authorization.json`、draft正本は
+設計開始記録は`research/opportunity-router/phase2-design-start-authorization.json`、設計正本は
 `docs/features/opportunity-router-phase2-admission-forward-evidence-design-v0.md`と
 `research/opportunity-router/playbook-admission-forward-evidence-design-v0.json`である。
-設計はまだfreezeされておらず、candidate選定、admission、runtime、収集を認可しない。
+ユーザーは同日に設計v0だけを明示的にfreezeした。freeze認可記録は
+`research/opportunity-router/phase2-design-freeze-authorization.json`である。candidate選定、
+admission、runtime、outcome計算、収集は認可しない。
 
 Phase 1を超える次のいずれも認可しない。
 
@@ -348,18 +350,18 @@ runtime service、topic、subscription、table、外部contractの要否はPhase
 - 最大drawdown、instrument/playbook/sectorへの依存
 - policy version別成績と停止理由
 
-sample size、outcome horizon、cost、pass/fail threshold、shadow期間はまだ固定しない。
-これらを決める前にforward collectionを開始してはならない。
+sample size、outcome horizon、cost、pass/fail threshold、shadow期間はPhase 2 design v0で
+freeze済みである。これはforward collectionの開始認可ではない。
 
 ## Authority Boundary
 
-現在の権限はPhase 1の隔離されたlibrary実装と、candidate非依存のPhase 2設計draftまでである。
+現在の権限はPhase 1の隔離されたlibrary実装と、candidate非依存のPhase 2設計freezeまでである。
 
 - phase1 implementation authorized: true
 - phase1 implementation status: `IMPLEMENTED_NOT_ACTIVATED`
 - phase2 design drafting authorized: true
-- phase2 design status: `DRAFT_COMPLETE_AWAITING_EXPLICIT_FREEZE_AUTHORIZATION`
-- phase2 design frozen: false
+- phase2 design status: `FROZEN_DESIGN_ONLY_NOT_ACTIVATED`
+- phase2 design frozen: true
 - runtime/external integration authorized: false
 - playbook admission authorized: false
 - historical or forward outcome computation authorized: false
@@ -372,9 +374,10 @@ sample size、outcome horizon、cost、pass/fail threshold、shadow期間はま�
 Phase 1 codeをfixture以外のhistorical/forward candidateへ実行してledgerを収集することは、
 この認可に含まれない。現行9/30 readiness pipelineとそのartifact/hash chainは変更しない。
 
-上記の未固定項目はPhase 2 design v0 draftへ明示した。次へ進むには同draftを別の明示認可で
-freezeする。freezeしてもcandidate選定は2026-09-30 Project Kill Switch判定後かつ別認可まで
-開始せず、admission、runtime、prospective collectionもそれぞれ別認可とする。
+Phase 2 design v0はfreeze済みであり、変更はv0の上書きではなく新versionと別認可を必要とする。
+candidate選定は2026-09-30 Project Kill Switch判定後かつ別認可まで開始せず、admission、
+runtime、outcome計算、prospective collectionもそれぞれ別認可とする。Kill Switchがtriggerした
+場合は、資本スケール計画と新project charterの認可をcandidate searchより先に必要とする。
 現行戦略、既存event shadow、ETF Phase 3 NO-GOはそのまま維持する。
 
 将来、人間が案件選択を楽しむlaneを設ける場合は`manual_discretionary_sandbox`としてrouterと
