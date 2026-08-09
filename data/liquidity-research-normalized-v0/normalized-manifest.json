@@ -1,0 +1,997 @@
+{
+  "datasets": {
+    "equities_bars_daily": {
+      "completed_fetch_count": 1196,
+      "first_date": "2021-08-10",
+      "last_date": "2026-06-30",
+      "metadata_row_count": 1196,
+      "null_trading_row_count": 192761,
+      "null_turnover_row_count": 192761,
+      "partition_count": 59,
+      "partitions": [
+        {
+          "byte_size": 1919794,
+          "first_date": "2021-08-10",
+          "last_date": "2021-08-31",
+          "path": "bars/bars-2021-08.parquet",
+          "row_count": 66118,
+          "sha256": "d6351fee03a3aff8e44d172c152fcd9a60aaaa7d958f24882edaa6b3e815ec35"
+        },
+        {
+          "byte_size": 2407871,
+          "first_date": "2021-09-01",
+          "last_date": "2021-09-30",
+          "path": "bars/bars-2021-09.parquet",
+          "row_count": 82610,
+          "sha256": "952cde8a880351bddbb59699c5b773d58ef517899fcc14bfcc4f620391bf5c3b"
+        },
+        {
+          "byte_size": 2507711,
+          "first_date": "2021-10-01",
+          "last_date": "2021-10-29",
+          "path": "bars/bars-2021-10.parquet",
+          "row_count": 86784,
+          "sha256": "10c9a00c0950697befd8523b9fd953c5460de061bd6669d8cab44cd34d52054d"
+        },
+        {
+          "byte_size": 2402065,
+          "first_date": "2021-11-01",
+          "last_date": "2021-11-30",
+          "path": "bars/bars-2021-11.parquet",
+          "row_count": 82651,
+          "sha256": "0bc1bc413d65bf2a55fe62b9f95e877c0b049114b7b9dd5d45b1a4d2f00be082"
+        },
+        {
+          "byte_size": 2657695,
+          "first_date": "2021-12-01",
+          "last_date": "2021-12-30",
+          "path": "bars/bars-2021-12.parquet",
+          "row_count": 91281,
+          "sha256": "3040b9a93a08e6bb620352e5b334cf3e439dcb27a71f305ae834d7566d4dad77"
+        },
+        {
+          "byte_size": 2317632,
+          "first_date": "2022-01-04",
+          "last_date": "2022-01-31",
+          "path": "bars/bars-2022-01.parquet",
+          "row_count": 79270,
+          "sha256": "be94a0d468568760f23085f9d283cc3e77df4cfca6adc485f1510f752222f54b"
+        },
+        {
+          "byte_size": 2207762,
+          "first_date": "2022-02-01",
+          "last_date": "2022-02-28",
+          "path": "bars/bars-2022-02.parquet",
+          "row_count": 75216,
+          "sha256": "7672311e953d2e5aba924c9be83c6264f0e71cc88acaed30696eb4c22de893ab"
+        },
+        {
+          "byte_size": 2695123,
+          "first_date": "2022-03-01",
+          "last_date": "2022-03-31",
+          "path": "bars/bars-2022-03.parquet",
+          "row_count": 91998,
+          "sha256": "1c73f53b3b28d8516b0ac027d27cc82327878f0d1f9c2faee6836f46f7ddae25"
+        },
+        {
+          "byte_size": 2430294,
+          "first_date": "2022-04-01",
+          "last_date": "2022-04-28",
+          "path": "bars/bars-2022-04.parquet",
+          "row_count": 83645,
+          "sha256": "8f1b426b495164e84abf41230757162304d8ca08bfaa58fa8fbf69b794013ea9"
+        },
+        {
+          "byte_size": 2315052,
+          "first_date": "2022-05-02",
+          "last_date": "2022-05-31",
+          "path": "bars/bars-2022-05.parquet",
+          "row_count": 79460,
+          "sha256": "fe2ba223f35c984b2bb3f6fd109a3d1720756a9d9c61e99e6f0a3ff980a68701"
+        },
+        {
+          "byte_size": 2668218,
+          "first_date": "2022-06-01",
+          "last_date": "2022-06-30",
+          "path": "bars/bars-2022-06.parquet",
+          "row_count": 92076,
+          "sha256": "86ec7429721535e4fbd809b31c6543ff5dcae585125afcf26f0e6dd33d0c39db"
+        },
+        {
+          "byte_size": 2418998,
+          "first_date": "2022-07-01",
+          "last_date": "2022-07-29",
+          "path": "bars/bars-2022-07.parquet",
+          "row_count": 83909,
+          "sha256": "4df0c53c5524ea944992bb8945b7d7d57ea2ef45a7492967f998732c19aef821"
+        },
+        {
+          "byte_size": 2662735,
+          "first_date": "2022-08-01",
+          "last_date": "2022-08-31",
+          "path": "bars/bars-2022-08.parquet",
+          "row_count": 92324,
+          "sha256": "dbb873f93139cd30d1bb271f760fae18a683e63cf075eced2f5d09d288f9f9f7"
+        },
+        {
+          "byte_size": 2433051,
+          "first_date": "2022-09-01",
+          "last_date": "2022-09-30",
+          "path": "bars/bars-2022-09.parquet",
+          "row_count": 83940,
+          "sha256": "8ce61140d8b24ff310505b914d42a9bbff21508db4206ce0405e62243b58c224"
+        },
+        {
+          "byte_size": 2441575,
+          "first_date": "2022-10-03",
+          "last_date": "2022-10-31",
+          "path": "bars/bars-2022-10.parquet",
+          "row_count": 84270,
+          "sha256": "f6bd1288588d319ebb750f951e7b82528845fc5cf97344937d3f296dac28b2a8"
+        },
+        {
+          "byte_size": 2451828,
+          "first_date": "2022-11-01",
+          "last_date": "2022-11-30",
+          "path": "bars/bars-2022-11.parquet",
+          "row_count": 84436,
+          "sha256": "8b2c697d0d669573bc867247a70bd68009cadbdf27378a847529d6490285f6b6"
+        },
+        {
+          "byte_size": 2688071,
+          "first_date": "2022-12-01",
+          "last_date": "2022-12-30",
+          "path": "bars/bars-2022-12.parquet",
+          "row_count": 93164,
+          "sha256": "4247747c9acfb0662e7b631e8e0adccaa7a7aa3f84c2f5d6e676faeea36c8b19"
+        },
+        {
+          "byte_size": 2332858,
+          "first_date": "2023-01-04",
+          "last_date": "2023-01-31",
+          "path": "bars/bars-2023-01.parquet",
+          "row_count": 80683,
+          "sha256": "db9b7f1a711b5e00b633e06898c5232802f2d850c15037dda8425d303190caae"
+        },
+        {
+          "byte_size": 2352348,
+          "first_date": "2023-02-01",
+          "last_date": "2023-02-28",
+          "path": "bars/bars-2023-02.parquet",
+          "row_count": 80695,
+          "sha256": "92edfdc3254bd33ef739e5eae7a6b28ed48494b7f641d0d73b00f193d9ff8a6d"
+        },
+        {
+          "byte_size": 2722337,
+          "first_date": "2023-03-01",
+          "last_date": "2023-03-31",
+          "path": "bars/bars-2023-03.parquet",
+          "row_count": 93350,
+          "sha256": "ff7c2886bccca58d1bd4db14ba7b0418be92af06a655d4e726e9250cd6d64485"
+        },
+        {
+          "byte_size": 2461668,
+          "first_date": "2023-04-03",
+          "last_date": "2023-04-28",
+          "path": "bars/bars-2023-04.parquet",
+          "row_count": 85236,
+          "sha256": "83980f585f37813eaa461a50f7a206f2183b13cf6f8224a1244100f797860e00"
+        },
+        {
+          "byte_size": 2496255,
+          "first_date": "2023-05-01",
+          "last_date": "2023-05-31",
+          "path": "bars/bars-2023-05.parquet",
+          "row_count": 85374,
+          "sha256": "b9d809dee6337516dac2b9be9a03cfa7b5215da538f3447044f2754fd8271b85"
+        },
+        {
+          "byte_size": 2767996,
+          "first_date": "2023-06-01",
+          "last_date": "2023-06-30",
+          "path": "bars/bars-2023-06.parquet",
+          "row_count": 93876,
+          "sha256": "de67dbb035593d6ab7019d9d42370f01a3389d4eb93dd51435ea25180d5ecfc8"
+        },
+        {
+          "byte_size": 2527196,
+          "first_date": "2023-07-03",
+          "last_date": "2023-07-31",
+          "path": "bars/bars-2023-07.parquet",
+          "row_count": 85598,
+          "sha256": "591f62c9d647c505e4bba4c15d3629c7c68158602ed68c82d009ea3710e44b63"
+        },
+        {
+          "byte_size": 2761289,
+          "first_date": "2023-08-01",
+          "last_date": "2023-08-31",
+          "path": "bars/bars-2023-08.parquet",
+          "row_count": 94153,
+          "sha256": "dd9689a0070106ef47dfe006df578afc3491ceb9c404b8a999e3f239d3ecc9eb"
+        },
+        {
+          "byte_size": 2533162,
+          "first_date": "2023-09-01",
+          "last_date": "2023-09-29",
+          "path": "bars/bars-2023-09.parquet",
+          "row_count": 85755,
+          "sha256": "9458ef703de43fa17a9e2599565a38f6aa62a3cc129fa916843f1b1f04a584e9"
+        },
+        {
+          "byte_size": 2668255,
+          "first_date": "2023-10-02",
+          "last_date": "2023-10-31",
+          "path": "bars/bars-2023-10.parquet",
+          "row_count": 90427,
+          "sha256": "4d3eda799cc1db6ac2bde06452b2bb5b2b1de7adc8d29d8a7c7bff26de44eb5c"
+        },
+        {
+          "byte_size": 2537460,
+          "first_date": "2023-11-01",
+          "last_date": "2023-11-30",
+          "path": "bars/bars-2023-11.parquet",
+          "row_count": 86271,
+          "sha256": "ce9e30b945fd5982482403f0f72dcd57924e401be4264d7f8732a434cb6cd624"
+        },
+        {
+          "byte_size": 2674460,
+          "first_date": "2023-12-01",
+          "last_date": "2023-12-29",
+          "path": "bars/bars-2023-12.parquet",
+          "row_count": 90921,
+          "sha256": "9d8e18f6c37a01f673ce970946abfe678251c30aa1b831965b5431e812264cad"
+        },
+        {
+          "byte_size": 2437569,
+          "first_date": "2024-01-04",
+          "last_date": "2024-01-31",
+          "path": "bars/bars-2024-01.parquet",
+          "row_count": 82413,
+          "sha256": "68655b1653398e092fa4f749cd0e07e2b6e6b34e73aafd6f922c1292cfc15585"
+        },
+        {
+          "byte_size": 2449415,
+          "first_date": "2024-02-01",
+          "last_date": "2024-02-29",
+          "path": "bars/bars-2024-02.parquet",
+          "row_count": 82455,
+          "sha256": "791f84720d6baff77e08ef4453639139823108ac0aeb4239b21d7132a37a0535"
+        },
+        {
+          "byte_size": 2575627,
+          "first_date": "2024-03-01",
+          "last_date": "2024-03-29",
+          "path": "bars/bars-2024-03.parquet",
+          "row_count": 86897,
+          "sha256": "cd713a65457151d0f212f65b9de652c5e66fb5a49682efb96b1f17b363617607"
+        },
+        {
+          "byte_size": 2678961,
+          "first_date": "2024-04-01",
+          "last_date": "2024-04-30",
+          "path": "bars/bars-2024-04.parquet",
+          "row_count": 91536,
+          "sha256": "51c0f8d290b1c09296542bf2aa0174c516f1d9fea0e2de3a5dea19df13c5768b"
+        },
+        {
+          "byte_size": 2676065,
+          "first_date": "2024-05-01",
+          "last_date": "2024-05-31",
+          "path": "bars/bars-2024-05.parquet",
+          "row_count": 91525,
+          "sha256": "96333c7ec40ac85c3cf9b881db36e9f5d4836b93dcaffee6701b3533449fdfbe"
+        },
+        {
+          "byte_size": 2540731,
+          "first_date": "2024-06-03",
+          "last_date": "2024-06-28",
+          "path": "bars/bars-2024-06.parquet",
+          "row_count": 87255,
+          "sha256": "b30bd806f4191d34f5f4c8eb803a843c0f3a7110fed27d2408dd024e791b7e5c"
+        },
+        {
+          "byte_size": 2803953,
+          "first_date": "2024-07-01",
+          "last_date": "2024-07-31",
+          "path": "bars/bars-2024-07.parquet",
+          "row_count": 96260,
+          "sha256": "d8055fe79469e5f3fb7a45f60789a13e2da6f8af987d036af666f4fb0990807c"
+        },
+        {
+          "byte_size": 2702987,
+          "first_date": "2024-08-01",
+          "last_date": "2024-08-30",
+          "path": "bars/bars-2024-08.parquet",
+          "row_count": 92136,
+          "sha256": "15bd8046c2a94ef2223af6f5a8a86d319a6d3203b18bfcf19c860a28bbf86726"
+        },
+        {
+          "byte_size": 2446627,
+          "first_date": "2024-09-02",
+          "last_date": "2024-09-30",
+          "path": "bars/bars-2024-09.parquet",
+          "row_count": 83387,
+          "sha256": "89f726732defc6bc33141c3221a9f3d283ef8cd897eb87553cd23375579c0805"
+        },
+        {
+          "byte_size": 2791349,
+          "first_date": "2024-10-01",
+          "last_date": "2024-10-31",
+          "path": "bars/bars-2024-10.parquet",
+          "row_count": 96671,
+          "sha256": "d692754a649b5a8460fa13bc52ebc96f1b9f53fd63e2bbe789a90f37411c2447"
+        },
+        {
+          "byte_size": 2550452,
+          "first_date": "2024-11-01",
+          "last_date": "2024-11-29",
+          "path": "bars/bars-2024-11.parquet",
+          "row_count": 87888,
+          "sha256": "a85725db1ced88a37fb3320d3fdfc69333144850a8a996ad5666427d05a670d4"
+        },
+        {
+          "byte_size": 2676644,
+          "first_date": "2024-12-02",
+          "last_date": "2024-12-30",
+          "path": "bars/bars-2024-12.parquet",
+          "row_count": 92514,
+          "sha256": "1573b64bfcf1a72139d2b456813732ea0fb1ef37b4648e2867e0793cc1d03277"
+        },
+        {
+          "byte_size": 2437839,
+          "first_date": "2025-01-06",
+          "last_date": "2025-01-31",
+          "path": "bars/bars-2025-01.parquet",
+          "row_count": 83868,
+          "sha256": "835ec0c0b7759b871ef1805360a54cf98053d326825ad59bf648e3705d69137d"
+        },
+        {
+          "byte_size": 2319511,
+          "first_date": "2025-02-03",
+          "last_date": "2025-02-28",
+          "path": "bars/bars-2025-02.parquet",
+          "row_count": 79344,
+          "sha256": "fc52b4fb7f4e4aca86bf06477758fc3c5ca4dd57728e1422829b362615da3999"
+        },
+        {
+          "byte_size": 2565067,
+          "first_date": "2025-03-03",
+          "last_date": "2025-03-31",
+          "path": "bars/bars-2025-03.parquet",
+          "row_count": 88102,
+          "sha256": "106b2498b38f97706f375f0c6ee8e78b55a2d2c21ccd80e911274d2f479b65bd"
+        },
+        {
+          "byte_size": 2712128,
+          "first_date": "2025-04-01",
+          "last_date": "2025-04-30",
+          "path": "bars/bars-2025-04.parquet",
+          "row_count": 92697,
+          "sha256": "e0d6582fcd0f44b3611fb53c89d37164d49eb7ac10126900bb69ab0c453f4b85"
+        },
+        {
+          "byte_size": 2563291,
+          "first_date": "2025-05-01",
+          "last_date": "2025-05-30",
+          "path": "bars/bars-2025-05.parquet",
+          "row_count": 88239,
+          "sha256": "ce380671e6e6dcd3a3e6b37ccb52d7a70b0eea2ec340816baebcc4e779809595"
+        },
+        {
+          "byte_size": 2660016,
+          "first_date": "2025-06-02",
+          "last_date": "2025-06-30",
+          "path": "bars/bars-2025-06.parquet",
+          "row_count": 92514,
+          "sha256": "eeaa56bd40a989dcd606d95da284e43caf4b252bfe41be4b5a8b389f48169826"
+        },
+        {
+          "byte_size": 2795220,
+          "first_date": "2025-07-01",
+          "last_date": "2025-07-31",
+          "path": "bars/bars-2025-07.parquet",
+          "row_count": 97092,
+          "sha256": "58a25d7aaa5f825f98c0d33cd7f37dd582324ccba1f123ebf7e4e85f65203e9f"
+        },
+        {
+          "byte_size": 2570168,
+          "first_date": "2025-08-01",
+          "last_date": "2025-08-29",
+          "path": "bars/bars-2025-08.parquet",
+          "row_count": 88287,
+          "sha256": "dd3ac1de2b2c4b6e49fc2ee627ab9b10324a0e6338c07b0307e93b7549b3713f"
+        },
+        {
+          "byte_size": 2564097,
+          "first_date": "2025-09-01",
+          "last_date": "2025-09-30",
+          "path": "bars/bars-2025-09.parquet",
+          "row_count": 88184,
+          "sha256": "2df182710a468f81fc7ab846479c9efc2b14de816bb58410fc9509d902e58da7"
+        },
+        {
+          "byte_size": 2828287,
+          "first_date": "2025-10-01",
+          "last_date": "2025-10-31",
+          "path": "bars/bars-2025-10.parquet",
+          "row_count": 97117,
+          "sha256": "e7e79b69f6b850cf0039e5ff1bc6e63e48df0a47c96a08f016572448d78ac708"
+        },
+        {
+          "byte_size": 2336462,
+          "first_date": "2025-11-04",
+          "last_date": "2025-11-28",
+          "path": "bars/bars-2025-11.parquet",
+          "row_count": 79574,
+          "sha256": "3cde956130d2bd86afb1aff710149d07d9f367baaa3a220a5bba37ba7a27ac1c"
+        },
+        {
+          "byte_size": 2826126,
+          "first_date": "2025-12-01",
+          "last_date": "2025-12-30",
+          "path": "bars/bars-2025-12.parquet",
+          "row_count": 97483,
+          "sha256": "98b62d80820059dc236b698f5799be1f22385c564dbba206e0be525fd8659b67"
+        },
+        {
+          "byte_size": 2463213,
+          "first_date": "2026-01-05",
+          "last_date": "2026-01-30",
+          "path": "bars/bars-2026-01.parquet",
+          "row_count": 84260,
+          "sha256": "70442132ead495c71505e5be676dc2a468dd404fc57fcd0b924242b1f25cd62a"
+        },
+        {
+          "byte_size": 2371222,
+          "first_date": "2026-02-02",
+          "last_date": "2026-02-27",
+          "path": "bars/bars-2026-02.parquet",
+          "row_count": 79857,
+          "sha256": "5d91b51ebcc017f1c746883fb42d1c3535c888b0ba5f8d6e1ee8f7ce33a3e500"
+        },
+        {
+          "byte_size": 2743538,
+          "first_date": "2026-03-02",
+          "last_date": "2026-03-31",
+          "path": "bars/bars-2026-03.parquet",
+          "row_count": 93345,
+          "sha256": "dc73376d626c2a646ea0b45d001ed64ce702c830486f3db45312a147614e330e"
+        },
+        {
+          "byte_size": 2709368,
+          "first_date": "2026-04-01",
+          "last_date": "2026-04-30",
+          "path": "bars/bars-2026-04.parquet",
+          "row_count": 93437,
+          "sha256": "ab4c21e8001cbffa5d2bd2e0728be43d7a373079535067de0403ebd4ed2b1f12"
+        },
+        {
+          "byte_size": 2354061,
+          "first_date": "2026-05-01",
+          "last_date": "2026-05-29",
+          "path": "bars/bars-2026-05.parquet",
+          "row_count": 80067,
+          "sha256": "d8df378e920a959b44ca7eb7f6afdc3db47890c36bba07ebbc022b870aebb865"
+        },
+        {
+          "byte_size": 2889138,
+          "first_date": "2026-06-01",
+          "last_date": "2026-06-30",
+          "path": "bars/bars-2026-06.parquet",
+          "row_count": 97803,
+          "sha256": "6023b860108bb8ec26dca7eb97e1a241f454da06214b5b9ab57785251995dd7d"
+        }
+      ],
+      "source_row_count": 5157698,
+      "unique_completed_date_count": 1196
+    },
+    "equities_master_month_end": {
+      "completed_fetch_count": 59,
+      "first_date": "2021-08-31",
+      "last_date": "2026-06-30",
+      "metadata_row_count": 59,
+      "null_trading_row_count": 0,
+      "null_turnover_row_count": 0,
+      "partition_count": 59,
+      "partitions": [
+        {
+          "byte_size": 104663,
+          "first_date": "2021-08-31",
+          "last_date": "2021-08-31",
+          "path": "master/master-2021-08-31.parquet",
+          "row_count": 4131,
+          "sha256": "2fb75fbad2befcb804d04dfb8ba14fac346fbff5698e17ce1fc0f60be0552159"
+        },
+        {
+          "byte_size": 104419,
+          "first_date": "2021-09-30",
+          "last_date": "2021-09-30",
+          "path": "master/master-2021-09-30.parquet",
+          "row_count": 4119,
+          "sha256": "94bf59b7ec22df7a003afee83c07e6db6b5a5ec6b15afe1434d5aac8e653ec7a"
+        },
+        {
+          "byte_size": 104776,
+          "first_date": "2021-10-29",
+          "last_date": "2021-10-29",
+          "path": "master/master-2021-10-29.parquet",
+          "row_count": 4133,
+          "sha256": "fe4247ec4f49287517320634b3c9468586645a6bf9a0a816149da0dddf6957cf"
+        },
+        {
+          "byte_size": 104746,
+          "first_date": "2021-11-30",
+          "last_date": "2021-11-30",
+          "path": "master/master-2021-11-30.parquet",
+          "row_count": 4137,
+          "sha256": "610e45aa7b45bb786b72d83901f7ae9039d468479c9bf1fb5818d80df49c78d4"
+        },
+        {
+          "byte_size": 105733,
+          "first_date": "2021-12-30",
+          "last_date": "2021-12-30",
+          "path": "master/master-2021-12-30.parquet",
+          "row_count": 4170,
+          "sha256": "0e46e8e7882f8067d53942909cf91613d7ccde6f3588cd3647f60a9953918880"
+        },
+        {
+          "byte_size": 105861,
+          "first_date": "2022-01-31",
+          "last_date": "2022-01-31",
+          "path": "master/master-2022-01-31.parquet",
+          "row_count": 4174,
+          "sha256": "c62bc9e7126f2e72a320eed13554d4eeffbe74ba895398fb7ae60a2d5fb1a418"
+        },
+        {
+          "byte_size": 106022,
+          "first_date": "2022-02-28",
+          "last_date": "2022-02-28",
+          "path": "master/master-2022-02-28.parquet",
+          "row_count": 4180,
+          "sha256": "c2d9e98e79bbc43b370cb665a12470857365244209b5167ebcc2253676d80299"
+        },
+        {
+          "byte_size": 106102,
+          "first_date": "2022-03-31",
+          "last_date": "2022-03-31",
+          "path": "master/master-2022-03-31.parquet",
+          "row_count": 4179,
+          "sha256": "b81cdefc26170fc7e78de8f7de00407e8100169f9271beaf6f3f82c8247ff6e4"
+        },
+        {
+          "byte_size": 106044,
+          "first_date": "2022-04-28",
+          "last_date": "2022-04-28",
+          "path": "master/master-2022-04-28.parquet",
+          "row_count": 4184,
+          "sha256": "4bab18dcab2298b18cc9b0f15902dcca6b58b1db6343d3cd45cf8d34fbb09e8a"
+        },
+        {
+          "byte_size": 106013,
+          "first_date": "2022-05-31",
+          "last_date": "2022-05-31",
+          "path": "master/master-2022-05-31.parquet",
+          "row_count": 4183,
+          "sha256": "950dc482f7e5e1f7067b4a6e523dc3b1cf6b20927ee531283e84dee68e50667e"
+        },
+        {
+          "byte_size": 106285,
+          "first_date": "2022-06-30",
+          "last_date": "2022-06-30",
+          "path": "master/master-2022-06-30.parquet",
+          "row_count": 4196,
+          "sha256": "983406bf434b3a0ac5bed92dfd3142668b732bb268146c508b2c191ead4a4a84"
+        },
+        {
+          "byte_size": 106385,
+          "first_date": "2022-07-29",
+          "last_date": "2022-07-29",
+          "path": "master/master-2022-07-29.parquet",
+          "row_count": 4196,
+          "sha256": "f42f585daf98866f39c3d34beebe2b0861fca7c23e596126cd6f11165948aef6"
+        },
+        {
+          "byte_size": 106264,
+          "first_date": "2022-08-31",
+          "last_date": "2022-08-31",
+          "path": "master/master-2022-08-31.parquet",
+          "row_count": 4192,
+          "sha256": "899f1d7b380cb3788cc5735e650c75a325ea9170fd1ccf0ffc7579b05f031510"
+        },
+        {
+          "byte_size": 106549,
+          "first_date": "2022-09-30",
+          "last_date": "2022-09-30",
+          "path": "master/master-2022-09-30.parquet",
+          "row_count": 4201,
+          "sha256": "0678c7bee7e8f7e2bd64aabbb01968582cb60d2fe1e733b3b828bb9c0616d6d6"
+        },
+        {
+          "byte_size": 107001,
+          "first_date": "2022-10-31",
+          "last_date": "2022-10-31",
+          "path": "master/master-2022-10-31.parquet",
+          "row_count": 4217,
+          "sha256": "762e96b3f386a8bcac7d0a9be1cc2ed2e894a677e17f0496b78fbf5278367b28"
+        },
+        {
+          "byte_size": 107124,
+          "first_date": "2022-11-30",
+          "last_date": "2022-11-30",
+          "path": "master/master-2022-11-30.parquet",
+          "row_count": 4226,
+          "sha256": "8d38901b7174dcdff6f69709df00f80c1534dbc36ab43b226b2c5539efc2d517"
+        },
+        {
+          "byte_size": 107687,
+          "first_date": "2022-12-30",
+          "last_date": "2022-12-30",
+          "path": "master/master-2022-12-30.parquet",
+          "row_count": 4246,
+          "sha256": "960281522440812d412c98ab8c808cfb5c29e90cfc3442ad9527d13262028289"
+        },
+        {
+          "byte_size": 107766,
+          "first_date": "2023-01-31",
+          "last_date": "2023-01-31",
+          "path": "master/master-2023-01-31.parquet",
+          "row_count": 4247,
+          "sha256": "acb627b6f6dbec6c4e1e6ae7000408ea05de2e0466277318fb0b536ca4220cf3"
+        },
+        {
+          "byte_size": 107691,
+          "first_date": "2023-02-28",
+          "last_date": "2023-02-28",
+          "path": "master/master-2023-02-28.parquet",
+          "row_count": 4244,
+          "sha256": "b448408ff2d0906b9bc4f67dedf53f152c268087ccbb298c78b3c1d9e5d194d0"
+        },
+        {
+          "byte_size": 107833,
+          "first_date": "2023-03-31",
+          "last_date": "2023-03-31",
+          "path": "master/master-2023-03-31.parquet",
+          "row_count": 4253,
+          "sha256": "fc0a5b5e32cb25dc99660013517ca536f362227ef787e3e72b1b2edf00a83611"
+        },
+        {
+          "byte_size": 108281,
+          "first_date": "2023-04-28",
+          "last_date": "2023-04-28",
+          "path": "master/master-2023-04-28.parquet",
+          "row_count": 4270,
+          "sha256": "d90c82862b0ac44423c55f1d69193d897b2c05c8924dd6f60362b66dc984e4a9"
+        },
+        {
+          "byte_size": 108168,
+          "first_date": "2023-05-31",
+          "last_date": "2023-05-31",
+          "path": "master/master-2023-05-31.parquet",
+          "row_count": 4267,
+          "sha256": "51b7df688a9efe46ee0cece8c6a34c2005404167dcd1a1c3e446537309485a4b"
+        },
+        {
+          "byte_size": 108369,
+          "first_date": "2023-06-30",
+          "last_date": "2023-06-30",
+          "path": "master/master-2023-06-30.parquet",
+          "row_count": 4275,
+          "sha256": "e8451a7c765d9d4a009fc6c85266530e290b4577b5ed9475bba4847b5efbb952"
+        },
+        {
+          "byte_size": 108477,
+          "first_date": "2023-07-31",
+          "last_date": "2023-07-31",
+          "path": "master/master-2023-07-31.parquet",
+          "row_count": 4280,
+          "sha256": "63271f0a73fb13484bc3e6d305504264c6a01b8439a9dbd6eab80721a62a1ab1"
+        },
+        {
+          "byte_size": 108396,
+          "first_date": "2023-08-31",
+          "last_date": "2023-08-31",
+          "path": "master/master-2023-08-31.parquet",
+          "row_count": 4278,
+          "sha256": "bec7022146016d66d07acda1b13511bab5f75cf8aaba74679c304dc8bb82a855"
+        },
+        {
+          "byte_size": 108887,
+          "first_date": "2023-09-29",
+          "last_date": "2023-09-29",
+          "path": "master/master-2023-09-29.parquet",
+          "row_count": 4295,
+          "sha256": "4fc72f2407b495067109db91197266f8fee905ce49a0f382cb7008ca3bf5f5f7"
+        },
+        {
+          "byte_size": 109361,
+          "first_date": "2023-10-31",
+          "last_date": "2023-10-31",
+          "path": "master/master-2023-10-31.parquet",
+          "row_count": 4310,
+          "sha256": "707f92c331bb6161c83df57ef52cd2c8e12a28d49ba1ba20c11ba3d02df986c4"
+        },
+        {
+          "byte_size": 109633,
+          "first_date": "2023-11-30",
+          "last_date": "2023-11-30",
+          "path": "master/master-2023-11-30.parquet",
+          "row_count": 4323,
+          "sha256": "7e8556b923db18186058423e8d9c9984ef689c8056a1ce57ae6aa6bbb28e069e"
+        },
+        {
+          "byte_size": 110022,
+          "first_date": "2023-12-29",
+          "last_date": "2023-12-29",
+          "path": "master/master-2023-12-29.parquet",
+          "row_count": 4337,
+          "sha256": "bb43b372adbdefe6f31ada3683c44dbb6936875224ce7b33db37926f4ed60d6d"
+        },
+        {
+          "byte_size": 110279,
+          "first_date": "2024-01-31",
+          "last_date": "2024-01-31",
+          "path": "master/master-2024-01-31.parquet",
+          "row_count": 4341,
+          "sha256": "6314a67bd2ced55df02eb41a251e0de08f282590b297b57eae459c29ce3ca695"
+        },
+        {
+          "byte_size": 110244,
+          "first_date": "2024-02-29",
+          "last_date": "2024-02-29",
+          "path": "master/master-2024-02-29.parquet",
+          "row_count": 4343,
+          "sha256": "5f7abbe02e619136a384c1c3c7fa83db3d2132cd679d04dda0e5ee29d390e404"
+        },
+        {
+          "byte_size": 110688,
+          "first_date": "2024-03-29",
+          "last_date": "2024-03-29",
+          "path": "master/master-2024-03-29.parquet",
+          "row_count": 4354,
+          "sha256": "2d2a972840a32ec479086d597dd7e5891ebde2dce70e197a5cee3b5f52b35907"
+        },
+        {
+          "byte_size": 111084,
+          "first_date": "2024-04-30",
+          "last_date": "2024-04-30",
+          "path": "master/master-2024-04-30.parquet",
+          "row_count": 4360,
+          "sha256": "0ee76a02cd276524f1c206d0eac9c12ce567e5e0f4138121dc2f45f4a8aa9a18"
+        },
+        {
+          "byte_size": 111186,
+          "first_date": "2024-05-31",
+          "last_date": "2024-05-31",
+          "path": "master/master-2024-05-31.parquet",
+          "row_count": 4357,
+          "sha256": "46ec65f1fc8ebf27cfddb08830eae99ba6ee856f467626cde555cf723d87936b"
+        },
+        {
+          "byte_size": 111698,
+          "first_date": "2024-06-28",
+          "last_date": "2024-06-28",
+          "path": "master/master-2024-06-28.parquet",
+          "row_count": 4371,
+          "sha256": "24f622819a566636110b827657771cc5b4a1262f3568dabcbe41bf7c9312888b"
+        },
+        {
+          "byte_size": 112207,
+          "first_date": "2024-07-31",
+          "last_date": "2024-07-31",
+          "path": "master/master-2024-07-31.parquet",
+          "row_count": 4383,
+          "sha256": "2d2513fc4c32dd29f07a59254ab1c17d419b123088628371fb881e1aeefeb92d"
+        },
+        {
+          "byte_size": 112579,
+          "first_date": "2024-08-30",
+          "last_date": "2024-08-30",
+          "path": "master/master-2024-08-30.parquet",
+          "row_count": 4392,
+          "sha256": "d5c60924f8fc8f8e7d59430ed29a4b0c7d1d2be9b2f33f4347cf3c75db7a992a"
+        },
+        {
+          "byte_size": 112480,
+          "first_date": "2024-09-30",
+          "last_date": "2024-09-30",
+          "path": "master/master-2024-09-30.parquet",
+          "row_count": 4388,
+          "sha256": "10f9d865f4e59375ba396a0f190a4e9183a7d7f736186b85f36d77cf8f2ba9f2"
+        },
+        {
+          "byte_size": 112918,
+          "first_date": "2024-10-31",
+          "last_date": "2024-10-31",
+          "path": "master/master-2024-10-31.parquet",
+          "row_count": 4397,
+          "sha256": "f63a0e747a3ef5dcfe01e4b1628208d514a0b817caded16cafd5ab5aa3a678b4"
+        },
+        {
+          "byte_size": 113012,
+          "first_date": "2024-11-29",
+          "last_date": "2024-11-29",
+          "path": "master/master-2024-11-29.parquet",
+          "row_count": 4398,
+          "sha256": "aaffa9fcd2eaa653ceb91e77a777c3025ed30d9e71e0f48ee403d40ba1a87281"
+        },
+        {
+          "byte_size": 113492,
+          "first_date": "2024-12-30",
+          "last_date": "2024-12-30",
+          "path": "master/master-2024-12-30.parquet",
+          "row_count": 4414,
+          "sha256": "0c319c50f5f421ff1760721e6f73ffb082b03bc053d5667ba188b6f7c07f7826"
+        },
+        {
+          "byte_size": 113497,
+          "first_date": "2025-01-31",
+          "last_date": "2025-01-31",
+          "path": "master/master-2025-01-31.parquet",
+          "row_count": 4410,
+          "sha256": "e27b219324cbc3cd214c001e80e1ff9f359f18638745fa8fab20c739903f3640"
+        },
+        {
+          "byte_size": 113586,
+          "first_date": "2025-02-28",
+          "last_date": "2025-02-28",
+          "path": "master/master-2025-02-28.parquet",
+          "row_count": 4407,
+          "sha256": "6651d78d7088f9f188127b93ceaebcc32909780d0f18a668c93f824ddfe24c17"
+        },
+        {
+          "byte_size": 113919,
+          "first_date": "2025-03-31",
+          "last_date": "2025-03-31",
+          "path": "master/master-2025-03-31.parquet",
+          "row_count": 4411,
+          "sha256": "c5ad915654ad2f50fa4c1ce45008a818ec24680a5462d7e07b145ac650d2b9bd"
+        },
+        {
+          "byte_size": 114106,
+          "first_date": "2025-04-30",
+          "last_date": "2025-04-30",
+          "path": "master/master-2025-04-30.parquet",
+          "row_count": 4415,
+          "sha256": "b901a5ea27e5b9357ea4193b8422de56098cdc63471f1ef27aa9655fd5a34e0c"
+        },
+        {
+          "byte_size": 113996,
+          "first_date": "2025-05-30",
+          "last_date": "2025-05-30",
+          "path": "master/master-2025-05-30.parquet",
+          "row_count": 4409,
+          "sha256": "b140a026c94d872f6af4df0f6efd2e87272a9812dd61830af176abcdad1d71b7"
+        },
+        {
+          "byte_size": 114265,
+          "first_date": "2025-06-30",
+          "last_date": "2025-06-30",
+          "path": "master/master-2025-06-30.parquet",
+          "row_count": 4412,
+          "sha256": "fa4e4d64c23f53083cbf6c5975552b551bd89a48054cbf1597c50b29810ef9f6"
+        },
+        {
+          "byte_size": 114444,
+          "first_date": "2025-07-31",
+          "last_date": "2025-07-31",
+          "path": "master/master-2025-07-31.parquet",
+          "row_count": 4414,
+          "sha256": "c0a0f46ad5266994e6c18b3b09b063d447c5d9c9e91f7a3a26a64b10bf5068a5"
+        },
+        {
+          "byte_size": 114407,
+          "first_date": "2025-08-29",
+          "last_date": "2025-08-29",
+          "path": "master/master-2025-08-29.parquet",
+          "row_count": 4411,
+          "sha256": "620e0249b0940bca622fec89a53b97b7faff96575af400afa02105c1740ed2a6"
+        },
+        {
+          "byte_size": 114476,
+          "first_date": "2025-09-30",
+          "last_date": "2025-09-30",
+          "path": "master/master-2025-09-30.parquet",
+          "row_count": 4403,
+          "sha256": "95ece9147ee4e4da222233819b292f12bf28f3de2b80a53ce6040661766a927a"
+        },
+        {
+          "byte_size": 114829,
+          "first_date": "2025-10-31",
+          "last_date": "2025-10-31",
+          "path": "master/master-2025-10-31.parquet",
+          "row_count": 4417,
+          "sha256": "31d12faa04bfc3c8135ef96a9a406e31c4beb6d4a6aaf6883e36ee300a832025"
+        },
+        {
+          "byte_size": 115272,
+          "first_date": "2025-11-28",
+          "last_date": "2025-11-28",
+          "path": "master/master-2025-11-28.parquet",
+          "row_count": 4425,
+          "sha256": "1e305815f65e3e4b39c09a8501cca86f4a4195e6c7ba36414ca610361dcfaa89"
+        },
+        {
+          "byte_size": 115691,
+          "first_date": "2025-12-30",
+          "last_date": "2025-12-30",
+          "path": "master/master-2025-12-30.parquet",
+          "row_count": 4437,
+          "sha256": "0164dc5b122bf0c4ebd8f941e4735cfb2dc666d5247a5702ccaac3e2655511ab"
+        },
+        {
+          "byte_size": 115993,
+          "first_date": "2026-01-30",
+          "last_date": "2026-01-30",
+          "path": "master/master-2026-01-30.parquet",
+          "row_count": 4435,
+          "sha256": "276c0c8b493c3654cca19390505acccd801d8ef113a3573fe4b321c487c89c86"
+        },
+        {
+          "byte_size": 116112,
+          "first_date": "2026-02-27",
+          "last_date": "2026-02-27",
+          "path": "master/master-2026-02-27.parquet",
+          "row_count": 4439,
+          "sha256": "96e3fafcd5a658255d2c5d1e8f2a32e5b8edee39d420d475546e64d58fe6ed87"
+        },
+        {
+          "byte_size": 116632,
+          "first_date": "2026-03-31",
+          "last_date": "2026-03-31",
+          "path": "master/master-2026-03-31.parquet",
+          "row_count": 4444,
+          "sha256": "97b8e41f2f1e4da2cb07dd39191e9365139b6d4d3add7d9449e67f79a6e2a982"
+        },
+        {
+          "byte_size": 116877,
+          "first_date": "2026-04-30",
+          "last_date": "2026-04-30",
+          "path": "master/master-2026-04-30.parquet",
+          "row_count": 4449,
+          "sha256": "e37a02129a076d2b1aa430e06394f45010c4e107e613119160648a054d59e7ff"
+        },
+        {
+          "byte_size": 117002,
+          "first_date": "2026-05-29",
+          "last_date": "2026-05-29",
+          "path": "master/master-2026-05-29.parquet",
+          "row_count": 4451,
+          "sha256": "0ec82dbeed011a26637428c2604baddb62a2330951c509143df13f9bc6669074"
+        },
+        {
+          "byte_size": 116871,
+          "first_date": "2026-06-30",
+          "last_date": "2026-06-30",
+          "path": "master/master-2026-06-30.parquet",
+          "row_count": 4437,
+          "sha256": "3b12ae4796c8c036536e0e85698b670613494c90b3544acd2cd096354ac20e0e"
+        }
+      ],
+      "source_row_count": 254567,
+      "unique_completed_date_count": 59
+    }
+  },
+  "factor_or_outcome_computed": false,
+  "generated_at": "2026-08-08T05:54:22.866840+00:00",
+  "git_commit": "9b14f94206d38df020b4e36ab727e5b452c72d2c",
+  "input": {
+    "archive_schema_version": "jquants_liquidity_research_archive_v1",
+    "directory": "data/liquidity-research-v0",
+    "files": {
+      "bars-daily-raw.jsonl": {
+        "sha256": "d788bff5330e0d3554b28608256f09b315280092463320027860c767c0416c65"
+      },
+      "master-month-end-raw.jsonl": {
+        "sha256": "cd3ab55edaf8965d0328892c15ad2cf1683f4d5c38e97b59ef0776476127edd6"
+      }
+    },
+    "manifest_sha256": "6572cdf3a0c1d5cad6f0f0acb4f4dd31109d27ed13e0543e9664fbcbab5b047a",
+    "requested_end_date": "2026-06-30",
+    "requested_start_date": "2021-08-09"
+  },
+  "manifest_version": 1,
+  "normalized_schema_version": "jquants_liquidity_research_normalized_v1",
+  "normalizer_sha256": "aea669494a3699c1ff427ba440d73b5e8ffea4f865adb023a35a55a91bb69dbe",
+  "paper_live_enabled": false,
+  "research_only": true
+}
