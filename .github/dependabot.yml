@@ -13,6 +13,20 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    # Workspace members are local packages. Never replace them with
+    # unrelated packages that happen to use the same name on PyPI.
+    ignore:
+      - dependency-name: "trade-contracts"
+      - dependency-name: "universe-scanner"
+      - dependency-name: "feature-engine"
+      - dependency-name: "strategy-rule"
+      - dependency-name: "strategy-ai"
+      - dependency-name: "aggregator"
+      - dependency-name: "gateway"
+      - dependency-name: "oms-paper"
+      - dependency-name: "oms-live"
+      - dependency-name: "feeder"
+      - dependency-name: "opportunity-router"
     commit-message:
       prefix: "chore"
       include: "scope"
