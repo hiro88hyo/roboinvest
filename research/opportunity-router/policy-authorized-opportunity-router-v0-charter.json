@@ -1,12 +1,12 @@
 {
   "charter_id": "policy_authorized_opportunity_router_v0",
   "created_at": "2026-08-09T00:17:28Z",
-  "status": "PLAN_ONLY_NO_IMPLEMENTATION_AUTHORITY",
+  "status": "PHASE1_IMPLEMENTED_NOT_ACTIVATED",
   "identity": "META_DECISION_PROCESS_NOT_ALPHA_CANDIDATE",
   "repository_baseline_commit": "e66866f2ced76cdf4647a65c7fd74c0ac50e16f5",
   "bound_plan": {
     "path": "docs/features/policy-authorized-opportunity-router-v0.md",
-    "sha256": "7b2e661d499b079a687f661905fed83a7508cf850437b2cb0788280d0ab65686"
+    "sha256": "edfc8c5cb59d682b2249be24728cc999b90b6f6b02898617430d65f297081058"
   },
   "advisory_context": {
     "chatgpt_pro_shared_response": "https://chatgpt.com/s/t_6a77c0b9d0348191987f57ab5af1f8a5",
@@ -27,12 +27,26 @@
   },
   "human_oversight_contract": {
     "runbook_path": "docs/runbook/opportunity-router-human-oversight-v0.md",
-    "runbook_sha256": "03a043ae375a0987b7c940d2ee0f30bf6f381059bc92536a791ddd7d966e2cb4",
+    "runbook_sha256": "e9d70005e112fd7d51908b560f02e22364d448ee809ae4f7e747124570313a78",
     "contract_path": "research/opportunity-router/human-oversight-operating-contract-v0.json",
-    "contract_sha256": "da7f203cf6ab7272adb75b4e236d0158672b71c0202cd7dfd3f5a16f6ed687c8",
+    "contract_sha256": "56755f25e579c50d1414e53b702b6ec322d5409c01ef23cbbef6502d3396c3ee",
     "status": "PLAN_ONLY_NO_OPERATION_AUTHORITY",
     "human_operation_activated": false,
     "per_trade_human_action_required": false
+  },
+  "phase1_implementation": {
+    "authorization_path": "research/opportunity-router/phase1-implementation-authorization.json",
+    "authorization_sha256": "eb61fd909819d4afd985f81d10c95d2138e43dc11bc05cf1e4bdfc91e5a2b21c",
+    "authorized_at": "2026-08-09T07:01:13Z",
+    "package_path": "services/opportunity-router",
+    "status": "IMPLEMENTED_NOT_ACTIVATED",
+    "library_only": true,
+    "cli_or_runtime_exists": false,
+    "external_io_exists": false,
+    "local_jsonl_only": true,
+    "existing_runtime_health_check_changed": false,
+    "admitted_playbooks": 0,
+    "fixture_enter_shadow_is_forward_collection": false
   },
   "playbook_admission": {
     "maximum_active_playbooks": 3,
@@ -58,6 +72,7 @@
   },
   "candidate_intake_contract": {
     "fixed": false,
+    "phase1_version_and_hash_binding_implemented": true,
     "must_be_fixed_before_playbook_admission": true,
     "required_fields": [
       "source_id",
@@ -75,6 +90,7 @@
     "forward_change_requires_new_version_and_cohort": true
   },
   "decision_contract": {
+    "phase1_pure_evaluator_and_ledger_implemented": true,
     "automated_terminal_decisions": [
       "ENTER_SHADOW",
       "NO_TRADE",
@@ -101,7 +117,7 @@
     ],
     "evidence": {
       "owner": "OPPORTUNITY_ROUTER",
-      "status": "NOT_IMPLEMENTED"
+      "status": "PHASE1_STATE_AGGREGATION_IMPLEMENTED_NO_DOMAIN_RULE"
     },
     "mechanism": {
       "static_validity_owner": "PLAYBOOK_ADMISSION",
@@ -119,24 +135,25 @@
         "HORIZON_STILL_OPEN"
       ],
       "llm_may_invent_per_candidate_mechanism_or_rule": false,
-      "status": "NOT_IMPLEMENTED"
+      "status": "PHASE1_STATE_AGGREGATION_IMPLEMENTED_NO_DOMAIN_RULE"
     },
     "context": {
       "owner": "OPPORTUNITY_ROUTER",
-      "status": "NOT_IMPLEMENTED"
+      "status": "PHASE1_STATE_AGGREGATION_IMPLEMENTED_NO_DOMAIN_RULE"
     },
     "execution_precheck": {
       "owner": "OPPORTUNITY_ROUTER",
-      "status": "NOT_IMPLEMENTED"
+      "status": "PHASE1_STATE_AGGREGATION_IMPLEMENTED_NO_MARKET_INPUT"
     },
     "portfolio_and_risk": {
       "provisional_owner": "OPPORTUNITY_ROUTER_SHADOW_ONLY",
       "authoritative_owner": "GATEWAY",
       "gateway_authority_may_not_be_bypassed": true,
-      "status": "NOT_IMPLEMENTED"
+      "status": "PHASE1_STATE_AGGREGATION_IMPLEMENTED_NO_GATEWAY_INPUT"
     }
   },
   "playbook_assignment_and_capacity": {
+    "phase1_fail_closed_and_deterministic_framework_implemented": true,
     "multiple_match_default": "AMBIGUOUS_PLAYBOOK_AND_NO_TRADE",
     "post_hoc_playbook_selection_allowed": false,
     "priority_assignment_requires_prior_versioned_authorization": true,
@@ -168,8 +185,11 @@
     "gateway_remains_sole_final_risk_enforcer": true,
     "direct_service_communication_allowed": false,
     "contracts_remain_single_source_of_truth": true,
-    "new_service_topic_subscription_table_or_contract_decided": false,
-    "initial_implementation_if_authorized": "PURE_FUNCTION_AND_JSONL_LEDGER_NO_EXTERNAL_IO",
+    "phase1_workspace_package": "services/opportunity-router",
+    "phase1_package_is_runtime_service": false,
+    "runtime_service_topic_subscription_table_or_external_contract_decided": false,
+    "initial_implementation": "PURE_FUNCTION_AND_LOCAL_JSONL_LEDGER_NO_EXTERNAL_IO",
+    "initial_implementation_status": "COMPLETED_NOT_ACTIVATED",
     "shadow_stage_may_publish_trade_signals": false
   },
   "future_position_lifecycle": {
@@ -255,7 +275,9 @@
   "phase_authority": {
     "plan_recording_authorized": true,
     "playbook_admission_authorized": false,
-    "implementation_authorized": false,
+    "phase1_implementation_authorized": true,
+    "phase1_implementation_completed": true,
+    "runtime_or_external_integration_authorized": false,
     "historical_outcome_computation_authorized": false,
     "forward_outcome_computation_authorized": false,
     "shadow_collection_authorized": false,

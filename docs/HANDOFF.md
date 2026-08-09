@@ -68,22 +68,25 @@
   `out/portfolio-researchability-reset-2026-v0/phase2-instrument-inventory-v0/`。
 
 - 個別案件への人間承認がタイムリーに行えない運用制約を受け、次期案を半裁量ではなく
-  `policy_authorized_opportunity_router_v0`としてplan-onlyで記録した。人間はpolicyと
+  `policy_authorized_opportunity_router_v0`として設計した。人間はpolicyと
   playbook versionを事前承認し、システムが案件ごとに全gateを自動評価するhuman-on-the-loop
   方式。`WAITING_HUMAN`やpositive per-trade overrideは作らず、欠測・曖昧・期限切れ・
   failureは`NO_TRADE`。初期admitted playbookは0、上限3で、棄却済みLIQIMP/IMOM6M、
   既存event/technicalを自動採用しない。Gatewayは引き続き唯一の最終risk執行者。
   全candidateと候補ゼロを保存し、損益と判断品質を分けたappend-only reviewを行う。
   取引時には規則を変えず、月次監査と四半期の別認可で将来versionだけを見直す。
-  実装前にcandidate intake/population hash、static mechanism対dynamic fit、複数playbook
+  Phase 2前にcandidate intake/population hash、static mechanism対dynamic fit、複数playbook
   assignment、capacity resolution、counterfactual class、outcome-blind process review、
   position version/exit lifecycleを固定する。未固定・競合・tieはfail-closed。
   人間は通常営業日・市場中の操作を要せず、事前認可、blind process audit、月次監査、
   四半期改版、リスク削減停止だけを担う。運用正本は
   `docs/runbook/opportunity-router-human-oversight-v0.md`と
   `research/opportunity-router/human-oversight-operating-contract-v0.json`。いずれもplan-only。
-  playbook選定、実装、outcome計算、shadow、paper/liveは未承認で、現行Kill Switchとは
-  分離する。正本は `docs/features/policy-authorized-opportunity-router-v0.md` と
+  明示認可済みPhase 1として`services/opportunity-router`に純関数、SHA-256 binding、
+  決定論的capacity、冪等なhash-chain local JSONL ledgerをlibrary-onlyで実装した。
+  CLI/runtime/外部I/Oはなく、既存9 serviceのhealth-check対象にも追加しない。playbook選定、
+  outcome計算、forward収集、shadow、paper/liveは未承認で、現行Kill Switchとは分離する。
+  正本は `docs/features/policy-authorized-opportunity-router-v0.md` と
   `research/opportunity-router/policy-authorized-opportunity-router-v0-charter.json`。
 
 - 9/30 project kill switch判定を自動化した。

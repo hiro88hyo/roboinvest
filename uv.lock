@@ -16,6 +16,7 @@ members = [
     "gateway",
     "oms-live",
     "oms-paper",
+    "opportunity-router",
     "strategy-ai",
     "strategy-rule",
     "trade-ai-agent",
@@ -916,6 +917,11 @@ wheels = [
 ]
 
 [[package]]
+name = "opportunity-router"
+version = "0.1.0"
+source = { editable = "services/opportunity-router" }
+
+[[package]]
 name = "packaging"
 version = "26.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1307,6 +1313,7 @@ dependencies = [
     { name = "gateway" },
     { name = "oms-live" },
     { name = "oms-paper" },
+    { name = "opportunity-router" },
     { name = "strategy-ai" },
     { name = "strategy-rule" },
     { name = "trade-contracts" },
@@ -1330,6 +1337,7 @@ requires-dist = [
     { name = "gateway", editable = "services/gateway" },
     { name = "oms-live", editable = "services/oms-live" },
     { name = "oms-paper", editable = "services/oms-paper" },
+    { name = "opportunity-router", editable = "services/opportunity-router" },
     { name = "strategy-ai", editable = "services/strategy-ai" },
     { name = "strategy-rule", editable = "services/strategy-rule" },
     { name = "trade-contracts", editable = "contracts/python" },

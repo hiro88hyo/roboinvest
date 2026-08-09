@@ -158,7 +158,7 @@ kill switch の期限・条件や現行 live/paper 戦略を変更しない。
 ## Policy-Authorized Opportunity Router v0 (2026-08-09)
 
 - 個別案件へのタイムリーな人間承認を前提にせず、policy/playbook versionを事前承認する
-  `POLICY_AUTHORIZED_AUTOMATION_WITH_ASYNC_HUMAN_OVERSIGHT`をplan-onlyで記録した。
+  `POLICY_AUTHORIZED_AUTOMATION_WITH_ASYNC_HUMAN_OVERSIGHT`を設計した。
 - 初期admitted playbookは0、上限3。LIQIMPとIMOM6Mは棄却状態を維持し、既存event laneや
   実装済みtechnical strategyも自動admissionしない。
 - 案件判断はEvidence、Mechanism、Context、Execution、Portfolioの全gate必須。一つでも
@@ -168,7 +168,7 @@ kill switch の期限・条件や現行 live/paper 戦略を変更しない。
   非同期監査、リスク削減方向の停止だけを担い、`NO_TRADE`からのpositive overrideは禁止。
 - 全candidateと候補ゼロを保存し、損益と判断品質を分けたappend-only reviewを行う。
   取引時には規則を変えず、月次監査と四半期の別認可で将来versionだけを見直す。
-- 実装前にcandidate intake/population hash、static mechanism対dynamic fit、複数playbook
+- Phase 2前にcandidate intake/population hash、static mechanism対dynamic fit、複数playbook
   assignment、capacity resolution、counterfactual class、outcome-blind process review、
   position version/exit lifecycleを固定する。未固定・競合・tieはfail-closed。
 - 人間は通常営業日・市場中の操作を要せず、事前認可、blind process audit、月次監査、
@@ -176,7 +176,10 @@ kill switch の期限・条件や現行 live/paper 戦略を変更しない。
   `docs/runbook/opportunity-router-human-oversight-v0.md`と
   `research/opportunity-router/human-oversight-operating-contract-v0.json`。いずれもplan-only。
 - Gatewayが最終risk執行者である既存境界を維持する。Aggregator、contract、Pub/Sub、DB、
-  Dashboardは未変更。実装、playbook選定、outcome計算、shadow、paper/liveは未承認。
+  Dashboardは未変更。明示認可済みPhase 1として`services/opportunity-router`に純関数、
+  SHA-256 binding、決定論的capacity、冪等なhash-chain local JSONL ledgerをlibrary-onlyで実装。
+  CLI/runtime/外部I/Oはなく、既存9 serviceのhealth-check対象にも追加しない。playbook選定、
+  outcome計算、forward収集、shadow、paper/liveは未承認。
 - このmeta-processは現行Kill Switchの救済・証拠ではない。正本は
   `docs/features/policy-authorized-opportunity-router-v0.md` と
   `research/opportunity-router/policy-authorized-opportunity-router-v0-charter.json`。

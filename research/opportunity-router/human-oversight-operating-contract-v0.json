@@ -6,7 +6,7 @@
   "parent_router_charter": "policy_authorized_opportunity_router_v0",
   "bound_runbook": {
     "path": "docs/runbook/opportunity-router-human-oversight-v0.md",
-    "sha256": "03a043ae375a0987b7c940d2ee0f30bf6f381059bc92536a791ddd7d966e2cb4"
+    "sha256": "e9d70005e112fd7d51908b560f02e22364d448ee809ae4f7e747124570313a78"
   },
   "operational_assumption": {
     "per_trade_human_response_is_timely": false,
@@ -123,7 +123,9 @@
   "current_state": {
     "admitted_playbooks": 0,
     "human_operation_activated": false,
-    "implementation_authorized": false,
+    "phase1_library_implementation_authorized": true,
+    "phase1_library_implementation_completed": true,
+    "runtime_or_external_integration_authorized": false,
     "outcome_computation_authorized": false,
     "shadow_authorized": false,
     "paper_authorized": false,

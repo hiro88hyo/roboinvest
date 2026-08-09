@@ -2,7 +2,7 @@
 
 作成日: 2026-08-09
 
-Status: `PLAN_ONLY_NO_IMPLEMENTATION_AUTHORITY`
+Status: `PHASE1_IMPLEMENTED_NOT_ACTIVATED`
 
 ## Purpose
 
@@ -14,10 +14,14 @@ economic-mechanism playbookから、案件ごとに使用可否を自動判定�
 人間承認を待つhuman-in-the-loop方式は採用しない。人間はpolicy versionを事前承認し、
 定期監査と緊急停止を行うhuman-on-the-loop方式を想定する。
 
-この文書は設計案であり、次のいずれも認可しない。
+ユーザーは2026-08-09に、純関数router、version/hash検証、ローカルappend-only JSONL、
+unit testだけを含むPhase 1を明示認可した。認可記録は
+`research/opportunity-router/phase1-implementation-authorization.json`である。
+
+Phase 1を超える次のいずれも認可しない。
 
 - playbookの採用または再評価
-- router、contract、database、Pub/Sub、Dashboardの実装
+- runtime runner、外部contract、database、Pub/Sub、Supabase、Dashboardの実装
 - historical backtest、既存期間のregime再分類、性能計算
 - prospective shadowの開始
 - paper/liveへのsignalまたはorderの送信
@@ -166,31 +170,31 @@ capacity_resolution:
 これは候補選択規則であり、Gatewayの権限を置き換えない。Gatewayは提出されたproposalを
 最終risk上さらに拒否・縮小できるが、routerのpriorityを事後変更したりrisk違反を許可しない。
 
-## Proposed Decision Record
+## Phase 1 Decision Record
 
-実装が別途認可された場合、少なくとも次をimmutableに保存する。
+Phase 1のローカルledgerは、次をimmutableかつSHA-256 hash chain付きで保存できる。
 
 ```yaml
 decision_id:
 decision_at:
 policy_id:
 policy_version:
+policy_sha256:
 playbook_id:
 playbook_version:
+playbook_contract_sha256:
 candidate_id:
 candidate_intake_version:
+candidate_intake_contract_sha256:
 upstream_population_hash:
 instrument:
+sector:
 evidence_cutoff_at:
 valid_until:
 matched_playbook_ids: []
 assignment_rule_version:
+capacity_rule_id:
 capacity_rule_version:
-
-thesis:
-expected_transmission_mechanism:
-expected_holding_period:
-invalidation_condition:
 
 gates:
   evidence: PASS | FAIL | UNKNOWN
@@ -202,14 +206,12 @@ gates:
 decision: ENTER_SHADOW | NO_TRADE | EXPIRED | DUPLICATE | POLICY_DISABLED
 reason_codes: []
 counterfactual_class: POLICY_EVALUABLE | ECONOMIC_ONLY_NOT_EXECUTABLE | ADMINISTRATIVE_TERMINAL | NOT_APPLICABLE
-target_notional_policy:
-entry_condition:
-exit_condition:
-maximum_acceptable_gap:
-
-human_action: NONE | DEACTIVATE_FUTURE_POLICY
-source_provenance: []
+candidate_priority:
 ```
+
+thesis、source provenance、entry/invalidation/exit、notional/risk等のdomain fieldは、実playbook
+contractを固定する次段階まで追加しない。Phase 1 fixtureの`ENTER_SHADOW`は純関数のterminal
+branchを検証するだけで、forward shadowの開始または証拠保存を意味しない。
 
 `WATCH`は注文待ち状態にしない。再評価時には新しいcutoffとdecision IDを持つ別decisionを
 作る。期限後の人間承認や遅延データで過去decisionを更新しない。
@@ -290,16 +292,26 @@ deactivateを理由にexit monitorや必要なcloseoutを止めず、新version�
 `strategy_key / candidate_id`合議を継続し、Gatewayは`trade-signals`以降のriskとroutingを
 継続する。
 
-将来の実装案は次の段階に分ける。
+Phase 1は`services/opportunity-router`へlibrary-only workspace packageとして実装した。
+`__main__`、CLI、scheduler、ambient env読込はなく、既存9 runtime servicesのhealth-check対象に
+追加していない。実装済み範囲は次のとおり。
 
-1. 純関数routerとJSONL decision ledger。外部I/O、Pub/Sub、Supabaseなし。
+- canonical JSONとSHA-256によるcandidate-intake、playbook、policy、population binding
+- timezone-aware cutoff、expiry、duplicate、playbook ambiguity、全gateのfail-closed評価
+- 事前登録capacity ruleによるinput-order非依存の決定
+- deterministic decision ID
+- flock、fsync、hash chain、conflict検出を持つ冪等なlocal JSONL ledger
+
+段階は次のように維持する。
+
+1. **COMPLETED**: 純関数routerとlocal JSONL decision ledger。外部I/Oなし。
 2. shadow-only candidate intakeとledger writer。`trade-signals`へpublishしない。
 3. forward shadow evaluator。accepted/rejected/no-candidateを同じcohortでfinalizeする。
 4. 2026-09-30判定後、別認可がある場合だけpaper接続を設計する。
 5. paper evidenceと別live認可後に限りGatewayへ既存contract互換のintentを渡す。
 
-新topic、subscription、table、contract、新サービスの要否はPhase 1実装認可時に決める。
-サービス間の直接通信は禁止し、`contracts/`をSSOTとする。
+runtime service、topic、subscription、table、外部contractの要否はPhase 2の別認可時に決める。
+サービス間の直接通信は禁止し、外部schemaを追加する場合は`contracts/`をSSOTとする。
 
 ## Failure And Timing Semantics
 
@@ -334,9 +346,11 @@ sample size、outcome horizon、cost、pass/fail threshold、shadow期間はま�
 
 ## Authority Boundary
 
-現在の権限はplan記録だけである。
+現在の権限はPhase 1の隔離されたlibrary実装までである。
 
-- implementation authorized: false
+- phase1 implementation authorized: true
+- phase1 implementation status: `IMPLEMENTED_NOT_ACTIVATED`
+- runtime/external integration authorized: false
 - playbook admission authorized: false
 - historical or forward outcome computation authorized: false
 - shadow collection authorized: false
@@ -344,6 +358,9 @@ sample size、outcome horizon、cost、pass/fail threshold、shadow期間はま�
 - current strategy parameters changed: false
 - Project Kill Switch changed: false
 - counts as 2026-09-30 evidence: false
+
+Phase 1 codeをfixture以外のhistorical/forward candidateへ実行してledgerを収集することは、
+この認可に含まれない。現行9/30 readiness pipelineとそのartifact/hash chainは変更しない。
 
 次へ進むには、最大3つの候補を選ぶ前に、playbook admission contract、trial budget、
 candidate intake、static validity/dynamic fit、playbook assignment、capacity resolution、

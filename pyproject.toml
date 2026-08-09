@@ -15,6 +15,7 @@ dependencies = [
     "oms-paper",
     "oms-live",
     "feeder",
+    "opportunity-router",
 ]
 
 [tool.uv]
@@ -32,6 +33,7 @@ gateway = { workspace = true }
 oms-paper = { workspace = true }
 oms-live = { workspace = true }
 feeder = { workspace = true }
+opportunity-router = { workspace = true }
 
 [tool.uv.workspace]
 # 未実装のサービスはディレクトリが生まれたタイミングで追記する。
@@ -46,6 +48,7 @@ members = [
     "services/oms-paper",
     "services/oms-live",
     "services/feeder",
+    "services/opportunity-router",
 ]
 
 [dependency-groups]
@@ -85,7 +88,7 @@ pretty = true
 show_error_codes = true
 namespace_packages = true
 explicit_package_bases = true
-mypy_path = "contracts/python:services/universe-scanner/src:services/feature-engine/src:services/strategy-rule/src:services/strategy-ai/src:services/aggregator/src:services/gateway/src:services/oms-paper/src:services/oms-live/src:services/feeder/src"
+mypy_path = "contracts/python:services/universe-scanner/src:services/feature-engine/src:services/strategy-rule/src:services/strategy-ai/src:services/aggregator/src:services/gateway/src:services/oms-paper/src:services/oms-live/src:services/feeder/src:services/opportunity-router/src"
 files = [
     "contracts/python/trade_contracts",
     "contracts/python/tests",
@@ -107,6 +110,8 @@ files = [
     "services/oms-live/tests",
     "services/feeder/src",
     "services/feeder/tests",
+    "services/opportunity-router/src",
+    "services/opportunity-router/tests",
 ]
 plugins = ["pydantic.mypy"]
 
@@ -143,6 +148,7 @@ testpaths = [
     "services/oms-paper/tests",
     "services/oms-live/tests",
     "services/feeder/tests",
+    "services/opportunity-router/tests",
 ]
 markers = [
     "integration: end-to-end tests that require a running Pub/Sub emulator / Supabase (skipped by default if unreachable)",
@@ -162,6 +168,7 @@ source = [
     "services/oms-paper/src/oms_paper",
     "services/oms-live/src/oms_live",
     "services/feeder/src/feeder",
+    "services/opportunity-router/src/opportunity_router",
 ]
 
 [tool.coverage.report]

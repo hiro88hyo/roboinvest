@@ -1,0 +1,35 @@
+{
+  "authorization_id": "opportunity_router_phase1_implementation_20260809",
+  "authorized_at": "2026-08-09T07:01:13Z",
+  "authorized_by": "repository_owner_via_codex_chat",
+  "authorization_statement": "Phase 1（純関数＋ローカルJSONL、外部I/Oなし）の実装を認可する",
+  "repository_baseline_commit": "72502c47ddafea76637fb0fd0ed84ac30aaf5252",
+  "parent_charter": "policy_authorized_opportunity_router_v0",
+  "scope": {
+    "pure_function_router": true,
+    "version_and_sha256_validation": true,
+    "deterministic_decision_identity": true,
+    "local_append_only_jsonl_ledger": true,
+    "unit_tests_and_fixtures": true,
+    "external_io": false,
+    "pubsub": false,
+    "supabase": false,
+    "dashboard": false,
+    "aggregator_integration": false,
+    "gateway_integration": false,
+    "trade_signal_publication": false,
+    "historical_outcome_computation": false,
+    "forward_collection": false,
+    "shadow_activation": false,
+    "paper_activation": false,
+    "live_activation": false
+  },
+  "admitted_playbooks_remain": 0,
+  "project_kill_switch": {
+    "deadline": "2026-09-30",
+    "changed": false,
+    "phase1_artifacts_count_as_evidence": false,
+    "current_readiness_pipeline_may_be_modified": false
+  },
+  "authorization_status": "ACTIVE_FOR_PHASE1_IMPLEMENTATION_ONLY"
+}

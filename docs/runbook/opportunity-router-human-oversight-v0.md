@@ -10,8 +10,9 @@ Status: `PLAN_ONLY_NO_OPERATION_AUTHORITY`
 定義する。個別案件への即時回答を要求せず、人間の不在時もシステムは事前policyに従って
 動き、欠測・曖昧・failure時はfail-closedとする。
 
-このrunbookは運用案の記録だけであり、playbook admission、router実装、outcome計算、
-shadow、paper、liveを開始しない。現在のadmitted playbookは0である。
+このrunbookは運用案の記録だけである。Phase 1 library実装は別の明示認可により完了したが、
+このrunbookはplaybook admission、runtime、outcome計算、forward収集、shadow、paper、liveを
+開始しない。現在のadmitted playbookは0である。
 
 ## Human Role
 
@@ -154,8 +155,10 @@ Kill Switch条件を変更する場合は理由の文書化、明示確認、最
 
 - runbook recording authorized: true
 - human operation activated: false
+- phase1 library implementation authorized: true
+- phase1 library implementation status: `IMPLEMENTED_NOT_ACTIVATED`
 - policy or playbook admission authorized: false
-- router implementation authorized: false
+- runtime/external integration authorized: false
 - outcome computation authorized: false
 - shadow/paper/live authorized: false
 - Project Kill Switch changed: false
