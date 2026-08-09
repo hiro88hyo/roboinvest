@@ -78,6 +78,10 @@
   実装前にcandidate intake/population hash、static mechanism対dynamic fit、複数playbook
   assignment、capacity resolution、counterfactual class、outcome-blind process review、
   position version/exit lifecycleを固定する。未固定・競合・tieはfail-closed。
+  人間は通常営業日・市場中の操作を要せず、事前認可、blind process audit、月次監査、
+  四半期改版、リスク削減停止だけを担う。運用正本は
+  `docs/runbook/opportunity-router-human-oversight-v0.md`と
+  `research/opportunity-router/human-oversight-operating-contract-v0.json`。いずれもplan-only。
   playbook選定、実装、outcome計算、shadow、paper/liveは未承認で、現行Kill Switchとは
   分離する。正本は `docs/features/policy-authorized-opportunity-router-v0.md` と
   `research/opportunity-router/policy-authorized-opportunity-router-v0-charter.json`。

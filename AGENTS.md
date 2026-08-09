@@ -171,6 +171,10 @@ kill switch の期限・条件や現行 live/paper 戦略を変更しない。
 - 実装前にcandidate intake/population hash、static mechanism対dynamic fit、複数playbook
   assignment、capacity resolution、counterfactual class、outcome-blind process review、
   position version/exit lifecycleを固定する。未固定・競合・tieはfail-closed。
+- 人間は通常営業日・市場中の操作を要せず、事前認可、blind process audit、月次監査、
+  四半期改版、リスク削減停止だけを担う。運用正本は
+  `docs/runbook/opportunity-router-human-oversight-v0.md`と
+  `research/opportunity-router/human-oversight-operating-contract-v0.json`。いずれもplan-only。
 - Gatewayが最終risk執行者である既存境界を維持する。Aggregator、contract、Pub/Sub、DB、
   Dashboardは未変更。実装、playbook選定、outcome計算、shadow、paper/liveは未承認。
 - このmeta-processは現行Kill Switchの救済・証拠ではない。正本は

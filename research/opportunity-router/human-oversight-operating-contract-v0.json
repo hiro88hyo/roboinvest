@@ -1,0 +1,141 @@
+{
+  "contract_id": "opportunity_router_human_oversight_v0",
+  "created_at": "2026-08-09T01:31:00Z",
+  "status": "PLAN_ONLY_NO_OPERATION_AUTHORITY",
+  "repository_baseline_commit": "8cbb0ee554fb5dd66a2f629e1af9e9135e64639d",
+  "parent_router_charter": "policy_authorized_opportunity_router_v0",
+  "bound_runbook": {
+    "path": "docs/runbook/opportunity-router-human-oversight-v0.md",
+    "sha256": "03a043ae375a0987b7c940d2ee0f30bf6f381059bc92536a791ddd7d966e2cb4"
+  },
+  "operational_assumption": {
+    "per_trade_human_response_is_timely": false,
+    "human_nonresponse_changes_decision": false,
+    "waiting_human_state_exists": false,
+    "system_default_on_missing_ambiguous_stale_or_failed_input": "FAIL_CLOSED"
+  },
+  "human_roles": [
+    "RESEARCH_PROPOSER",
+    "POLICY_AUTHORIZER",
+    "PROCESS_AUDITOR",
+    "OUTCOME_ANALYST",
+    "RISK_CONTROLLER"
+  ],
+  "single_operator_separation": {
+    "one_person_may_hold_all_roles": true,
+    "stage_records_must_remain_separate": true,
+    "outcome_hidden_until_process_audit_locked": true,
+    "outcome_may_mutate_process_audit": false
+  },
+  "cadence": {
+    "policy_creation": {
+      "human_action": "AUTHORIZE_OR_REJECT_FUTURE_VERSION",
+      "must_complete_before": "FUTURE_EFFECTIVE_AT"
+    },
+    "preopen": {
+      "human_action_required": false,
+      "system_action": "VERIFY_HEALTH_AND_ACTIVE_VERSION_OR_FAIL_CLOSED"
+    },
+    "market_session": {
+      "human_action_required": false,
+      "system_action": "MAKE_AND_PERSIST_TERMINAL_DECISION",
+      "per_trade_approval_exists": false
+    },
+    "post_decision": {
+      "human_action": "ASYNCHRONOUS_OUTCOME_BLINDED_PROCESS_AUDIT",
+      "blocks_future_decisions": false
+    },
+    "post_outcome": {
+      "human_action": "OUTCOME_DIAGNOSTIC_AFTER_PROCESS_AUDIT_LOCK",
+      "recommended_before": "NEXT_MONTHLY_REVIEW",
+      "blocks_operations": false
+    },
+    "monthly": {
+      "human_action": "COHORT_CALIBRATION_AND_DEVIATION_AUDIT",
+      "allowed_terminal_actions": [
+        "NO_CHANGE",
+        "CREATE_RESEARCH_PROPOSAL"
+      ]
+    },
+    "quarterly_or_sample_sufficient": {
+      "human_action": "FROZEN_COHORT_VERSION_REVIEW",
+      "allowed_proposals": [
+        "CONTINUE_UNCHANGED_UNTIL_EXISTING_EXPIRATION",
+        "RETIRE_FUTURE_ENTRIES",
+        "PROPOSE_NEW_VERSION",
+        "NO_CONCLUSION"
+      ]
+    },
+    "emergency": {
+      "human_action": "RISK_REDUCING_DEACTIVATION_IF_OBSERVED",
+      "human_immediate_response_required_for_safety": false
+    }
+  },
+  "required_human_records": [
+    "PolicyAuthorizationRecord",
+    "ProcessAuditRecord",
+    "OutcomeDiagnosticRecord",
+    "ResearchHypothesisRecord",
+    "PolicyDeactivationRecord",
+    "IncidentRecord"
+  ],
+  "record_contract": {
+    "append_only": true,
+    "required_fields": [
+      "actor",
+      "created_at",
+      "effective_at",
+      "target_id",
+      "target_version",
+      "target_hash",
+      "reason",
+      "source_provenance"
+    ],
+    "correction_deletes_original": false,
+    "correction_requires_supersedes_link": true
+  },
+  "allowed_human_actions": [
+    "AUTHORIZE_FUTURE_POLICY_OR_PLAYBOOK_VERSION",
+    "REJECT_FUTURE_POLICY_OR_PLAYBOOK_VERSION",
+    "LOCK_OUTCOME_BLINDED_PROCESS_AUDIT",
+    "APPEND_OUTCOME_DIAGNOSTIC",
+    "CREATE_SEPARATE_RESEARCH_HYPOTHESIS",
+    "DEACTIVATE_FUTURE_ENTRIES",
+    "INVOKE_EXISTING_GATEWAY_RISK_REDUCTION",
+    "RECORD_INCIDENT"
+  ],
+  "prohibited_human_actions": [
+    "APPROVE_OR_REJECT_AN_INDIVIDUAL_TRADE_IN_THE_ROUTER",
+    "CHANGE_NO_TRADE_TO_ENTRY",
+    "REASSIGN_A_RECORDED_DECISION_TO_ANOTHER_PLAYBOOK",
+    "RELAX_AN_ACTIVE_THRESHOLD_IN_PLACE",
+    "MUTATE_PROCESS_AUDIT_AFTER_OUTCOME_REVEAL",
+    "CANCEL_REQUIRED_EXIT_DUE_TO_POLICY_DEACTIVATION",
+    "AUTO_REACTIVATE_OLD_VERSION_AFTER_INCIDENT",
+    "MIX_MANUAL_DISCRETIONARY_RESULTS_INTO_ROUTER_EVIDENCE"
+  ],
+  "position_and_deactivation": {
+    "deactivation_blocks_new_entries": true,
+    "deactivation_cancels_required_exits": false,
+    "gateway_may_force_earlier_risk_reduction": true,
+    "reactivation_requires_new_authorization": true
+  },
+  "current_state": {
+    "admitted_playbooks": 0,
+    "human_operation_activated": false,
+    "implementation_authorized": false,
+    "outcome_computation_authorized": false,
+    "shadow_authorized": false,
+    "paper_authorized": false,
+    "live_authorized": false
+  },
+  "project_kill_switch": {
+    "deadline": "2026-09-30",
+    "changed": false,
+    "router_review_counts_as_evidence": false,
+    "manual_discretionary_sandbox_counts_as_evidence": false,
+    "change_requires_documented_reason_explicit_confirmation_and_one_week_cooling_off": true
+  },
+  "next_human_authorization_point": "START_PLAYBOOK_ADMISSION_AND_FORWARD_EVIDENCE_DESIGN",
+  "research_only": true
+}

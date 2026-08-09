@@ -62,6 +62,11 @@ processとして別charter、別forward evidence、別認可を必要とする�
 後から`ENTER`へ変更するpositive overrideは禁止する。リスク削減方向の停止は許せるが、
 記録済みdecisionを別playbookへ付け替えない。
 
+人間の具体的なcadence、authorization、process audit、outcome diagnostic、月次・四半期
+review、emergency actionは
+`docs/runbook/opportunity-router-human-oversight-v0.md`に分離する。同runbookと機械可読contractも
+plan-onlyであり、運用開始や新しい権限を意味しない。
+
 ## Initial Playbook Admission State
 
 - maximum active playbooks: 3

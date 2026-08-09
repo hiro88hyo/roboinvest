@@ -6,7 +6,7 @@
   "repository_baseline_commit": "e66866f2ced76cdf4647a65c7fd74c0ac50e16f5",
   "bound_plan": {
     "path": "docs/features/policy-authorized-opportunity-router-v0.md",
-    "sha256": "35d629f6c8c0d861e387b3710420557187e808a88f9610ff0b4a75e0215526b6"
+    "sha256": "7b2e661d499b079a687f661905fed83a7508cf850437b2cb0788280d0ab65686"
   },
   "advisory_context": {
     "chatgpt_pro_shared_response": "https://chatgpt.com/s/t_6a77c0b9d0348191987f57ab5af1f8a5",
@@ -24,6 +24,15 @@
     "positive_per_trade_override_allowed": false,
     "risk_reducing_future_policy_deactivation_allowed": true,
     "default_when_ambiguous_missing_stale_or_failed": "NO_TRADE"
+  },
+  "human_oversight_contract": {
+    "runbook_path": "docs/runbook/opportunity-router-human-oversight-v0.md",
+    "runbook_sha256": "03a043ae375a0987b7c940d2ee0f30bf6f381059bc92536a791ddd7d966e2cb4",
+    "contract_path": "research/opportunity-router/human-oversight-operating-contract-v0.json",
+    "contract_sha256": "da7f203cf6ab7272adb75b4e236d0158672b71c0202cd7dfd3f5a16f6ed687c8",
+    "status": "PLAN_ONLY_NO_OPERATION_AUTHORITY",
+    "human_operation_activated": false,
+    "per_trade_human_action_required": false
   },
   "playbook_admission": {
     "maximum_active_playbooks": 3,
