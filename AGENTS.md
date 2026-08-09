@@ -168,6 +168,9 @@ kill switch の期限・条件や現行 live/paper 戦略を変更しない。
   非同期監査、リスク削減方向の停止だけを担い、`NO_TRADE`からのpositive overrideは禁止。
 - 全candidateと候補ゼロを保存し、損益と判断品質を分けたappend-only reviewを行う。
   取引時には規則を変えず、月次監査と四半期の別認可で将来versionだけを見直す。
+- 実装前にcandidate intake/population hash、static mechanism対dynamic fit、複数playbook
+  assignment、capacity resolution、counterfactual class、outcome-blind process review、
+  position version/exit lifecycleを固定する。未固定・競合・tieはfail-closed。
 - Gatewayが最終risk執行者である既存境界を維持する。Aggregator、contract、Pub/Sub、DB、
   Dashboardは未変更。実装、playbook選定、outcome計算、shadow、paper/liveは未承認。
 - このmeta-processは現行Kill Switchの救済・証拠ではない。正本は

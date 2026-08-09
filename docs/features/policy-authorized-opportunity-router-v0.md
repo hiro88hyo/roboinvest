@@ -75,6 +75,30 @@ playbook候補は、異なるeconomic mechanism、独立した事前登録、時
 実行可能なinvalid/exit contractを持たなければならない。採用判断は別の明示認可まで
 行わない。
 
+## Candidate Intake And Population Contract
+
+routerへ到達したcandidateだけを保存しても母集団は再現できない。playbook admissionより
+前に、candidate生成自体をversion固定し、候補ゼロを含むupstream populationをhashで
+拘束する。
+
+```yaml
+candidate_intake_contract:
+  source_id:
+  source_version:
+  eligible_instrument_contract:
+  detection_rule:
+  evidence_cutoff_rule:
+  deduplication_rule:
+  candidate_id_generation:
+  zero_candidate_session_definition:
+  upstream_population_hash:
+```
+
+上記のいずれかが未固定、入力populationのhashが不一致、またはeligible instrumentの
+point-in-time再現ができない場合、そのsessionはrouter evidenceへ算入せずentryを生成しない。
+失敗自体は`INTAKE_CONTRACT_INVALID`または`POPULATION_HASH_MISMATCH` heartbeatとして残す。
+候補生成規則をforward開始後に変更する場合は別versionと別cohortを必要とする。
+
 ## Decision Gates
 
 初期decisionは加重平均scoreで決めない。次の必須gateを個別に`PASS / FAIL / UNKNOWN`
@@ -83,13 +107,18 @@ playbook候補は、異なるeconomic mechanism、独立した事前登録、時
 | Gate | Owner | Minimum contract |
 |---|---|---|
 | Evidence | router | 一次情報、cutoff、receipt、hash、事実と推測の分離 |
-| Mechanism | router | playbook固有の伝達経路、holding horizon、反証条件 |
+| Mechanism fit | router | 事前登録済みmechanismへの案件の動的適合。案件ごとの新規作文は禁止 |
 | Context | router | decision時点で利用可能な市場・銘柄状態と適合規則 |
 | Execution | router precheck | staleでない価格・gap・spread・depth・lot・session |
 | Portfolio | Gateway authoritative | position、集中、capital、kill switch、risk、order feasibility |
 
 RouterのPortfolio gateはshadow上の暫定評価に限る。paper/liveが将来認可された場合も、
 Gatewayだけが最終risk判定とquantity調整を行う。RouterやLLMへrisk執行を分散しない。
+
+Mechanismは二層に分ける。admission時の`playbook_static_validity`でeconomic mechanism、
+falsifiability、holding horizon、admissible evidenceを固定する。案件時には
+`candidate_dynamic_fit`としてrequired event、magnitude、contradictory event、horizonを
+機械評価するだけとし、LLMが案件ごとにmechanismや判定条件を発明しない。
 
 `confidence`は当初entry/no-entryの監査属性であり、position sizingに使わない。
 総合confidenceは必須gateの最小値より強く表現してはならず、単一の高得点で弱いgateを
@@ -108,6 +137,30 @@ LLM出力は`UNKNOWN`として`NO_TRADE`へ倒す。
 
 自由記述の主観confidenceだけで`ENTER_SHADOW`を生成しない。
 
+## Playbook Assignment And Capacity Contract
+
+同一candidateが複数playbookへ一致した場合、事前固定した一意のassignment ruleがない
+v0既定動作は`AMBIGUOUS_PLAYBOOK`による`NO_TRADE`とする。案件を見てから「より適切な」
+playbookへ付け替えない。将来priority方式を採る場合も、priority version、same-instrument、
+same-sector、tie-breakerをforward開始前に固定する。
+
+全gate通過candidateが同時保有・capital上限を超える場合も、到着順や人間判断で選ばない。
+routerまたは将来のportfolio proposal層が次を事前固定し、選外を`CAPACITY_REJECTED`として
+保存する。規則未設定または一意に解けないtieはentryを生成しない。
+
+```yaml
+capacity_resolution:
+  playbook_priority:
+  candidate_priority:
+  tie_breaker:
+  same_instrument_rule:
+  same_sector_rule:
+  reason_code: CAPACITY_REJECTED
+```
+
+これは候補選択規則であり、Gatewayの権限を置き換えない。Gatewayは提出されたproposalを
+最終risk上さらに拒否・縮小できるが、routerのpriorityを事後変更したりrisk違反を許可しない。
+
 ## Proposed Decision Record
 
 実装が別途認可された場合、少なくとも次をimmutableに保存する。
@@ -120,9 +173,14 @@ policy_version:
 playbook_id:
 playbook_version:
 candidate_id:
+candidate_intake_version:
+upstream_population_hash:
 instrument:
 evidence_cutoff_at:
 valid_until:
+matched_playbook_ids: []
+assignment_rule_version:
+capacity_rule_version:
 
 thesis:
 expected_transmission_mechanism:
@@ -138,6 +196,7 @@ gates:
 
 decision: ENTER_SHADOW | NO_TRADE | EXPIRED | DUPLICATE | POLICY_DISABLED
 reason_codes: []
+counterfactual_class: POLICY_EVALUABLE | ECONOMIC_ONLY_NOT_EXECUTABLE | ADMINISTRATIVE_TERMINAL | NOT_APPLICABLE
 target_notional_policy:
 entry_condition:
 exit_condition:
@@ -154,13 +213,23 @@ source_provenance: []
 ことを防ぐため、全candidateのdecisionと、将来認可された場合のcounterfactual outcomeを
 同じ母集団で追跡する。
 
+counterfactualはreasonを無視して一括比較しない。`POLICY_EVALUABLE`は必要データと実行可能性が
+揃いながらpolicy gateで却下された案件、`ECONOMIC_ONLY_NOT_EXECUTABLE`は経済評価は可能でも
+execution不能、`ADMINISTRATIVE_TERMINAL`はdisabled・duplicate・expiry等、
+`NOT_APPLICABLE`は候補ゼロ等とする。selector比較の主対象は`ENTER_SHADOW`対
+`POLICY_EVALUABLE`に限定する。欠測案件へ後から終値だけを当てて「見逃し利益」とみなさない。
+
 ## Async Review And Learning Contract
 
 人間が案件時刻に立ち会えなくても、判断品質の改善は非同期に行える。損益と判断品質を
 混同せず、`ENTER_SHADOW`だけでなく`NO_TRADE / EXPIRED / DUPLICATE /
 POLICY_DISABLED`と候補ゼロも同じdecision cohortに残す。
 
-outcome確定後のreviewは元のdecisionを変更せず、別のappend-only recordとして紐づける。
+reviewは元のdecisionを変更せず、別のappend-only recordとして紐づける。最初に損益、
+MAE/MFE、将来価格を非表示にした`PROCESS_AUDIT`を確定し、その後で
+`OUTCOME_DIAGNOSTIC`を行う二段階とする。結果を見てからprocess評価を上書きしない。
+新しい規則候補は`HYPOTHESIS_GENERATING`へ分離し、active policyへ直接戻さない。
+
 少なくとも次の軸を、観測事実、事前規則への適合、結果の三つに分けて評価する。
 
 - hypothesis: 想定した価格反映mechanismと反証条件は妥当だったか
@@ -177,7 +246,9 @@ outcome確定後のreviewは元のdecisionを変更せず、別のappend-only re
 
 review cadenceは次を初期案とする。
 
-- decision/outcome確定時: システムが事実、reason code、逸脱だけを追記し、規則を変えない
+- decision確定時: システムが事実、reason code、逸脱を追記する
+- process review: outcomeをblindした状態で事前contractへの適合を確定する
+- outcome確定時: process reviewをlockした後に損益、MAE/MFE、費用、counterfactualを診断する
 - monthly: 人間が採用対非採用、confidence calibration、gate別傾向、playbook別傾向を監査する
 - quarterly: 十分性contractを満たした版だけを継続、version更新、retire候補として審査する
 - new hypothesis: 現役playbookへ混ぜず、別research ledgerから新versionのprospective shadow候補へ進める
@@ -185,6 +256,28 @@ review cadenceは次を初期案とする。
 月次・四半期reviewは売買を待たせない。policy/playbookの変更は常に将来有効な新versionと
 別認可を必要とし、単一の大勝ち・大負け、事後的なregime名、却下案件の見逃し利益だけで
 activationしない。`WATCH`相当の再観測も注文待ち状態にはせず、新cutoffの別decisionとする。
+
+## Future Position Lifecycle Contract
+
+paper/liveが将来別認可された場合、policy expiration、playbook retire、emergency deactivate、
+version移行は新規entryを停止しても既存positionのexit責務を消してはならない。各positionを
+entry時のpolicy、playbook、exit、invalidation versionへ拘束する。
+
+```yaml
+position_binding:
+  entry_policy_version:
+  entry_playbook_version:
+  exit_contract_version:
+  invalidation_contract_version:
+
+policy_deactivation:
+  blocks_new_entries: true
+  cancels_required_exits: false
+  reactivation_requires_new_authorization: true
+```
+
+Gatewayのkill switchやrisk削減命令は、拘束済みexitより早い縮小・決済を要求できる。
+deactivateを理由にexit monitorや必要なcloseoutを止めず、新versionへ既存positionを付け替えない。
 
 ## Architecture Boundary
 
@@ -224,6 +317,7 @@ activationしない。`WATCH`相当の再観測も注文待ち状態にはせず
 - gate別fail/unknown率、data completeness、decision latency、expiry率
 - confidence bucket別の費用控除後expectancy
 - acceptedとrejected candidateのcounterfactual outcome差
+- counterfactual class別の件数と、`POLICY_EVALUABLE`に限定したselector差
 - playbook別expectancy、MAE/MFE、hold期間乖離
 - hypothesis、information、context、timing、execution、size、discipline別の逸脱率
 - process-compliant win/lossとprocess-violating win/lossの分離
@@ -247,5 +341,10 @@ sample size、outcome horizon、cost、pass/fail threshold、shadow期間はま�
 - counts as 2026-09-30 evidence: false
 
 次へ進むには、最大3つの候補を選ぶ前に、playbook admission contract、trial budget、
-forward outcome contract、sample sufficiency、cost、promotion/freeze条件を明示し、別のユーザー
-承認を得る。現行戦略、既存event shadow、ETF Phase 3 NO-GOはそのまま維持する。
+candidate intake、static validity/dynamic fit、playbook assignment、capacity resolution、
+counterfactual class、blind process review、forward outcome contract、position lifecycle、
+sample sufficiency、cost、promotion/freeze条件を明示し、別のユーザー承認を得る。
+現行戦略、既存event shadow、ETF Phase 3 NO-GOはそのまま維持する。
+
+将来、人間が案件選択を楽しむlaneを設ける場合は`manual_discretionary_sandbox`としてrouterと
+別contract・別ledger・別performance evidenceに分離する。人間判断をrouter成績へ混ぜない。
