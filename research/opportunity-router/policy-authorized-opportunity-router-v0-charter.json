@@ -1,0 +1,168 @@
+{
+  "charter_id": "policy_authorized_opportunity_router_v0",
+  "created_at": "2026-08-09T00:17:28Z",
+  "status": "PLAN_ONLY_NO_IMPLEMENTATION_AUTHORITY",
+  "identity": "META_DECISION_PROCESS_NOT_ALPHA_CANDIDATE",
+  "repository_baseline_commit": "e66866f2ced76cdf4647a65c7fd74c0ac50e16f5",
+  "bound_plan": {
+    "path": "docs/features/policy-authorized-opportunity-router-v0.md",
+    "sha256": "0bbd2d5e1e451301134612c43e24518bc3235db98f06da2bd81f333a8c7bf0ef"
+  },
+  "advisory_context": {
+    "chatgpt_pro_shared_response": "https://chatgpt.com/s/t_6a77c0b9d0348191987f57ab5af1f8a5",
+    "advisory_is_evidence": false,
+    "user_operational_constraint": "PER_TRADE_HUMAN_DECISIONS_CANNOT_BE_ASSUMED_TIMELY"
+  },
+  "operating_model": {
+    "mode": "POLICY_AUTHORIZED_AUTOMATION_WITH_ASYNC_HUMAN_OVERSIGHT",
+    "human_in_the_loop_per_trade": false,
+    "human_on_the_loop": true,
+    "human_nonresponse_changes_decision": false,
+    "policy_and_playbook_versions_require_prior_human_authorization": true,
+    "positive_per_trade_override_allowed": false,
+    "risk_reducing_future_policy_deactivation_allowed": true,
+    "default_when_ambiguous_missing_stale_or_failed": "NO_TRADE"
+  },
+  "playbook_admission": {
+    "maximum_active_playbooks": 3,
+    "currently_admitted_playbooks": 0,
+    "admission_authorized": false,
+    "candidates_selected": false,
+    "must_have_distinct_economic_mechanism": true,
+    "must_have_independent_preregistration": true,
+    "must_have_point_in_time_input_contract": true,
+    "must_have_invalidation_and_exit_contract": true,
+    "explicitly_prohibited_from_admission": [
+      {
+        "candidate_id": "liqimp1m_logdiff_v0_research",
+        "reason": "FROZEN_REJECTED_DEVELOPMENT"
+      },
+      {
+        "candidate_id": "imom6m_top5_fixed20_v0_research",
+        "reason": "FROZEN_REJECTED_DEVELOPMENT_GATE_A"
+      }
+    ],
+    "existing_event_lanes_auto_admitted": false,
+    "existing_technical_implementation_is_admission_evidence": false
+  },
+  "decision_contract": {
+    "automated_terminal_decisions": [
+      "ENTER_SHADOW",
+      "NO_TRADE",
+      "EXPIRED",
+      "DUPLICATE",
+      "POLICY_DISABLED"
+    ],
+    "waiting_for_human_state_exists": false,
+    "watch_state_can_emit_order": false,
+    "late_human_approval_can_mutate_decision": false,
+    "late_data_can_mutate_decision": false,
+    "reevaluation_requires_new_cutoff_and_decision_id": true,
+    "zero_candidate_session_heartbeat_required": true,
+    "accepted_rejected_and_no_candidate_population_persisted": true,
+    "confidence_used_for_position_sizing": false,
+    "fixed_notional_or_fixed_risk_required_before_shadow": true
+  },
+  "required_gates": {
+    "aggregation": "ALL_MUST_PASS_NO_WEIGHTED_AVERAGE_OVERRIDE",
+    "states": [
+      "PASS",
+      "FAIL",
+      "UNKNOWN"
+    ],
+    "evidence": {
+      "owner": "OPPORTUNITY_ROUTER",
+      "status": "NOT_IMPLEMENTED"
+    },
+    "mechanism": {
+      "owner": "OPPORTUNITY_ROUTER",
+      "status": "NOT_IMPLEMENTED"
+    },
+    "context": {
+      "owner": "OPPORTUNITY_ROUTER",
+      "status": "NOT_IMPLEMENTED"
+    },
+    "execution_precheck": {
+      "owner": "OPPORTUNITY_ROUTER",
+      "status": "NOT_IMPLEMENTED"
+    },
+    "portfolio_and_risk": {
+      "provisional_owner": "OPPORTUNITY_ROUTER_SHADOW_ONLY",
+      "authoritative_owner": "GATEWAY",
+      "gateway_authority_may_not_be_bypassed": true,
+      "status": "NOT_IMPLEMENTED"
+    }
+  },
+  "llm_boundary": {
+    "may_structure_primary_evidence": true,
+    "may_propose_counterevidence": true,
+    "may_propose_playbook_classification": true,
+    "subjective_confidence_alone_can_enter": false,
+    "unversioned_model_prompt_tool_or_schema_can_enter": false,
+    "uncited_required_fact_can_enter": false,
+    "malformed_timeout_or_disagreement_result": "UNKNOWN_AND_NO_TRADE"
+  },
+  "architecture_boundary": {
+    "existing_aggregator_responsibility_changed": false,
+    "existing_gateway_responsibility_changed": false,
+    "gateway_remains_sole_final_risk_enforcer": true,
+    "direct_service_communication_allowed": false,
+    "contracts_remain_single_source_of_truth": true,
+    "new_service_topic_subscription_table_or_contract_decided": false,
+    "initial_implementation_if_authorized": "PURE_FUNCTION_AND_JSONL_LEDGER_NO_EXTERNAL_IO",
+    "shadow_stage_may_publish_trade_signals": false
+  },
+  "prospective_evidence": {
+    "existing_history_is_untouched_oos_for_router": false,
+    "existing_history_allowed_use": "PLAYBOOK_DESIGN_AND_FAILURE_KNOWLEDGE_ONLY",
+    "evidence_start": "AFTER_POLICY_PLAYBOOK_AND_OUTCOME_CONTRACT_FREEZE",
+    "sample_size_fixed": false,
+    "outcome_horizon_fixed": false,
+    "cost_model_fixed": false,
+    "promotion_and_freeze_thresholds_fixed": false,
+    "collection_started": false,
+    "candidate_metrics_include_accepted_rejected_and_zero_candidate_days": true
+  },
+  "phase_authority": {
+    "plan_recording_authorized": true,
+    "playbook_admission_authorized": false,
+    "implementation_authorized": false,
+    "historical_outcome_computation_authorized": false,
+    "forward_outcome_computation_authorized": false,
+    "shadow_collection_authorized": false,
+    "paper_authorized": false,
+    "live_authorized": false
+  },
+  "prohibited_actions": [
+    "revive rejected LIQIMP or IMOM under a new label",
+    "define a successful regime after inspecting historical outcomes",
+    "tune playbook switching rules on existing result periods",
+    "change a losing decision to a different playbook after outcome observation",
+    "treat human nonresponse as an implicit per-trade approval",
+    "allow an LLM free-text score to bypass a failed or unknown gate",
+    "publish a shadow decision to trade-signals",
+    "weaken or defer the current Project Kill Switch"
+  ],
+  "project_kill_switch": {
+    "deadline": "2026-09-30",
+    "changed": false,
+    "counts_as_2026_09_30_evidence": false,
+    "rescues_current_strategy": false,
+    "paper_or_live_before_adjudication_authorized": false
+  },
+  "next_authorization_required": {
+    "name": "PLAYBOOK_ADMISSION_AND_FORWARD_EVIDENCE_DESIGN",
+    "must_precede_candidate_selection": true,
+    "must_fix": [
+      "candidate playbook search boundary and maximum trial budget",
+      "economic mechanism and point-in-time input contract",
+      "decision gate definitions and thresholds",
+      "fixed notional or fixed risk and concentration limits",
+      "outcome horizon and counterfactual treatment",
+      "cost model and sample sufficiency",
+      "promotion freeze and termination rules"
+    ]
+  },
+  "research_only": true,
+  "paper_live_enabled": false
+}

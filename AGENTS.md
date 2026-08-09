@@ -155,6 +155,23 @@ kill switch の期限・条件や現行 live/paper 戦略を変更しない。
 - Phase 3、追加 broker/API取得、価格・return/PnL、strategy、paper/live は未承認。
   正本は `docs/reports/portfolio-researchability-instrument-inventory-2026-08-08.md`。
 
+## Policy-Authorized Opportunity Router v0 (2026-08-09)
+
+- 個別案件へのタイムリーな人間承認を前提にせず、policy/playbook versionを事前承認する
+  `POLICY_AUTHORIZED_AUTOMATION_WITH_ASYNC_HUMAN_OVERSIGHT`をplan-onlyで記録した。
+- 初期admitted playbookは0、上限3。LIQIMPとIMOM6Mは棄却状態を維持し、既存event laneや
+  実装済みtechnical strategyも自動admissionしない。
+- 案件判断はEvidence、Mechanism、Context、Execution、Portfolioの全gate必須。一つでも
+  `FAIL / UNKNOWN`なら`NO_TRADE`。confidenceは当初sizingに使わず、LLM自由記述だけで
+  entryを生成しない。
+- 人間の不応答は判断へ影響せず、`WAITING_HUMAN`を作らない。人間は将来policyの事前承認、
+  非同期監査、リスク削減方向の停止だけを担い、`NO_TRADE`からのpositive overrideは禁止。
+- Gatewayが最終risk執行者である既存境界を維持する。Aggregator、contract、Pub/Sub、DB、
+  Dashboardは未変更。実装、playbook選定、outcome計算、shadow、paper/liveは未承認。
+- このmeta-processは現行Kill Switchの救済・証拠ではない。正本は
+  `docs/features/policy-authorized-opportunity-router-v0.md` と
+  `research/opportunity-router/policy-authorized-opportunity-router-v0-charter.json`。
+
 ## Common Commands
 
 ```bash

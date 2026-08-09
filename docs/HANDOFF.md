@@ -67,6 +67,16 @@
   `docs/reports/portfolio-researchability-instrument-inventory-2026-08-08.md` と
   `out/portfolio-researchability-reset-2026-v0/phase2-instrument-inventory-v0/`。
 
+- 個別案件への人間承認がタイムリーに行えない運用制約を受け、次期案を半裁量ではなく
+  `policy_authorized_opportunity_router_v0`としてplan-onlyで記録した。人間はpolicyと
+  playbook versionを事前承認し、システムが案件ごとに全gateを自動評価するhuman-on-the-loop
+  方式。`WAITING_HUMAN`やpositive per-trade overrideは作らず、欠測・曖昧・期限切れ・
+  failureは`NO_TRADE`。初期admitted playbookは0、上限3で、棄却済みLIQIMP/IMOM6M、
+  既存event/technicalを自動採用しない。Gatewayは引き続き唯一の最終risk執行者。
+  playbook選定、実装、outcome計算、shadow、paper/liveは未承認で、現行Kill Switchとは
+  分離する。正本は `docs/features/policy-authorized-opportunity-router-v0.md` と
+  `research/opportunity-router/policy-authorized-opportunity-router-v0-charter.json`。
+
 - 9/30 project kill switch判定を自動化した。
   `scripts/report-project-kill-switch-readiness.py`は、fixed20で期限内決済可能な
   clean cohortをsignal date 2026-07-21〜08-27の27営業日に固定し、source/outcome
