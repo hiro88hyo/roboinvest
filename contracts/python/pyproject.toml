@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Shared Pydantic models for Trade AI Agent"
 requires-python = ">=3.12"
 dependencies = [
-    "google-cloud-pubsub>=2.39.0",
+    "google-cloud-pubsub>=2.39.1",
     "pydantic>=2.7",
 ]
 
