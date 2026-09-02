@@ -113,6 +113,40 @@ def test_upsert_missing_watchlist_rows_skips_existing_symbol() -> None:
     assert json.loads(post_requests[0].content.decode())[0]["symbol"] == "9984"
 
 
+def test_upsert_capture_watchlist_rows_replaces_existing_scanner_symbol() -> None:
+    requests: list[httpx.Request] = []
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.method == "GET":
+            return httpx.Response(200, json=[{"symbol": "7203"}])
+        if request.method == "POST":
+            return httpx.Response(201, json=[])
+        return httpx.Response(404)
+
+    rows = upsert_event_candidates_watchlist.build_watchlist_rows(
+        _artifact(),
+        valid_date=None,
+        max_symbols=10,
+    )
+    with httpx.Client(
+        base_url="https://example.supabase.co",
+        transport=httpx.MockTransport(_handler),
+    ) as client:
+        inserted, replaced = upsert_event_candidates_watchlist.upsert_capture_watchlist_rows(
+            client,
+            rows,
+        )
+
+    assert [row["symbol"] for row in inserted] == ["9984"]
+    assert [row["symbol"] for row in replaced] == ["7203"]
+    post_requests = [request for request in requests if request.method == "POST"]
+    assert len(post_requests) == 1
+    posted_rows = json.loads(post_requests[0].content.decode())
+    assert [row["symbol"] for row in posted_rows] == ["7203", "9984"]
+    assert posted_rows[0]["selected_reasons"]["event_capture"] is True
+
+
 def test_cli_dry_run_writes_plan(tmp_path: Path, monkeypatch) -> None:
     candidates_json = tmp_path / "candidates.json"
     output_json = tmp_path / "watchlist.json"

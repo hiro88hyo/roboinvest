@@ -246,10 +246,17 @@
   で `OK 127 / WARN 2 / NG 0`。WARN は kabu station / Windows proxy 停止前提の
   feeder/kabu だけ。明朝は kabu station 起動後に `--kabu-offline` なし、
   可能なら `--refresh-kabu-token` 付きで再確認する。
-- `/dev/shm/roboinvest/gcp-pubsub-sa.json` が root-owned directory だったため、
-  現在の compose は `/tmp/roboinvest-gcp-pubsub-sa.json` を
-  `GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH` として mount している。
-  詳細は [2026-07-05 Paper Ready Handoff](handoff/2026-07-05-paper-ready.md)。
+- 2026-07-05 の root-owned directory 回避では `/tmp/roboinvest-gcp-pubsub-sa.json`
+  を使っていたが、2026-08-25 に日次同期用の credential lifecycle を統一した。
+  現在は compose / Universe Scanner timer とも
+  `/dev/shm/roboinvest/gcp-pubsub-sa.json` を使い、欠損時はScannerラッパーが
+  1Passwordから mode `0600` でatomicに再作成して長期コンテナ用に保持する。
+- 2026-09-03 07:55 JST のtimer実行でscanner 30件、固定exit 2026-09-14までの
+  event capture `5074` 1件を登録し、OMS Live許可リストはcaptureを除いた30件のまま
+  同期した。08:10 JSTのpre-open checkは `OK 134 / WARN 0 / NG 0`。
+  scannerは失敗時60秒間隔・最大3回再試行し、pre-openも同じcredential pathを
+  自己修復する。watchlistはscanner 20〜50件、event capture最大10件、合計50件を
+  超えた場合にfail closedとなる。
 - production compose / Cloud Supabase / managed Pub/Sub / Vercel Dashboard は一通り稼働済み。
 - 2026-06-23 の paper 結果と直近日次成績を受け、既存 intraday
   RULE/AI judge stack は live 候補から降格。小手先の gate 追加ではなく

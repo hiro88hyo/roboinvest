@@ -29,6 +29,11 @@ def main() -> int:
     parser.add_argument("--output-json", type=Path, required=True)
     parser.add_argument("--valid-date", type=date.fromisoformat)
     parser.add_argument("--max-symbols", type=int, default=DEFAULT_MAX_SYMBOLS)
+    parser.add_argument(
+        "--replace-existing",
+        action="store_true",
+        help="Replace same-date scanner rows so registered candidates stay capture-only.",
+    )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--timeout", type=float, default=30.0)
     args = parser.parse_args()
@@ -47,6 +52,7 @@ def main() -> int:
     )
     inserted: list[dict[str, Any]] = []
     skipped_existing: list[dict[str, Any]] = []
+    replaced_existing: list[dict[str, Any]] = []
     if not args.dry_run and rows:
         url = os.environ.get("SUPABASE_URL", "").strip()
         key = os.environ.get("SUPABASE_SECRET_KEY", "").strip()
@@ -62,7 +68,10 @@ def main() -> int:
                 "Content-Type": "application/json",
             },
         ) as client:
-            inserted, skipped_existing = upsert_missing_watchlist_rows(client, rows)
+            if args.replace_existing:
+                inserted, replaced_existing = upsert_capture_watchlist_rows(client, rows)
+            else:
+                inserted, skipped_existing = upsert_missing_watchlist_rows(client, rows)
 
     result = {
         "mode": "dry_run" if args.dry_run else "upsert",
@@ -70,16 +79,19 @@ def main() -> int:
         "planned_count": len(rows),
         "inserted_count": len(inserted),
         "skipped_existing_count": len(skipped_existing),
+        "replaced_existing_count": len(replaced_existing),
         "planned": rows,
         "inserted": inserted,
         "skipped_existing": skipped_existing,
+        "replaced_existing": replaced_existing,
     }
     args.output_json.parent.mkdir(parents=True, exist_ok=True)
     args.output_json.write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n")
     print(
         "event_candidate_watchlist "
         f"mode={result['mode']} planned={len(rows)} inserted={len(inserted)} "
-        f"skipped_existing={len(skipped_existing)} output={args.output_json}"
+        f"skipped_existing={len(skipped_existing)} "
+        f"replaced_existing={len(replaced_existing)} output={args.output_json}"
     )
     return 0
 
@@ -133,6 +145,20 @@ def upsert_missing_watchlist_rows(
             upsert_watchlist_rows(client, missing)
             inserted.extend(missing)
     return inserted, skipped
+
+
+def upsert_capture_watchlist_rows(
+    client: httpx.Client,
+    rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    inserted: list[dict[str, Any]] = []
+    replaced: list[dict[str, Any]] = []
+    for valid_date, date_rows in _group_by_valid_date(rows).items():
+        existing = fetch_existing_symbols(client, valid_date=valid_date)
+        inserted.extend([row for row in date_rows if row["symbol"] not in existing])
+        replaced.extend([row for row in date_rows if row["symbol"] in existing])
+        upsert_watchlist_rows(client, date_rows)
+    return inserted, replaced
 
 
 def fetch_existing_symbols(client: httpx.Client, *, valid_date: str) -> set[str]:

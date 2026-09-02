@@ -60,6 +60,10 @@ EVENT_CLUSTER_CANDIDATE_ID = "event_cluster_earnings_dividend_value_guard_fixed2
 EVENT_CLUSTER_ARTIFACT_SCHEMA_VERSION = 3
 EVENT_CLUSTER_MAX_HOLD_DAYS = 20
 EVENT_CLUSTER_CAT_STOP_PCT = "-0.10"
+MIN_SCANNER_WATCHLIST_ROWS = 20
+MAX_SCANNER_WATCHLIST_ROWS = 50
+MAX_EVENT_CAPTURE_ROWS = 10
+MAX_BROKER_REGISTERED_SYMBOLS = 50
 
 SUPABASE_TABLES = (
     "system_status",
@@ -262,17 +266,21 @@ def _materialize_gcp_credentials_from_1password(
     reporter: Reporter,
     args: argparse.Namespace,
     reason: str,
+    destination: Path,
 ) -> Path | None:
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        encoding="utf-8",
-        prefix="roboinvest-gcp-pubsub-sa-",
-        suffix=".json",
-        dir="/tmp",
-        delete=False,
-    ) as tmp:
-        tmp_path = Path(tmp.name)
+    tmp_path: Path | None = None
     try:
+        if destination.is_dir():
+            destination.rmdir()
+        destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            prefix=f"{destination.name}.tmp.",
+            dir=destination.parent,
+            delete=False,
+        ) as tmp:
+            tmp_path = Path(tmp.name)
         os.chmod(tmp_path, 0o600)
         try:
             proc = _run(["op", "read", GCP_CREDENTIALS_OP_REF], timeout=args.timeout)
@@ -303,18 +311,21 @@ def _materialize_gcp_credentials_from_1password(
             )
             return None
         tmp_path.write_text(proc.stdout, encoding="utf-8")
+        os.replace(tmp_path, destination)
+        os.chmod(destination, 0o600)
         reporter.emit(
             "OK",
             "GOOGLE_APPLICATION_CREDENTIALS",
-            f"{reason}; using temporary 1Password credential",
+            f"{reason}; materialized stable 1Password credential at {destination}",
         )
-        return tmp_path
+        return destination
     except OSError as exc:
-        tmp_path.unlink(missing_ok=True)
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
         reporter.emit(
             "NG",
             "GOOGLE_APPLICATION_CREDENTIALS",
-            f"{reason}; temporary credential failed: {exc}",
+            f"{reason}; stable credential materialization failed: {exc}",
         )
         return None
 
@@ -336,8 +347,13 @@ def _resolve_gcp_credentials(
         reason = f"missing host file: {credentials}"
 
     if is_default:
-        temp_credentials = _materialize_gcp_credentials_from_1password(reporter, args, reason)
-        return temp_credentials, temp_credentials
+        stable_credentials = _materialize_gcp_credentials_from_1password(
+            reporter,
+            args,
+            reason,
+            credentials,
+        )
+        return stable_credentials, None
 
     reporter.emit("NG", "GOOGLE_APPLICATION_CREDENTIALS", reason)
     return None, None
@@ -645,12 +661,16 @@ def _check_watchlist_gate(
         reporter.emit("NG", label, f"empty valid_date={valid_date.isoformat()}")
         return
 
-    reporter.emit("OK", label, f"{len(rows)} rows valid_date={valid_date.isoformat()}")
-
     pass_symbols: list[str] = []
+    event_capture_symbols: list[str] = []
     fail_counts: dict[str, int] = {}
     for row in rows:
         reasons = row.get("selected_reasons") if isinstance(row, dict) else None
+        if isinstance(reasons, dict) and reasons.get("event_capture") is True:
+            symbol = str(row.get("symbol", "")) if isinstance(row, dict) else ""
+            if symbol:
+                event_capture_symbols.append(symbol)
+            continue
         reason = scanner_gate_reject_reason(
             reasons if isinstance(reasons, dict) else None,
             _scanner_gate_thresholds_from_env(),
@@ -663,6 +683,18 @@ def _check_watchlist_gate(
         else:
             fail_counts[reason] = fail_counts.get(reason, 0) + 1
 
+    scanner_row_count = len(rows) - len(event_capture_symbols)
+    row_detail = (
+        f"total={len(rows)} scanner={scanner_row_count} "
+        f"event_capture={len(event_capture_symbols)} valid_date={valid_date.isoformat()}"
+    )
+    shape_valid = (
+        MIN_SCANNER_WATCHLIST_ROWS <= scanner_row_count <= MAX_SCANNER_WATCHLIST_ROWS
+        and len(event_capture_symbols) <= MAX_EVENT_CAPTURE_ROWS
+        and len(rows) <= MAX_BROKER_REGISTERED_SYMBOLS
+    )
+    reporter.emit("OK" if shape_valid else "NG", label, row_detail)
+
     pass_count = len(pass_symbols)
     if pass_count == 0:
         reporter.emit("NG", "watchlist scanner gate", f"pass=0 fail={len(rows)}")
@@ -671,6 +703,13 @@ def _check_watchlist_gate(
         reporter.emit("OK", "watchlist scanner gate", f"pass={pass_count} reject={detail}")
     else:
         reporter.emit("OK", "watchlist scanner gate", f"pass={pass_count}")
+
+    if event_capture_symbols:
+        reporter.emit(
+            "OK",
+            "event capture watchlist",
+            f"count={len(event_capture_symbols)} symbols={','.join(event_capture_symbols[:8])}",
+        )
 
     _check_oms_live_allowed_symbols(reporter, args, pass_symbols)
 
@@ -1319,6 +1358,12 @@ def main() -> int:
         )
         reporter.summary()
         return 0
+
+    if args.gcp_credentials == DEFAULT_HOST_GCP_CREDENTIALS and not (
+        args.gcp_credentials.is_file() and os.access(args.gcp_credentials, os.R_OK)
+    ):
+        reporter.section("credentials")
+        _resolve_gcp_credentials(reporter, args)
 
     check_expected_env(reporter, args)
     if args.refresh_kabu_token:

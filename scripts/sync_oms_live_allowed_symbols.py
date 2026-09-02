@@ -10,6 +10,12 @@ from typing import Any
 
 import httpx
 from trade_contracts.scanner_gate import ScannerGateThresholds, scanner_gate_reject_reason
+from universe_scanner.calendar import is_tse_business_day
+
+MIN_SCANNER_SYMBOLS = 20
+MAX_SCANNER_SYMBOLS = 50
+MAX_EVENT_CAPTURE_SYMBOLS = 10
+MAX_REGISTERED_SYMBOLS = 50
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,8 +54,39 @@ def gate_pass_symbols(
     return [
         str(row["symbol"])
         for row in rows
-        if scanner_gate_reject_reason(row.get("selected_reasons") or {}, thresholds) is None
+        if not is_event_capture_row(row)
+        and scanner_gate_reject_reason(row.get("selected_reasons") or {}, thresholds) is None
     ]
+
+
+def is_event_capture_row(row: dict[str, Any]) -> bool:
+    reasons = row.get("selected_reasons")
+    return isinstance(reasons, dict) and reasons.get("event_capture") is True
+
+
+def validate_watchlist_rows(valid_date: date, rows: list[dict[str, Any]]) -> None:
+    if not rows:
+        if is_tse_business_day(valid_date):
+            raise RuntimeError(f"watchlist empty for TSE business date: {valid_date.isoformat()}")
+        return
+
+    scanner_count = sum(not is_event_capture_row(row) for row in rows)
+    event_capture_count = len(rows) - scanner_count
+    if not MIN_SCANNER_SYMBOLS <= scanner_count <= MAX_SCANNER_SYMBOLS:
+        raise RuntimeError(
+            f"scanner watchlist count outside {MIN_SCANNER_SYMBOLS}-{MAX_SCANNER_SYMBOLS}: "
+            f"date={valid_date.isoformat()} count={scanner_count}"
+        )
+    if event_capture_count > MAX_EVENT_CAPTURE_SYMBOLS:
+        raise RuntimeError(
+            f"event capture count exceeds {MAX_EVENT_CAPTURE_SYMBOLS}: "
+            f"date={valid_date.isoformat()} count={event_capture_count}"
+        )
+    if len(rows) > MAX_REGISTERED_SYMBOLS:
+        raise RuntimeError(
+            f"watchlist exceeds broker registration limit {MAX_REGISTERED_SYMBOLS}: "
+            f"date={valid_date.isoformat()} count={len(rows)}"
+        )
 
 
 def fetch_watchlist_rows(*, valid_date: date, timeout: float) -> list[dict[str, Any]]:
@@ -86,6 +123,7 @@ def update_env_file(path: Path, symbols: list[str]) -> SyncResult:
 
 def sync(valid_date: date, *, env_file: Path, timeout: float) -> SyncResult:
     rows = fetch_watchlist_rows(valid_date=valid_date, timeout=timeout)
+    validate_watchlist_rows(valid_date, rows)
     if not rows:
         return SyncResult(status="skipped", symbols=[])
 

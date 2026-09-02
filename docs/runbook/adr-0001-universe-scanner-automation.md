@@ -26,12 +26,17 @@ LAN host の production compose 構成で `universe-scanner` を日次実行す�
 - `infra/.op.service-account.env` の自動読込
 - `infra/env.production` と
   `${GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH:-/dev/shm/roboinvest/gcp-pubsub-sa.json}`
-  の存在確認
+  の存在確認。credential が無い場合は 1Password から指定先へ mode `0600` で
+  atomic に materialize し、長期稼働コンテナの bind mount 用に保持する
 - `docker compose ... --profile batch config` の事前検証
 - batch 実行後に当日 `watchlist` から `infra/env.production` の `OMS_LIVE_ALLOWED_SYMBOLS` を同期
 - `oms-live` が稼働中なら、同期後に `oms-live` だけ再作成して env を反映
 - batch 実行前後の `health-check.py --check supabase`
 - `/tmp/roboinvest-universe-scanner.lock` による重複起動防止
+- TSE営業日のscanner rowsが20〜50件でない場合は失敗扱い
+- 失敗時は60秒間隔・最大3回までsystemdが自動再試行
+- frozen forward candidate `5074` は2026-09-14までscanner後にcapture専用行として追加し、
+  scanner選出と重複した場合もcapture専用行で置換してOMS Live許可リストから除外する
 
 手動実行:
 
@@ -43,6 +48,8 @@ bash scripts/run-production-universe-scanner.sh
 `/dev/shm/roboinvest/gcp-pubsub-sa.json` が実ファイルとして使えない host では、
 代替 credential を `GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH` で指定して実行する。
 ラッパーは Docker Compose 呼び出し時にその値を明示的に渡す。
+指定先が存在しない場合もラッパーが作成するため、日次 batch 後の
+`oms-live` recreate が一時 credential の削除で壊れることはない。
 
 ```bash
 GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH=/tmp/roboinvest-gcp-pubsub-sa.json \
@@ -95,6 +102,17 @@ journalctl --user -u roboinvest-universe-scanner.service -n 100 --no-pager
 - timer は `OnCalendar=Mon..Fri 07:55:00 Asia/Tokyo`
 - `Persistent=true` のため、停止中に取り逃した平日実行は次回起動時に catch-up される
 - 1Password service account token は `infra/.op.service-account.env` から読み込む
+- systemd unit は credential path を上書きせず、compose と同じ
+  `/dev/shm/roboinvest/gcp-pubsub-sa.json` を使う。reboot 後に消えていてもラッパーが
+  1Password から再作成し、`oms-live` recreate 後も保持する
+- Dockerがcredential pathを空ディレクトリとして作った場合、chownだけでは直らない。
+  ラッパーとpre-open checkは空の末端ディレクトリなら自動除去して実ファイルへ戻す。
+  親までroot所有の場合だけ、空であることを確認して末端ディレクトリを削除し、
+  親を実行ユーザー所有に戻す
+- 08:10 JSTのpre-open checkも同じ安定credential pathを先に復元するため、
+  scanner後にtmpfs上のファイルが消えてもDocker操作前に自己修復する
+- serviceは失敗時に最大3回再試行する。3回とも失敗した場合はfailedのまま残るため、
+  08:05以降のpre-open checkで取引・data captureを開始しない
 - ログはファイルではなく user journal で確認する
 - reboot 後も login 前から動かすなら `loginctl enable-linger hiroyuki` が必要
 

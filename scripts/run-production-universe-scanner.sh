@@ -4,13 +4,15 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-LOCK_DIR="/tmp/roboinvest-universe-scanner.lock"
+LOCK_DIR="${ROBOINVEST_UNIVERSE_SCANNER_LOCK_DIR:-/tmp/roboinvest-universe-scanner.lock}"
 GCP_CREDENTIALS_OP_REF="op://roboinvest/production/GOOGLE_APPLICATION_CREDENTIALS_JSON"
+EVENT_TRACKING_ARTIFACT="out/event-paper-observation/causal-candidates-2026-08-14.json"
+EVENT_TRACKING_START_DATE="2026-08-17"
+EVENT_TRACKING_END_DATE="2026-09-14"
 TARGET_DATE=""
 RUN_BUILD=0
 SKIP_HEALTH_CHECK=0
 SKIP_OMS_LIVE_SYNC=0
-TEMP_GCP_CREDENTIALS=""
 
 usage() {
   cat <<'USAGE'
@@ -100,11 +102,74 @@ sync_oms_live_allowed_symbols() {
   fi
 }
 
-cleanup() {
-  rm -rf "$LOCK_DIR"
-  if [ -n "$TEMP_GCP_CREDENTIALS" ]; then
-    rm -f "$TEMP_GCP_CREDENTIALS"
+sync_registered_event_tracking() {
+  local valid_date="$1"
+
+  if [[ "$valid_date" < "$EVENT_TRACKING_START_DATE" ]] || \
+    [[ "$valid_date" > "$EVENT_TRACKING_END_DATE" ]]; then
+    echo "[post] skip registered event tracking: date outside frozen tracking window"
+    return 0
   fi
+  if [ ! -f "$EVENT_TRACKING_ARTIFACT" ]; then
+    echo "missing registered event tracking artifact: $EVENT_TRACKING_ARTIFACT" >&2
+    return 1
+  fi
+
+  echo "[post] keep registered event candidate observable through fixed exit..."
+  op run --env-file infra/env.production -- \
+    uv run python scripts/upsert-event-candidates-watchlist.py \
+      --candidates-json "$EVENT_TRACKING_ARTIFACT" \
+      --valid-date "$valid_date" \
+      --replace-existing \
+      --output-json \
+        "out/event-paper-observation/event-watchlist-upsert-${valid_date}.json"
+}
+
+cleanup() {
+  rmdir "$LOCK_DIR" 2>/dev/null || true
+}
+
+materialize_gcp_credentials() {
+  local destination="$1"
+  local parent
+  local temporary
+
+  parent="$(dirname "$destination")"
+  if [ -d "$destination" ]; then
+    if rmdir "$destination" 2>/dev/null; then
+      echo "removed empty directory at credential file path: $destination"
+    else
+      echo "credential path is a non-empty or non-removable directory: $destination" >&2
+      return 1
+    fi
+  elif [ -e "$destination" ] && [ ! -f "$destination" ]; then
+    echo "credential path is not a regular file: $destination" >&2
+    return 1
+  fi
+  if [ ! -d "$parent" ]; then
+    mkdir -p "$parent"
+    chmod 700 "$parent"
+  fi
+  if [ ! -w "$parent" ]; then
+    echo "credential directory is not writable: $parent" >&2
+    return 1
+  fi
+
+  temporary="$(mktemp "${destination}.tmp.XXXXXX")"
+  chmod 600 "$temporary"
+  if ! op read --out-file "$temporary" --force "$GCP_CREDENTIALS_OP_REF" >/dev/null; then
+    rm -f "$temporary"
+    echo "failed to materialize Pub/Sub credentials" >&2
+    return 1
+  fi
+  if ! /usr/bin/python3 -m json.tool "$temporary" >/dev/null; then
+    rm -f "$temporary"
+    echo "materialized Pub/Sub credentials are not valid JSON" >&2
+    return 1
+  fi
+  mv -f "$temporary" "$destination"
+  chmod 600 "$destination"
+  echo "materialized persistent Pub/Sub credentials: $destination"
 }
 
 if ! mkdir "$LOCK_DIR" 2>/dev/null; then
@@ -126,14 +191,7 @@ fi
 
 GCP_CREDENTIALS_HOST_PATH="${GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH:-/dev/shm/roboinvest/gcp-pubsub-sa.json}"
 if [ ! -f "$GCP_CREDENTIALS_HOST_PATH" ] || [ ! -r "$GCP_CREDENTIALS_HOST_PATH" ]; then
-  TEMP_GCP_CREDENTIALS="$(mktemp /tmp/roboinvest-gcp-pubsub-sa-XXXXXX.json)"
-  chmod 600 "$TEMP_GCP_CREDENTIALS"
-  if ! op read --out-file "$TEMP_GCP_CREDENTIALS" --force "$GCP_CREDENTIALS_OP_REF" >/dev/null; then
-    echo "failed to materialize temporary Pub/Sub credentials" >&2
-    exit 1
-  fi
-  GCP_CREDENTIALS_HOST_PATH="$TEMP_GCP_CREDENTIALS"
-  echo "using temporary Pub/Sub credentials"
+  materialize_gcp_credentials "$GCP_CREDENTIALS_HOST_PATH"
 fi
 export GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH="$GCP_CREDENTIALS_HOST_PATH"
 
@@ -171,9 +229,12 @@ if [ -n "$TARGET_DATE" ]; then
 fi
 "${run_args[@]}"
 
+VALID_DATE="$(resolve_target_date)"
+sync_registered_event_tracking "$VALID_DATE"
+
 if [ "$SKIP_OMS_LIVE_SYNC" -eq 0 ]; then
   echo "[post] sync OMS_LIVE_ALLOWED_SYMBOLS from watchlist..."
-  sync_oms_live_allowed_symbols "$(resolve_target_date)"
+  sync_oms_live_allowed_symbols "$VALID_DATE"
 else
   echo "[post] skip OMS_LIVE_ALLOWED_SYMBOLS sync (--skip-oms-live-sync set)..."
 fi
